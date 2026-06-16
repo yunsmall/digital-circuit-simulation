@@ -1,0 +1,34 @@
+{
+  "definitions": {
+    "half_adder": {
+      "nets": ["a", "b", "sum", "carry"],
+      "components": [
+        {
+          "type": "xor",
+          "name": "xor",
+          "params": {"inputs": "2", "bit_width": "1"},
+          "connections": {"in0": "a", "in1": "b", "out": "sum"}
+        },
+        {
+          "type": "and",
+          "name": "and",
+          "params": {"inputs": "2", "bit_width": "1"},
+          "connections": {"in0": "a", "in1": "b", "out": "carry"}
+        }
+      ],
+      "expose": {
+        "inputs":  {"a": "a", "b": "b"},
+        "outputs": {"sum": "sum", "carry": "carry"}
+      }
+    }
+  },
+  "nets": ["a", "b", "sum", "carry"],
+  "components": [
+    {
+      "type": "composite",
+      "name": "ha",
+      "params": {"definition": "half_adder"},
+      "connections": {"a": "a", "b": "b", "sum": "sum", "carry": "carry"}
+    }
+  ]
+}

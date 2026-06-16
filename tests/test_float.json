@@ -1,0 +1,35 @@
+{
+  "nets": ["a", "b", "c", "sum", "prod"],
+  "components": [
+    {
+      "type": "fconst",
+      "name": "const_a",
+      "params": {"precision": "32", "value": "3.14"},
+      "connections": {"out": "a"}
+    },
+    {
+      "type": "fconst",
+      "name": "const_b",
+      "params": {"precision": "32", "value": "2.718"},
+      "connections": {"out": "b"}
+    },
+    {
+      "type": "fconst",
+      "name": "const_c",
+      "params": {"precision": "32", "value": "1.5"},
+      "connections": {"out": "c"}
+    },
+    {
+      "type": "fadd",
+      "name": "add_ab",
+      "params": {"precision": "32"},
+      "connections": {"a": "a", "b": "b", "out": "sum"}
+    },
+    {
+      "type": "fmul",
+      "name": "mul_sc",
+      "params": {"precision": "32"},
+      "connections": {"a": "sum", "b": "c", "out": "prod"}
+    }
+  ]
+}

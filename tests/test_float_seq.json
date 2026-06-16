@@ -1,0 +1,35 @@
+{
+  "nets": ["a", "b", "clk", "pi", "sum", "latched", "result"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "fconst",
+      "name": "const_pi",
+      "params": {"precision": "32", "value": "3.14"},
+      "connections": {"out": "pi"}
+    },
+    {
+      "type": "fadd",
+      "name": "add_ab",
+      "params": {"precision": "32"},
+      "connections": {"a": "a", "b": "b", "out": "sum"}
+    },
+    {
+      "type": "dff",
+      "name": "latch_sum",
+      "params": {"bit_width": "32"},
+      "connections": {"d": "sum", "clk": "clk", "q": "latched"}
+    },
+    {
+      "type": "fdiv",
+      "name": "div_result",
+      "params": {"precision": "32"},
+      "connections": {"a": "latched", "b": "pi", "out": "result"}
+    }
+  ]
+}

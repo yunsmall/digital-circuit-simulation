@@ -1,0 +1,38 @@
+# Build
+build/
+build_tcc/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+*.vcxproj*
+*.suo
+*.user
+.idea/
+
+# Compiled
+*.exe
+*.dll
+*.lib
+*.exp
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+CTestTestfile.cmake
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.claude/
+CLAUDE.local.md
