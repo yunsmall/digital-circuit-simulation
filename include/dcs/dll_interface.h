@@ -26,6 +26,13 @@
 
 #include <stdint.h>
 
+// 跨平台 DLL 导出宏
+#ifdef _WIN32
+#define DCS_DLL_EXPORT __declspec(dllexport)
+#else
+#define DCS_DLL_EXPORT __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +43,8 @@ extern "C" {
 typedef struct {
     const char *name; // 引脚名称
     int bit_width; // 位宽（1~64）
+    int is_tri_state; // 输出引脚：是否为三态（0=普通 1=三态）
+    int is_sequential; // 输出引脚：是否依赖内部状态（0=组合 1=时序，输入引脚忽略）
 } dcs_dll_pin_desc_t;
 
 // 元件描述符（DLL 必须导出名为 dcs_dll_desc 的全局变量）
@@ -56,14 +65,12 @@ typedef void *(*dcs_dll_create_t)(void);
 typedef void (*dcs_dll_destroy_t)(void *state);
 
 // ---- 仿真逻辑 ----
-// tick: 每个时钟周期调用
-//   state   — 状态对象
-//   inputs  — 输入引脚数据（num_inputs × 16 字节，顺序与描述符一致）
-//   outputs — 输出引脚缓冲区（num_outputs × 16 字节，由 DLL 填入）
+// tick_comb: 组合逻辑阶段调用（可选，不导出则无组合部分）
+// tick_seq:  时序逻辑阶段调用（可选，不导出则无时序部分）
+// state / inputs / outputs 同签名
 typedef void (*dcs_dll_tick_t)(void *state, const uint8_t *inputs, uint8_t *outputs);
 
 // reset: 电路复位时调用
-//   可以在此设置 outputs 的初始值
 typedef void (*dcs_dll_reset_t)(void *state, uint8_t *outputs);
 
 // 导出符号名宏
@@ -72,7 +79,8 @@ typedef void (*dcs_dll_reset_t)(void *state, uint8_t *outputs);
 #define DCS_DLL_DEINIT "dcs_dll_deinit"
 #define DCS_DLL_CREATE "dcs_dll_create"
 #define DCS_DLL_DESTROY "dcs_dll_destroy"
-#define DCS_DLL_TICK "dcs_dll_tick"
+#define DCS_DLL_TICK_COMB "dcs_dll_tick_comb"
+#define DCS_DLL_TICK_SEQ "dcs_dll_tick_seq"
 #define DCS_DLL_RESET "dcs_dll_reset"
 
 #ifdef __cplusplus

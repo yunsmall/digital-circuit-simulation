@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.backend }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+        backend: [llvm, tcc]
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      LLVM_VER: 22.1.7
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ============================================================
+      # CMake >= 4.2（pip 安装，跨平台可靠）
+      # ============================================================
+      - name: Install CMake
+        run: pip install "cmake>=4.2"
+        shell: bash
+
+      # ============================================================
+      # vcpkg（nlohmann-json + cxxopts + gtest）
+      # ============================================================
+      - name: Setup vcpkg
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh"
+          "$VCPKG_ROOT/vcpkg" install nlohmann-json cxxopts gtest
+        shell: bash
+
+      - name: Setup vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "${{ env.VCPKG_ROOT }}"
+          "${{ env.VCPKG_ROOT }}/bootstrap-vcpkg.bat"
+          "${{ env.VCPKG_ROOT }}/vcpkg" install nlohmann-json cxxopts gtest
+        shell: cmd
+
+      # ============================================================
+      # LLVM/Clang 22.1.7
+      # ============================================================
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux' && matrix.backend == 'llvm'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 22
+          sudo apt-get install -y clang-22 libclang-22-dev llvm-22-dev
+          echo "LLVM_ROOT=/usr/lib/llvm-22" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows' && matrix.backend == 'llvm'
+        run: |
+          LLVM_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VER }}/clang+llvm-${{ env.LLVM_VER }}-x86_64-pc-windows-msvc.tar.xz
+          curl -L -o llvm.tar.xz "$LLVM_URL"
+          7z x llvm.tar.xz -so | 7z x -si -ttar -o"C:/llvm" -y
+          echo "LLVM_ROOT=C:/llvm/clang+llvm-${{ env.LLVM_VER }}-x86_64-pc-windows-msvc" >> $GITHUB_ENV
+        shell: bash
+
+      # ============================================================
+      # TCC — 从 GitHub HEAD 编译
+      # ============================================================
+      - name: Build TCC from HEAD (Linux)
+        if: runner.os == 'Linux' && matrix.backend == 'tcc'
+        run: |
+          git clone --depth 1 https://github.com/TinyCC/tinycc.git /tmp/tinycc
+          cd /tmp/tinycc
+          ./configure
+          make -j$(nproc)
+          sudo make install
+        shell: bash
+
+      - name: Build TCC from HEAD (Windows)
+        if: runner.os == 'Windows' && matrix.backend == 'tcc'
+        run: |
+          git clone --depth 1 https://github.com/TinyCC/tinycc.git C:/tinycc
+          cd /d C:/tinycc/win32
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          .\build-tcc.bat -c cl -i
+        shell: cmd
+
+      # ============================================================
+      # 配置 & 编译 & 测试
+      # ============================================================
+      - name: CMake configure (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          ARGS=(-B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DDCS_BUILD_VERILOG=OFF)
+          if [ "${{ matrix.backend }}" = "tcc" ]; then
+            ARGS+=(-DDCS_USE_TCC=ON)
+            if [ -d "C:/tinycc/win32" ]; then ARGS+=(-DTCC_ROOT=C:/tinycc/win32); fi
+          fi
+          if [ -n "$LLVM_ROOT" ]; then ARGS+=(-DLLVM_ROOT="$LLVM_ROOT"); fi
+          cmake "${ARGS[@]}"
+        shell: bash
+
+      - name: CMake configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq ninja-build
+          ARGS=(-B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DDCS_BUILD_VERILOG=OFF)
+          if [ "${{ matrix.backend }}" = "tcc" ]; then
+            ARGS+=(-DDCS_USE_TCC=ON)
+          fi
+          if [ -n "$LLVM_ROOT" ]; then ARGS+=(-DLLVM_ROOT="$LLVM_ROOT"); fi
+          cmake "${ARGS[@]}"
+        shell: bash
+
+      - name: Build
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake --build build --parallel --config RelWithDebInfo
+          else
+            cmake --build build --parallel
+          fi
+        shell: bash
+
+      - name: Test
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ctest --test-dir build -C RelWithDebInfo --output-on-failure
+          else
+            ctest --test-dir build --output-on-failure
+          fi
+        shell: bash
+
+      - name: Install
+        run: |
+          cmake --install build --prefix "_artifact/dcs-${{ matrix.os }}-${{ matrix.backend }}" --config RelWithDebInfo
+          echo "=== 安装目录结构 ==="
+          ls -R _artifact
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dcs-${{ matrix.os }}-${{ matrix.backend }}
+          path: _artifact

@@ -10,8 +10,56 @@
 #include <cstring>
 #include <format>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace dsc {
+
+// DLL 句柄引用计数管理（同一 DLL 被多个元件共享时不会重复加载/卸载）
+namespace {
+    struct DllHandle {
+        void *handle = nullptr;
+        int refcount = 0;
+    };
+    static std::unordered_map<std::string, DllHandle> &dll_cache() {
+        static std::unordered_map<std::string, DllHandle> cache;
+        return cache;
+    }
+
+    static void *dll_load(const std::string &path, std::string &error) {
+        auto &cache = dll_cache();
+        auto it = cache.find(path);
+        if (it != cache.end()) {
+            it->second.refcount++;
+            return it->second.handle;
+        }
+#ifdef _WIN32
+        void *h = LoadLibraryA(path.c_str());
+#else
+        void *h = dlopen(path.c_str(), RTLD_NOW);
+#endif
+        if (!h) {
+            error = std::format("无法加载 DLL: {}", path);
+            return nullptr;
+        }
+        cache[path] = {h, 1};
+        return h;
+    }
+
+    static void dll_unload(const std::string &path) {
+        auto &cache = dll_cache();
+        auto it = cache.find(path);
+        if (it == cache.end())
+            return;
+        if (--it->second.refcount > 0)
+            return;
+#ifdef _WIN32
+        FreeLibrary((HMODULE) it->second.handle);
+#else
+        dlclose(it->second.handle);
+#endif
+        cache.erase(it);
+    }
+} // namespace
 
 DllComponent::DllComponent(const std::string &name, const std::string &dll_path) :
     Component(name, "dll"), _dll_path(dll_path) {
@@ -26,71 +74,79 @@ bool DllComponent::prepare(std::string &error) {
     if (_loaded)
         return true;
 
-    // 1. 加载 DLL
-#ifdef _WIN32
-    _dll_handle = LoadLibraryA(_dll_path.c_str());
-    if (!_dll_handle) {
-        error = std::format("无法加载 DLL: {}", _dll_path);
+    _dll_handle = dll_load(_dll_path, error);
+    if (!_dll_handle)
         return false;
-    }
+
+#ifdef _WIN32
     auto loadSym = [&](const char *name, auto &fn_ptr) -> bool {
         FARPROC fp = GetProcAddress((HMODULE) _dll_handle, name);
-        if (!fp) {
-            error = std::format("DLL 缺少导出符号: {}", name);
+        if (!fp)
             return false;
-        }
-        memcpy(&fn_ptr, &fp, sizeof(fp));
+        std::memcpy(&fn_ptr, &fp, sizeof(fp));
         return true;
     };
 #else
-    _dll_handle = dlopen(_dll_path.c_str(), RTLD_NOW);
-    if (!_dll_handle) {
-        error = std::format("无法加载 DLL: {} ({})", _dll_path, dlerror());
-        return false;
-    }
     auto loadSym = [&](const char *name, auto &fn_ptr) -> bool {
         void *sym = dlsym(_dll_handle, name);
-        if (!sym) {
-            error = std::format("DLL 缺少导出符号: {}", name);
+        if (!sym)
             return false;
-        }
-        memcpy(&fn_ptr, &sym, sizeof(sym));
+        std::memcpy(&fn_ptr, &sym, sizeof(sym));
         return true;
     };
 #endif
 
-    // 2. 读取描述符（引脚配置）
     dcs_dll_descriptor_t *desc_ptr = nullptr;
-    if (!loadSym(DCS_DLL_DESC, desc_ptr))
+    if (!loadSym(DCS_DLL_DESC, desc_ptr)) {
+        error = "DLL 缺少导出符号: dcs_dll_desc";
         return false;
-    _desc = *desc_ptr; // 复制描述符结构体（引脚数组指针指向 DLL 内静态内存）
+    }
+    _desc = *desc_ptr;
 
-    // 3. 根据描述符自动创建引脚
     for (int i = 0; i < _desc.num_inputs; i++)
         addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width);
-    for (int i = 0; i < _desc.num_outputs; i++)
-        addOutput(_desc.outputs[i].name, _desc.outputs[i].bit_width);
+    for (int i = 0; i < _desc.num_outputs; i++) {
+        auto &od = _desc.outputs[i];
+        addOutput(od.name, od.bit_width, od.is_tri_state != 0);
+        _outputs.back()->setSequential(od.is_sequential != 0);
+    }
 
-    // 4. 加载生命周期函数
-    if (!loadSym(DCS_DLL_INIT, _init_fn))
+    // 必须导出生命周期函数
+    if (!loadSym(DCS_DLL_INIT, _init_fn)) {
+        error = "DLL 缺少: dcs_dll_init";
         return false;
-    if (!loadSym(DCS_DLL_DEINIT, _deinit_fn))
+    }
+    if (!loadSym(DCS_DLL_DEINIT, _deinit_fn)) {
+        error = "DLL 缺少: dcs_dll_deinit";
         return false;
-    if (!loadSym(DCS_DLL_CREATE, _create_fn))
+    }
+    if (!loadSym(DCS_DLL_CREATE, _create_fn)) {
+        error = "DLL 缺少: dcs_dll_create";
         return false;
-    if (!loadSym(DCS_DLL_DESTROY, _destroy_fn))
+    }
+    if (!loadSym(DCS_DLL_DESTROY, _destroy_fn)) {
+        error = "DLL 缺少: dcs_dll_destroy";
         return false;
-    if (!loadSym(DCS_DLL_TICK, _tick_fn))
+    }
+    if (!loadSym(DCS_DLL_RESET, _reset_fn)) {
+        error = "DLL 缺少: dcs_dll_reset";
         return false;
-    if (!loadSym(DCS_DLL_RESET, _reset_fn))
+    }
+
+    // tick_comb 和 tick_seq 至少加载一个
+    loadSym(DCS_DLL_TICK_COMB, _tick_comb_fn);
+    loadSym(DCS_DLL_TICK_SEQ, _tick_seq_fn);
+    if (!_tick_comb_fn && !_tick_seq_fn) {
+        error = "DLL 必须至少导出 dcs_dll_tick_comb 或 dcs_dll_tick_seq";
         return false;
+    }
 
     _loaded = true;
     return true;
 }
 
 // ============================================================
-// 生命周期钩子
+// 生命周期
 // ============================================================
 
 void DllComponent::simInit() {
@@ -101,44 +157,40 @@ void DllComponent::simInit() {
 void DllComponent::simDeinit() {
     if (_deinit_fn)
         _deinit_fn();
-}
-
-void DllComponent::onCleanup() {
-#ifdef _WIN32
-    if (_dll_handle)
-        FreeLibrary((HMODULE) _dll_handle);
-#else
-    if (_dll_handle)
-        dlclose(_dll_handle);
-#endif
-    _dll_handle = nullptr;
-    _loaded = false;
+    if (_loaded) {
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        _loaded = false;
+    }
 }
 
 // ============================================================
-// extraJitSymbols — 让生成的 C 代码能调用 DLL 函数
+// extraJitSymbols
 // ============================================================
 
 std::vector<Component::JitSymbol> DllComponent::extraJitSymbols() const {
     int id = _id;
-    return {
+    std::vector<JitSymbol> syms = {
             {std::format("_dcs_dll_create_{}", id), reinterpret_cast<void *>(_create_fn)},
             {std::format("_dcs_dll_destroy_{}", id), reinterpret_cast<void *>(_destroy_fn)},
-            {std::format("_dcs_dll_tick_{}", id), reinterpret_cast<void *>(_tick_fn)},
             {std::format("_dcs_dll_reset_{}", id), reinterpret_cast<void *>(_reset_fn)},
     };
+    if (_tick_comb_fn)
+        syms.push_back({std::format("_dcs_dll_tick_comb_{}", id), reinterpret_cast<void *>(_tick_comb_fn)});
+    if (_tick_seq_fn)
+        syms.push_back({std::format("_dcs_dll_tick_seq_{}", id), reinterpret_cast<void *>(_tick_seq_fn)});
+    return syms;
 }
 
 // ============================================================
 // C 代码生成
 // ============================================================
 
-std::string DllComponent::genFuncDef() const {
+std::string DllComponent::genTickFunc(const char *phase, int fn_id_offset) const {
     int id = _id;
     int ni = (int) inputs().size();
     int no = (int) outputs().size();
 
-    // 输入：gen_read_wire 声明变量 → 复制到 _dll_in 缓冲区
     std::string reads, copys_in;
     for (int i = 0; i < ni; i++) {
         int nid = inputs()[i]->netId();
@@ -150,7 +202,6 @@ std::string DllComponent::genFuncDef() const {
         copys_in += std::format("    dcs_memcpy(_dll_in[{}], &{}, {});\n", i, tmp, bytes);
     }
 
-    // 输出：声明临时变量 → 从 _dll_out 复制 → gen_write_wire 写回线网
     std::string out_decls, copys_out, writes;
     for (int i = 0; i < no; i++) {
         int nid = outputs()[i]->netId();
@@ -159,19 +210,19 @@ std::string DllComponent::genFuncDef() const {
         std::string tmp = std::format("_dll_wr_{}", i);
         out_decls += std::format("    {} {}; dcs_memset(&{}, 0, {});\n", c_int_type(bw), tmp, tmp, bytes);
         copys_out += std::format("    dcs_memcpy(&{}, _dll_out[{}], {});\n", tmp, i, bytes);
-        writes += "    " + gen_write_wire(nid, tmp, bw) + "\n";
+        writes += "    " + genOutputWrite(i, tmp, bw) + "\n";
     }
 
     int in_count = ni > 0 ? ni : 1;
     int out_count = no > 0 ? no : 1;
     std::string code;
-    code += std::format("// DLL 元件: {}\n", name());
+    code += std::format("// DLL 元件: {} ({})\n", name(), phase);
     code += std::format("extern void* _dcs_dll_create_{0}(void);\n", id);
     code += std::format("extern void  _dcs_dll_destroy_{0}(void*);\n", id);
-    code += std::format("extern void  _dcs_dll_tick_{0}(void*, const uint8_t*, uint8_t*);\n", id);
+    code += std::format("extern void  _dcs_dll_tick_{0}_{1}(void*, const uint8_t*, uint8_t*);\n", phase, id);
     code += std::format("extern void  _dcs_dll_reset_{0}(void*, uint8_t*);\n", id);
     code += std::format("\nstatic void* _dcs_dll_state_{0};\n\n", id);
-    code += std::format("static void {}(void) {{\n", funcName());
+    code += std::format("static void _update_{}_{}(void) {{\n", id, phase);
     code += reads;
     code += out_decls;
     code += std::format("    uint8_t _dll_in[{}][16];\n", in_count);
@@ -179,12 +230,25 @@ std::string DllComponent::genFuncDef() const {
     code += "    dcs_memset(_dll_in, 0, sizeof(_dll_in));\n";
     code += "    dcs_memset(_dll_out, 0, sizeof(_dll_out));\n";
     code += copys_in;
-    code += std::format("    _dcs_dll_tick_{0}(_dcs_dll_state_{0}, (const uint8_t*)_dll_in, (uint8_t*)_dll_out);\n",
-                        id);
+    code += std::format("    _dcs_dll_tick_{0}_{1}(_dcs_dll_state_{1}, "
+                        "(const uint8_t*)_dll_in, (uint8_t*)_dll_out);\n",
+                        phase, id);
     code += copys_out;
     code += writes;
     code += "}\n";
     return code;
+}
+
+std::string DllComponent::genFuncDef_comb() const {
+    if (!_tick_comb_fn)
+        return "";
+    return genTickFunc("comb", 0);
+}
+
+std::string DllComponent::genFuncDef_seq() const {
+    if (!_tick_seq_fn)
+        return "";
+    return genTickFunc("seq", 0);
 }
 
 std::string DllComponent::genInitCode() const {
@@ -193,6 +257,19 @@ std::string DllComponent::genInitCode() const {
     int out_count = no > 0 ? no : 1;
     std::string code;
     code += std::format("    _dcs_dll_state_{0} = _dcs_dll_create_{0}();\n", id);
+    code += "    {\n";
+    code += std::format("        uint8_t _out[{}][16];\n", out_count);
+    code += "        dcs_memset(_out, 0, sizeof(_out));\n";
+    code += std::format("        _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
+    code += "    }";
+    return code;
+}
+
+std::string DllComponent::genResetCode() const {
+    int id = _id;
+    int no = (int) outputs().size();
+    int out_count = no > 0 ? no : 1;
+    std::string code;
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
     code += "        dcs_memset(_out, 0, sizeof(_out));\n";

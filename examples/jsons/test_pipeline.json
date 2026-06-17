@@ -1,0 +1,53 @@
+{
+  "nets": ["a", "b", "sum", "diff", "prod", "clk", "latched"],
+  "components": [
+    {
+      "type": "fconst",
+      "name": "val_a",
+      "params": {"precision": "32", "value": "7.0"},
+      "connections": {"out": "a"}
+    },
+    {
+      "type": "fconst",
+      "name": "val_b",
+      "params": {"precision": "32", "value": "3.0"},
+      "connections": {"out": "b"}
+    },
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "fadd",
+      "name": "add_ab",
+      "params": {"precision": "32"},
+      "connections": {"a": "a", "b": "b", "out": "sum"}
+    },
+    {
+      "type": "fsub",
+      "name": "sub_ab",
+      "params": {"precision": "32"},
+      "connections": {"a": "a", "b": "b", "out": "diff"}
+    },
+    {
+      "type": "fmul",
+      "name": "mul_sd",
+      "params": {"precision": "32"},
+      "connections": {"a": "sum", "b": "diff", "out": "prod"}
+    },
+    {
+      "type": "dff",
+      "name": "latch_result",
+      "params": {"bit_width": "32"},
+      "connections": {"d": "prod", "clk": "clk", "q": "latched"}
+    },
+    {
+      "type": "print",
+      "name": "monitor",
+      "params": {"bit_width": "32"},
+      "connections": {"in": "latched", "clk": "clk"}
+    }
+  ]
+}

@@ -14,7 +14,7 @@ class FloatAdd : public CombinationalComponent {
 public:
     // precision: 32 (float) 或 64 (double)，默认 32
     FloatAdd(const std::string &name, int precision = 32);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -27,7 +27,7 @@ private:
 class FloatSub : public CombinationalComponent {
 public:
     FloatSub(const std::string &name, int precision = 32);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -40,7 +40,7 @@ private:
 class FloatMul : public CombinationalComponent {
 public:
     FloatMul(const std::string &name, int precision = 32);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -53,7 +53,7 @@ private:
 class FloatDiv : public CombinationalComponent {
 public:
     FloatDiv(const std::string &name, int precision = 32);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -68,7 +68,7 @@ enum class FloatCmpOp { EQ, NE, LT, GT, LE, GE };
 class FloatCmp : public CombinationalComponent {
 public:
     FloatCmp(const std::string &name, int precision, FloatCmpOp op);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -84,7 +84,7 @@ public:
     // precision: 32 (float) 或 64 (double)
     // value: 浮点值（double 表示，内部按 precision 截断）
     FloatConst(const std::string &name, int precision, double value);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:

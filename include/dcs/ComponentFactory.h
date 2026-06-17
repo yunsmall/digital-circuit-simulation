@@ -5,6 +5,7 @@
 //
 // 生命周期: Meyer's Singleton，首次调用 instance() 时构造，程序结束时析构。
 #pragma once
+#include <format>
 #include <functional>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@ public:
     struct ParamMeta {
         std::string name; // 参数名
         std::string default_val; // 默认值字符串（空 = 必填）
+        std::vector<std::string> valid_values; // 可选约束：非空时参数只能取列表中的值
     };
 
     // 元件类型描述
@@ -41,8 +43,44 @@ public:
         _metas[meta.type_name] = std::move(meta);
     }
 
+    // 校验失败时返回错误信息；成功时 error 为空
+    static std::string validateParams(const Meta &meta, const std::unordered_map<std::string, std::string> &params) {
+        for (auto &pm: meta.params) {
+            if (pm.valid_values.empty())
+                continue;
+            auto it = params.find(pm.name);
+            if (it == params.end())
+                continue; // 缺省用默认值，不校验
+            if (std::find(pm.valid_values.begin(), pm.valid_values.end(), it->second) == pm.valid_values.end()) {
+                std::string valid;
+                for (size_t i = 0; i < pm.valid_values.size(); i++)
+                    valid += (i ? ", " : "") + pm.valid_values[i];
+                return std::format("参数 {} 的值 \"{}\" 无效，允许: {}", pm.name, it->second, valid);
+            }
+        }
+        return "";
+    }
+
     std::unique_ptr<Component> create(const std::string &type_name, const std::string &name,
-                                      const std::unordered_map<std::string, std::string> &params) const {
+                                      const std::unordered_map<std::string, std::string> &params,
+                                      std::string &error) const {
+        auto it = _creators.find(type_name);
+        if (it == _creators.end()) {
+            error = std::format("未知元件类型: {}", type_name);
+            return nullptr;
+        }
+        auto mi = _metas.find(type_name);
+        if (mi != _metas.end()) {
+            error = validateParams(mi->second, params);
+            if (!error.empty())
+                return nullptr;
+        }
+        return it->second(name, params);
+    }
+
+    // 无校验版本（C++ API 直接调用，跳过 valid_values 检查）
+    std::unique_ptr<Component> createUnchecked(const std::string &type_name, const std::string &name,
+                                               const std::unordered_map<std::string, std::string> &params) const {
         auto it = _creators.find(type_name);
         if (it == _creators.end())
             return nullptr;

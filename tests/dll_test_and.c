@@ -4,7 +4,7 @@
 //   cl /LD tests/dll_test_and.c /Iinclude /Fe:build/RelWithDebInfo/dll_test_and.dll
 //
 // 导出: dcs_dll_desc, dcs_dll_init, dcs_dll_deinit,
-//       dcs_dll_create, dcs_dll_destroy, dcs_dll_tick, dcs_dll_reset
+//       dcs_dll_create, dcs_dll_destroy, dcs_dll_tick_comb, dcs_dll_reset
 
 #include <stdlib.h>
 #include <string.h>
@@ -16,24 +16,24 @@ typedef struct {
 } AndState;
 
 // ---- 引脚描述 ----
-static dcs_dll_pin_desc_t s_inputs[] = {{"a", 8}, {"b", 8}};
-static dcs_dll_pin_desc_t s_outputs[] = {{"y", 8}};
+static dcs_dll_pin_desc_t s_inputs[] = {{"a", 8, 0, 0}, {"b", 8, 0, 0}};
+static dcs_dll_pin_desc_t s_outputs[] = {{"y", 8, 0, 0}};
 
-__declspec(dllexport) dcs_dll_descriptor_t dcs_dll_desc = {"and_gate", 2, 1, s_inputs, s_outputs};
+DCS_DLL_EXPORT dcs_dll_descriptor_t dcs_dll_desc = {"and_gate", 2, 1, s_inputs, s_outputs};
 
 // ---- 生命周期 ----
-__declspec(dllexport) void dcs_dll_init(void) {
+DCS_DLL_EXPORT void dcs_dll_init(void) {
 }
-__declspec(dllexport) void dcs_dll_deinit(void) {
+DCS_DLL_EXPORT void dcs_dll_deinit(void) {
 }
 
-__declspec(dllexport) void *dcs_dll_create(void) {
+DCS_DLL_EXPORT void *dcs_dll_create(void) {
     AndState *s = (AndState *) malloc(sizeof(AndState));
     s->dummy = 0;
     return s;
 }
 
-__declspec(dllexport) void dcs_dll_destroy(void *st) {
+DCS_DLL_EXPORT void dcs_dll_destroy(void *st) {
     free(st);
 }
 
@@ -41,7 +41,7 @@ __declspec(dllexport) void dcs_dll_destroy(void *st) {
 
 // 每个引脚在缓冲区中占 16 字节（线网格式 uint8_t[16]）
 // 引脚顺序与描述符中一致
-__declspec(dllexport) void dcs_dll_tick(void *st, const uint8_t *inputs, uint8_t *outputs) {
+DCS_DLL_EXPORT void dcs_dll_tick_comb(void *st, const uint8_t *inputs, uint8_t *outputs) {
     (void) st;
     // inputs:  0..15 = a, 16..31 = b（每个引脚 16 字节）
     // outputs: 0..15 = y
@@ -51,7 +51,7 @@ __declspec(dllexport) void dcs_dll_tick(void *st, const uint8_t *inputs, uint8_t
     memset(outputs + 1, 0, 15); // 清零高位
 }
 
-__declspec(dllexport) void dcs_dll_reset(void *st, uint8_t *outputs) {
+DCS_DLL_EXPORT void dcs_dll_reset(void *st, uint8_t *outputs) {
     (void) st;
     memset(outputs, 0, 16);
 }

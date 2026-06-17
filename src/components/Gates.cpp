@@ -105,17 +105,20 @@ GateNOT::GateNOT(const std::string &name, int bit_width) : CombinationalComponen
     addInput("in", bit_width);
     addOutput("out", bit_width);
 }
-std::string GateNOT::genFuncDef() const {
+std::string GateNOT::genFuncDef_comb() const {
     int i0 = inputs()[0]->netId(), nw = i0 >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int o0 = outputs()[0]->netId();
+    std::string write;
+    if (o0 >= 0)
+        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
     return std::format(R"(static void {}(void) {{
     {}
     {} _out = ~_in;
     _out &= {};
-    {}
+{}
 }})",
-                       funcName(), gen_read_wire(i0, _bit_width, nw, "_in"), c_int_type(_bit_width),
-                       gen_mask(_bit_width), gen_write_wire(o0, "_out", _bit_width));
+                       funcName_comb(), gen_read_wire(i0, _bit_width, nw, "_in"), c_int_type(_bit_width),
+                       gen_mask(_bit_width), write);
 }
 std::unique_ptr<Component> GateNOT::clone(const std::string &n) const {
     return std::make_unique<GateNOT>(n, _bit_width);
@@ -128,16 +131,18 @@ GateBUF::GateBUF(const std::string &name, int bit_width) : CombinationalComponen
     addInput("in", bit_width);
     addOutput("out", bit_width);
 }
-std::string GateBUF::genFuncDef() const {
+std::string GateBUF::genFuncDef_comb() const {
     int i0 = inputs()[0]->netId(), nw = i0 >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int o0 = outputs()[0]->netId();
+    std::string write;
+    if (o0 >= 0)
+        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
     return std::format(R"(static void {}(void) {{
     {}
     {} _out = _in;
-    {}
+{}
 }})",
-                       funcName(), gen_read_wire(i0, _bit_width, nw, "_in"), c_int_type(_bit_width),
-                       gen_write_wire(o0, "_out", _bit_width));
+                       funcName_comb(), gen_read_wire(i0, _bit_width, nw, "_in"), c_int_type(_bit_width), write);
 }
 std::unique_ptr<Component> GateBUF::clone(const std::string &n) const {
     return std::make_unique<GateBUF>(n, _bit_width);
@@ -150,20 +155,23 @@ GateTSBUF::GateTSBUF(const std::string &name, int bit_width) :
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("in", bit_width);
     addInput("oe", 1);
-    addOutput("out", bit_width);
+    addOutput("out", bit_width, true); // 三态输出
 }
-std::string GateTSBUF::genFuncDef() const {
+std::string GateTSBUF::genFuncDef_comb() const {
     int i0 = inputs()[0]->netId(), nw = i0 >= 0 ? inputs()[0]->net()->bit_width() : 0;
-    int oe = inputs()[1]->netId(), o0 = outputs()[0]->netId();
-    std::string oe_r = oe >= 0 ? std::format("bool _oe; dcs_memcpy(&_oe, _w[{}], 1);", oe) : "bool _oe = false;";
-    std::string wb =
-            o0 >= 0 ? std::format("    if (_oe) {{\n        {}\n    }}", gen_write_wire(o0, "_in", _bit_width)) : "";
+    int oe_nid = inputs()[1]->netId(), o0 = outputs()[0]->netId();
+    std::string oe_r = oe_nid >= 0 ? std::format("    bool _oe = false; dcs_memcpy(&_oe, _w[{}], 1);", oe_nid)
+                                   : "    bool _oe = false;";
+    // 始终写候选数据，oe 标志由 oe 引脚决定
+    std::string wb;
+    if (o0 >= 0)
+        wb = std::format("    {}\n    _c_oe_{}_0 = _oe;\n", genOutputWrite(0, "_in", _bit_width), _id);
     return std::format(R"(static void {}(void) {{
     {}
     {}
 {}
 }})",
-                       funcName(), gen_read_wire(i0, _bit_width, nw, "_in"), oe_r, wb);
+                       funcName_comb(), gen_read_wire(i0, _bit_width, nw, "_in"), oe_r, wb);
 }
 std::unique_ptr<Component> GateTSBUF::clone(const std::string &n) const {
     return std::make_unique<GateTSBUF>(n, _bit_width);

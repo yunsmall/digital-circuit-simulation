@@ -16,7 +16,7 @@ public:
     // n_selects: 选择线数量（1~4）
     // bit_width: 数据位宽（1~64）
     Mux(const std::string &name, int n_selects, int bit_width);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -36,7 +36,7 @@ public:
     // bit_width: 操作数位宽（1~64）
     // is_signed: 有符号模式，使用 int64_t 内部计算
     Adder(const std::string &name, int bit_width, bool is_signed = false);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -58,7 +58,7 @@ public:
     // op: 比较运算类型
     // is_signed: 有符号比较模式（对 LT/GT/LE/GE 有影响，EQ/NE 无影响）
     Comparator(const std::string &name, int bit_width, CmpOp op, bool is_signed = false);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -79,7 +79,7 @@ class Decoder : public CombinationalComponent {
 public:
     // n_selects: 选择位宽（1~8），产生 2^n 个输出
     Decoder(const std::string &name, int n_selects);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -97,7 +97,7 @@ class Encoder : public CombinationalComponent {
 public:
     // n_selects: 二进制输出位宽（1~8），需要 2^n 个输入
     Encoder(const std::string &name, int n_selects);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -113,7 +113,7 @@ private:
 class Subtractor : public CombinationalComponent {
 public:
     Subtractor(const std::string &name, int bit_width);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -130,7 +130,7 @@ private:
 class Multiplier : public CombinationalComponent {
 public:
     Multiplier(const std::string &name, int bit_width, bool is_signed = false);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -148,7 +148,7 @@ private:
 class Divider : public CombinationalComponent {
 public:
     Divider(const std::string &name, int bit_width, bool is_signed = false);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:

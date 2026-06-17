@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,6 +18,29 @@ namespace orc {
 #endif
 
 namespace dsc {
+
+// ============================================================
+// 运行时错误
+// ============================================================
+
+enum class ErrorCode {
+    OK = 0,
+    PIN_NOT_FOUND,
+    MULTIPLE_DRIVERS,
+    COMBINATIONAL_LOOP,
+    PREPARE_FAILED, // DLL 加载等编译前准备失败
+    JIT_COMPILE_FAILED, // C→IR 编译失败（TCC/Clang 统一）
+    JIT_LINK_FAILED, // 重定位/添加模块失败
+    JIT_SYMBOL_FAILED, // 符号注入/查找失败
+    BUS_CONFLICT, // 运行时总线冲突
+};
+
+struct CircuitError {
+    ErrorCode code = ErrorCode::OK;
+    int net_id = -1;
+    std::vector<int> comp_ids; // 参与冲突的元件 ID
+    std::string message;
+};
 
 // ============================================================
 // Circuit — 电路容器 + JIT 编译 + 仿真运行
@@ -50,21 +74,32 @@ public:
     void connect(Component *comp, const std::string &pin_name, Net *net);
 
     // --- 验证与编译 ---
-    void check(); // 环路检测，失败抛 runtime_error
-    void compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）
+    CircuitError check(); // 环路检测，失败返回错误
+    CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）
     bool isCompiled() const {
         return _compiled;
-    }
-    const std::string &error() const {
-        return _error;
     }
 
     // --- 仿真运行 ---
     void init(); // 调用 circuit_init()，清零所有状态
-    void tick(); // 调用 circuit_tick()，执行一个周期
+    void tick(); // 调用 circuit_tick()，执行一个周期。有未清错误时直接返回
+    void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
     std::vector<uint8_t> getWire(int id); // 读取线网值
+
+    // --- 运行时错误 ---
+    bool hasError() const {
+        return _tick_error.code != ErrorCode::OK;
+    }
+    const CircuitError &tickError() const {
+        return _tick_error;
+    }
+    void clearError() {
+        _tick_error = {};
+    }
+    // 由 JIT 回调（勿手动调用）
+    void onBusConflict(int net_id);
 
     // --- 重建 ---
     void clear(); // 清空电路和 JIT 编译结果
@@ -90,15 +125,28 @@ public:
 
     // --- JSON 序列化 ---
     std::string exportJson() const; // 导出电路为 JSON 字符串
-    static std::unique_ptr<Circuit> fromJson(const std::string &json, std::string &error); // 从 JSON 重建电路
+    static std::unique_ptr<Circuit> fromJson(const std::string &json, std::string &error,
+                                             const std::string &base_dir = ""); // 从 JSON 重建电路
+
+    // --- JIT 头文件搜索路径 ---
+    // 设置后优先使用；为空时使用默认行为（exe 同目录下的 shim/）
+    static void setJitIncludeDir(const std::string &dir);
+    static const std::string &jitIncludeDir();
 
 private:
     enum class Color { WHITE, GRAY, BLACK };
     std::vector<std::unique_ptr<Net>> _nets;
     std::vector<std::unique_ptr<Component>> _components;
 
+    // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
+    struct BusDriver {
+        Component *comp;
+        int out_idx;
+    };
+    std::map<int, std::vector<BusDriver>> _bus_nets;
+
     bool _compiled = false;
-    std::string _error;
+    CircuitError _tick_error;
 
 #ifndef DCS_USE_TCC
     std::unique_ptr<llvm::LLVMContext> _llvm_ctx;
@@ -106,9 +154,12 @@ private:
 #endif
     void *_tcc_state = nullptr; // TCCState* (TCC 后端使用)
 
+    static std::string _jit_include_dir; // JIT 头文件搜索路径（空=自动检测）
+
     void (*_tick_fn)() = nullptr;
     void (*_init_fn)() = nullptr;
     void (*_deinit_fn)() = nullptr;
+    void (*_reset_fn)() = nullptr;
     void (*_set_wire_fn)(int, const uint8_t *) = nullptr;
     void (*_get_wire_fn)(int, uint8_t *) = nullptr;
 

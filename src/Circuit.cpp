@@ -8,9 +8,21 @@
 #include <filesystem>
 #include <format>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+
+// JIT 头文件搜索路径（静态成员）
+std::string dsc::Circuit::_jit_include_dir;
+
+void dsc::Circuit::setJitIncludeDir(const std::string &dir) {
+    _jit_include_dir = dir;
+}
+
+const std::string &dsc::Circuit::jitIncludeDir() {
+    return _jit_include_dir;
+}
 
 #ifdef DCS_USE_TCC
 // ---- TinyCC 后端 ----
@@ -30,6 +42,11 @@
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Lex/PreprocessorOptions.h>
 #endif
+
+// 总线冲突回调（JIT 注入，通过 _circuit_ptr 回调到 Circuit 对象）
+extern "C" void dcs_bus_conflict(void *circuit, int net_id) {
+    static_cast<dsc::Circuit *>(circuit)->onBusConflict(net_id);
+}
 
 namespace dsc {
 
@@ -69,14 +86,15 @@ void Circuit::deinit() {
 }
 
 void Circuit::clear() {
-    // 卸载外部资源（DLL: FreeLibrary）
-    for (auto &comp: _components)
-        comp->onCleanup();
-
     jitCleanup();
     _nets.clear();
     _components.clear();
-    _error.clear();
+    _bus_nets.clear();
+}
+
+void Circuit::reset() {
+    if (_reset_fn)
+        _reset_fn();
 }
 
 void Circuit::jitCleanup() {
@@ -84,6 +102,7 @@ void Circuit::jitCleanup() {
     _tick_fn = nullptr;
     _init_fn = nullptr;
     _deinit_fn = nullptr;
+    _reset_fn = nullptr;
     _set_wire_fn = nullptr;
     _get_wire_fn = nullptr;
 #ifdef DCS_USE_TCC
@@ -112,8 +131,9 @@ Net *Circuit::createNet(const std::string &name) {
 
 Component *Circuit::addComponent(std::unique_ptr<Component> comp) {
     // 加入电路时立即准备元件（DLL 加载、读取描述符创建引脚等）
-    if (!comp->prepare(_error))
-        throw std::runtime_error(_error);
+    std::string prep_err;
+    if (!comp->prepare(prep_err))
+        throw std::runtime_error(prep_err);
     comp->setId((int) _components.size());
     Component *ptr = comp.get();
     _components.push_back(std::move(comp));
@@ -126,11 +146,32 @@ void Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
         throw std::runtime_error(std::format("元件 '{}' 没有引脚 '{}'", comp->name(), pin_name));
 
     if (pin->isOutput()) {
-        for (auto &c: _components)
-            for (auto &p: c->outputs())
-                if (p->net() == net && p.get() != pin)
+        // 找到此输出在元件中的索引
+        int this_out_idx = -1;
+        for (int i = 0; i < (int) comp->outputs().size(); i++) {
+            if (comp->outputs()[i].get() == pin) {
+                this_out_idx = i;
+                break;
+            }
+        }
+
+        for (auto &c: _components) {
+            for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+                auto &p = c->outputs()[oi];
+                if (p->net() == net && p.get() != pin) {
+                    // 双方都是三态输出 → 允许多驱动，标记总线
+                    if (pin->isTriState() && p->isTriState()) {
+                        if (_bus_nets.find(net->id()) == _bus_nets.end())
+                            _bus_nets[net->id()].push_back({c.get(), oi});
+                        _bus_nets[net->id()].push_back({comp, this_out_idx});
+                        goto allow_connect;
+                    }
                     throw std::runtime_error(std::format("线网 '{}' 已被多个输出驱动", net->name()));
+                }
+            }
+        }
     }
+allow_connect:
     pin->setNet(net);
     net->updateBitWidth(pin->bit_width());
 }
@@ -162,7 +203,7 @@ Pin *Circuit::findPin(Component *comp, const std::string &name) {
 // 环路检测
 // ============================================================
 
-void Circuit::check() {
+CircuitError Circuit::check() {
     int N = (int) _nets.size();
     std::vector<std::vector<int>> adj(N);
     for (auto &comp: _components) {
@@ -196,10 +237,11 @@ void Circuit::check() {
                         oss << _nets[nid]->name() << " -> ";
                 }
                 oss << _nets[cycle_start]->name();
-                throw std::runtime_error(oss.str());
+                return {ErrorCode::COMBINATIONAL_LOOP, -1, {}, oss.str()};
             }
         }
     }
+    return {ErrorCode::OK};
 }
 
 bool Circuit::dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color,
@@ -255,54 +297,157 @@ std::string Circuit::generateC() const {
     std::ostringstream oss;
     oss << R"(#include <dcs_stdint.h>
 #include <dcs_stdbool.h>
-#include "dcs_util.h"
+#include <dcs_util.h>
 
 )";
-    oss << std::format("#define NET_COUNT {}\n\n", _nets.size());
-    oss << "static uint8_t _w[NET_COUNT][16];\n\n";
+    oss << std::format("#define NET_COUNT {}\n", _nets.size());
+    oss << std::format("#define COMP_COUNT {}\n\n", _components.size());
+    oss << "static uint8_t _w[NET_COUNT][16];\n";
+    oss << std::format("static void* _circuit_ptr = (void*)0x{:X};\n", reinterpret_cast<uintptr_t>(this));
+    oss << "extern void dcs_bus_conflict(void*, int);\n\n";
+
+    // 每个元件的每个输出：_c_out_<comp_id>_<out_idx>[16] + _c_oe_<comp_id>_<out_idx>
+    for (auto &c: _components) {
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            oss << std::format("static uint8_t _c_out_{}_{}[16];\n", c->id(), oi);
+            bool ts = c->outputs()[oi]->isTriState();
+            oss << std::format("static bool _c_oe_{}_{} = {};\n", c->id(), oi, ts ? "false" : "true");
+        }
+    }
+    oss << "\n";
 
     std::vector<Component *> comb, seq;
-    for (auto &c: _components)
-        (c->isSequential() ? seq : comb).push_back(c.get());
+    for (auto &c: _components) {
+        if (c->hasCombinational())
+            comb.push_back(c.get());
+        if (c->hasSequential())
+            seq.push_back(c.get());
+    }
 
-    for (auto *s: seq) {
-        auto def = s->genStructDef();
+    for (auto &c: _components) {
+        auto def = c->genStructDef();
         if (!def.empty())
             oss << def << "\n\n";
     }
-    for (auto *s: seq) {
-        auto decl = s->genStateDecl();
+    for (auto &c: _components) {
+        auto decl = c->genStateDecl();
         if (!decl.empty())
             oss << decl << "\n";
     }
-    if (!seq.empty())
-        oss << "\n";
+    oss << "\n";
 
     auto sorted = topologicalSort(comb);
 
+    // === 前向声明 ===
+    oss << "// ---- 组合逻辑 ----\n";
     for (auto *c: sorted)
-        oss << c->genFuncDecl() << "\n";
-    for (auto *s: seq)
-        oss << s->genFuncDecl() << "\n";
+        if (c->hasCombinational())
+            oss << c->genFuncDecl_comb() << "\n";
+    oss << "// ---- 时序逻辑 ----\n";
+    for (auto &c: _components) {
+        auto *s = c.get();
+        if (s->hasSequential())
+            oss << s->genFuncDecl_seq() << "\n";
+    }
     oss << "\n";
 
+    // === 函数定义 ===
+    oss << "// ---- 组合逻辑 ----\n";
     for (auto *c: sorted)
-        oss << c->genFuncDef() << "\n";
-    for (auto *s: seq)
-        oss << s->genFuncDef() << "\n";
+        if (c->hasCombinational())
+            oss << c->genFuncDef_comb() << "\n";
+    oss << "// ---- 时序逻辑 ----\n";
+    for (auto &c: _components) {
+        auto *s = c.get();
+        if (s->hasSequential())
+            oss << s->genFuncDef_seq() << "\n";
+    }
 
+    // === circuit_tick ===
     oss << "void circuit_tick(void) {\n";
+    oss << "    // 阶段1: 组合逻辑\n";
     for (auto *c: sorted)
-        oss << "    " << c->funcName() << "();\n";
-    for (auto *s: seq)
-        oss << "    " << s->funcName() << "();\n";
+        if (c->hasCombinational())
+            oss << "    " << c->funcName_comb() << "();\n";
+    oss << "    // 阶段2: 传播 + 总线决议\n";
+
+    // 传播阶段：_c_out → _w（含总线决议）
+    // 先收集哪些线网是总线，哪些普通线网已经被处理
+    std::set<int> bus_nets_handled;
+
+    // 总线决议
+    for (auto &[net_id, drivers]: _bus_nets) {
+        int nb = byte_count(_nets[net_id]->bit_width());
+        oss << "\n    // 总线 " << net_id << "（" << drivers.size() << " 个三态驱动）\n";
+        oss << "    {\n";
+        oss << "        int _active = -1;\n";
+        for (int di = 0; di < (int) drivers.size(); di++) {
+            int cid = drivers[di].comp->id();
+            int oi = drivers[di].out_idx;
+            if (di == 0)
+                oss << std::format("        if (_c_oe_{}_{}) _active = {};\n", cid, oi, di);
+            else
+                oss << std::format(
+                        "        if (_c_oe_{}_{}) {{\n"
+                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); goto _bus_done_{}; }}\n"
+                        "            _active = {};\n"
+                        "        }}\n",
+                        cid, oi, net_id, net_id, di);
+        }
+        oss << "        if (_active >= 0) {\n";
+        for (int di = 0; di < (int) drivers.size(); di++) {
+            int cid = drivers[di].comp->id();
+            int oi = drivers[di].out_idx;
+            oss << std::format("            {}if (_active == {}) dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n",
+                               di == 0 ? "" : "else ", di, net_id, cid, oi, nb);
+        }
+        oss << std::format("            dcs_memset(_w[{}] + {}, 0, {});\n", net_id, nb, 16 - nb);
+        oss << "        } else {\n";
+        oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
+        oss << "        }\n";
+        oss << std::format("    _bus_done_{}: ;\n", net_id);
+        oss << "    }\n";
+        bus_nets_handled.insert(net_id);
+    }
+
+    // 非总线线网：若驱动活跃则拷贝 _c_out → _w
+    for (auto &c: _components) {
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            Net *n = c->outputs()[oi]->net();
+            if (!n)
+                continue;
+            int nid = n->id();
+            if (bus_nets_handled.count(nid))
+                continue; // 总线已处理
+            int nb = byte_count(n->bit_width());
+            oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
+            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
+            oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
+            oss << "    } else {\n";
+            oss << std::format("        dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", nid);
+            oss << "    }\n";
+        }
+    }
+
+    oss << "    // 阶段3: 时序逻辑\n";
+    for (auto &c: _components) {
+        auto *s = c.get();
+        if (s->hasSequential())
+            oss << "    " << s->funcName_seq() << "();\n";
+    }
     oss << "}\n\n";
 
     oss << R"(void circuit_init(void) {
     dcs_memset(_w, 0, sizeof(_w));
 )";
-    for (auto *s: seq) {
-        auto init = s->genInitCode();
+    // 清零所有 _c_out 和 _c_oe
+    for (auto &c: _components) {
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+        }
+    }
+    for (auto &c: _components) {
+        auto init = c->genInitCode();
         if (!init.empty())
             oss << init << "\n";
     }
@@ -310,10 +455,26 @@ std::string Circuit::generateC() const {
 
     oss << R"(void circuit_deinit(void) {
 )";
-    for (auto *s: seq) {
-        auto deinit = s->genDeinitCode();
+    for (auto &c: _components) {
+        auto deinit = c->genDeinitCode();
         if (!deinit.empty())
             oss << deinit << "\n";
+    }
+    oss << "}\n\n";
+
+    oss << R"(void circuit_reset(void) {
+    dcs_memset(_w, 0, sizeof(_w));
+)";
+    // 清零所有 _c_out 和 _c_oe
+    for (auto &c: _components) {
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+        }
+    }
+    for (auto &c: _components) {
+        auto reset = c->genResetCode();
+        if (!reset.empty())
+            oss << reset << "\n";
     }
     oss << "}\n\n";
 
@@ -385,11 +546,12 @@ std::vector<Component *> Circuit::topologicalSort(const std::vector<Component *>
 // JIT 编译
 // ============================================================
 
-void Circuit::compile() {
+CircuitError Circuit::compile() {
     // 仅重置 JIT 函数指针，不卸载 DLL
     _tick_fn = nullptr;
     _init_fn = nullptr;
     _deinit_fn = nullptr;
+    _reset_fn = nullptr;
     _set_wire_fn = nullptr;
     _get_wire_fn = nullptr;
     _compiled = false;
@@ -411,23 +573,31 @@ void Circuit::compile() {
         _components[i]->setId(i);
 
     // 环路检测
-    check();
-
-    // 统一入口：所有元件的编译前准备（如加载 DLL）
-    for (auto &comp: _components)
-        if (!comp->prepare(_error))
-            return;
+    if (auto err = check(); err.code != ErrorCode::OK)
+        return err;
 
     std::string c_code = generateC();
 
-    // 获取 shim 路径
+
+    // 获取 shim 路径：优先使用 setJitIncludeDir() 设置的路径，否则自动检测
     auto shim_path = []() -> std::string {
         namespace fs = std::filesystem;
+        // 优先：用户通过 setJitIncludeDir() 设置
+        if (!_jit_include_dir.empty()) {
+            if (fs::exists(_jit_include_dir))
+                return _jit_include_dir;
+        }
+        // 回退：exe 同目录下的 shim/
         auto dir = fs::path(exeDir());
         auto shim = dir / "shim";
         if (fs::exists(shim))
             return shim.string();
+        // 再回退：exe 上两级（开发构建目录结构）
         shim = dir.parent_path().parent_path() / "shim";
+        if (fs::exists(shim))
+            return shim.string();
+        // 再回退：安装布局（bin/dcs → ../include/dcs/shim）
+        shim = dir.parent_path() / "include" / "dcs" / "shim";
         if (fs::exists(shim))
             return shim.string();
         return "";
@@ -439,50 +609,49 @@ void Circuit::compile() {
     // ============================================================
     auto *s = tcc_new();
     if (!s) {
-        _error = "tcc_new 失败";
-        return;
+        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "tcc_new 失败"};
     }
 
     tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
 
     // 不使用标准库，纯独立 C 代码
-    tcc_set_options(s, "-nostdlib");
+    tcc_set_options(s, "-nostdlib -O2");
 
     if (!shim_path.empty()) {
-        tcc_add_include_path(s, shim_path.c_str());
-        // 头文件 #include <dcs_stdint.h> 需要 <> 查找，加 sysinclude
         tcc_add_sysinclude_path(s, shim_path.c_str());
     }
 
     // 统一入口：编译前注入所有元件的额外 JIT 符号（DLL 函数指针、内存地址等）
+    tcc_add_symbol(s, "dcs_bus_conflict",
+                   reinterpret_cast<void *>(reinterpret_cast<void (*)(void *, int)>(&dcs_bus_conflict)));
     for (auto &comp: _components)
         for (auto &[name, ptr]: comp->extraJitSymbols())
             tcc_add_symbol(s, name.c_str(), ptr);
 
     if (tcc_compile_string(s, c_code.c_str()) == -1) {
-        _error = "TCC 编译失败";
         tcc_delete(s);
-        return;
+        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "TCC 编译失败"};
     }
 
-    // 重定位
+    // 重定位（TCC HEAD 及 Windows 均为单参数；旧版 apt 需双参数 tcc_relocate(s, TCC_RELOCATE_AUTO)）
     tcc_relocate(s);
 
     // 查找函数符号
     _tick_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_tick"));
     _init_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_init"));
     _deinit_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_deinit"));
+    _reset_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_reset"));
     _set_wire_fn = reinterpret_cast<void (*)(int, const uint8_t *)>(tcc_get_symbol(s, "circuit_set_wire"));
     _get_wire_fn = reinterpret_cast<void (*)(int, uint8_t *)>(tcc_get_symbol(s, "circuit_get_wire"));
 
     if (!_tick_fn || !_init_fn || !_set_wire_fn || !_get_wire_fn) {
-        _error = "TCC 查找符号失败";
         tcc_delete(s);
-        return;
+        return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, "TCC 查找符号失败"};
     }
 
     _tcc_state = s;
     _compiled = true;
+    return {ErrorCode::OK};
 
 #else
     // ============================================================
@@ -497,6 +666,7 @@ void Circuit::compile() {
     ci->createDiagnostics();
     auto &invoc = ci->getInvocation();
     invoc.getTargetOpts().Triple = llvm::sys::getDefaultTargetTriple();
+    invoc.getTargetOpts().CPU = "x86-64"; // 基线 x86-64，避免 CI VM 中 SIGILL
     invoc.getLangOpts().C99 = true;
     invoc.getLangOpts().C11 = true;
     invoc.getLangOpts().CPlusPlus = false;
@@ -517,39 +687,49 @@ void Circuit::compile() {
 
     auto action = std::make_unique<clang::EmitLLVMOnlyAction>(_llvm_ctx.get());
     if (!ci->ExecuteAction(*action)) {
-        _error = "Clang 编译 C 代码失败";
         jitCleanup();
-        return;
+        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "Clang 编译 C 代码失败"};
     }
     auto module = action->takeModule();
 
-    auto jit_or_err = llvm::orc::LLJITBuilder().create();
-    if (!jit_or_err) {
-        _error = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());
+    auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
+    if (!jtmb) {
         jitCleanup();
-        return;
+        return {ErrorCode::JIT_LINK_FAILED, -1, {}, "检测目标机失败: " + llvm::toString(jtmb.takeError())};
+    }
+    jtmb->setCPU("x86-64"); // 基线 x86-64，避免 CI VM 中 SIGILL
+    auto jit_or_err = llvm::orc::LLJITBuilder().setJITTargetMachineBuilder(std::move(*jtmb)).create();
+    if (!jit_or_err) {
+        auto llvm_err = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());
+        jitCleanup();
+        return {ErrorCode::JIT_LINK_FAILED, -1, {}, llvm_err};
     }
     _jit = std::move(*jit_or_err);
 
     // 统一入口：注入所有元件的额外 JIT 符号（DLL 函数指针等）
     {
         llvm::orc::SymbolMap syms;
+        // 注入总线冲突回调
+        syms[_jit->mangleAndIntern("dcs_bus_conflict")] = {
+                llvm::orc::ExecutorAddr::fromPtr(
+                        reinterpret_cast<void *>(reinterpret_cast<void (*)(void *, int)>(&dcs_bus_conflict))),
+                llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable};
         for (auto &comp: _components)
             for (auto &[name, ptr]: comp->extraJitSymbols())
                 syms[_jit->mangleAndIntern(name)] = {llvm::orc::ExecutorAddr::fromPtr(ptr),
                                                      llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable};
         if (auto err = _jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(syms)))) {
-            _error = "注入 JIT 符号失败: " + llvm::toString(std::move(err));
+            auto sym_err = "注入 JIT 符号失败: " + llvm::toString(std::move(err));
             jitCleanup();
-            return;
+            return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, sym_err};
         }
     }
 
     auto tsm = llvm::orc::ThreadSafeModule(std::move(module), std::make_unique<llvm::LLVMContext>());
     if (auto err = _jit->addIRModule(std::move(tsm))) {
-        _error = "添加 IR 模块失败: " + llvm::toString(std::move(err));
+        auto mod_err = "添加 IR 模块失败: " + llvm::toString(std::move(err));
         jitCleanup();
-        return;
+        return {ErrorCode::JIT_LINK_FAILED, -1, {}, mod_err};
     }
 
     auto lookup = [this]<typename F>(const std::string &name) -> F {
@@ -565,15 +745,16 @@ void Circuit::compile() {
     _tick_fn = lookup.operator()<void (*)()>("circuit_tick");
     _init_fn = lookup.operator()<void (*)()>("circuit_init");
     _deinit_fn = lookup.operator()<void (*)()>("circuit_deinit");
+    _reset_fn = lookup.operator()<void (*)()>("circuit_reset");
     _set_wire_fn = lookup.operator()<void (*)(int, const uint8_t *)>("circuit_set_wire");
     _get_wire_fn = lookup.operator()<void (*)(int, uint8_t *)>("circuit_get_wire");
 
     if (!_tick_fn || !_init_fn || !_set_wire_fn || !_get_wire_fn) {
-        _error = "查找 JIT 符号失败";
         jitCleanup();
-        return;
+        return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, "查找 JIT 符号失败"};
     }
     _compiled = true;
+    return {ErrorCode::OK};
 #endif
 }
 
@@ -589,8 +770,23 @@ void Circuit::init() {
         _init_fn();
 }
 void Circuit::tick() {
+    if (_tick_error.code != ErrorCode::OK)
+        return;
     if (_tick_fn)
         _tick_fn();
+}
+
+void Circuit::onBusConflict(int net_id) {
+    if (_tick_error.code != ErrorCode::OK)
+        return;
+    _tick_error.code = ErrorCode::BUS_CONFLICT;
+    _tick_error.net_id = net_id;
+    auto it = _bus_nets.find(net_id);
+    if (it != _bus_nets.end())
+        for (auto &d: it->second)
+            _tick_error.comp_ids.push_back(d.comp->id());
+    _tick_error.message = std::format("总线冲突: 线网 '{}' 被 {} 个三态门同时驱动", _nets[net_id]->name(),
+                                      _tick_error.comp_ids.size());
 }
 
 void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
@@ -668,7 +864,8 @@ std::string Circuit::exportJson() const {
     return root.dump(2);
 }
 
-std::unique_ptr<Circuit> Circuit::fromJson(const std::string &json_str, std::string &error) {
+std::unique_ptr<Circuit> Circuit::fromJson(const std::string &json_str, std::string &error,
+                                           const std::string &base_dir) {
     using json = nlohmann::json;
 
     json root;
@@ -730,10 +927,20 @@ std::unique_ptr<Circuit> Circuit::fromJson(const std::string &json_str, std::str
             for (auto &[k, v]: jc["params"].items())
                 params[k] = v.is_string() ? v.get<std::string>() : v.dump();
         }
+        // DLL 路径相对于 JSON 文件所在目录
+        if (type == "dll" && !base_dir.empty()) {
+            auto it = params.find("path");
+            if (it != params.end()) {
+                std::filesystem::path p(it->second);
+                if (p.is_relative())
+                    it->second = (std::filesystem::path(base_dir) / p).string();
+            }
+        }
 
-        std::unique_ptr<Component> comp = factory.create(type, name, params);
+        std::string create_error;
+        std::unique_ptr<Component> comp = factory.create(type, name, params, create_error);
         if (!comp) {
-            error = std::format("创建元件失败: type={}, name={}", type, name);
+            error = create_error.empty() ? std::format("创建元件失败: type={}, name={}", type, name) : create_error;
             return nullptr;
         }
 

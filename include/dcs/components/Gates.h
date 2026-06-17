@@ -15,7 +15,7 @@ public:
     int numInputs() const {
         return (int) inputs().size();
     }
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
 
 protected:
     int _bit_width;
@@ -62,7 +62,7 @@ public:
 class GateNOT : public CombinationalComponent {
 public:
     GateNOT(const std::string &name, int bit_width);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -71,7 +71,7 @@ private:
 class GateBUF : public CombinationalComponent {
 public:
     GateBUF(const std::string &name, int bit_width);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -80,7 +80,7 @@ private:
 class GateTSBUF : public CombinationalComponent {
 public:
     GateTSBUF(const std::string &name, int bit_width);
-    std::string genFuncDef() const override;
+    std::string genFuncDef_comb() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -109,7 +109,7 @@ MultiInputGate<Child>::MultiInputGate(const std::string &name, const std::string
 }
 
 template<typename Child>
-std::string MultiInputGate<Child>::genFuncDef() const {
+std::string MultiInputGate<Child>::genFuncDef_comb() const {
     std::string reads;
     for (int i = 0; i < numInputs(); i++) {
         int nid = inputs()[i]->netId(), nw = nid >= 0 ? inputs()[i]->net()->bit_width() : 0;
@@ -118,13 +118,16 @@ std::string MultiInputGate<Child>::genFuncDef() const {
     std::ostringstream expr;
     Child::writeExpr(expr, numInputs());
     int out_nid = outputs()[0]->netId();
-    std::string write = out_nid >= 0 ? std::format("    {}\n", gen_write_wire(out_nid, "_out", _bit_width)) : "";
+    std::string write;
+    if (out_nid >= 0) {
+        write = std::format("    {}\n", genOutputWrite(0, "_out", _bit_width));
+    }
     return std::format(R"(static void {}(void) {{
 {}
     {} _out = {};
 {}
 }})",
-                       funcName(), reads, c_int_type(_bit_width), expr.str(), write);
+                       funcName_comb(), reads, c_int_type(_bit_width), expr.str(), write);
 }
 
 } // namespace dsc

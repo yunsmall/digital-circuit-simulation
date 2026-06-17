@@ -31,7 +31,7 @@ public:
     std::string genStructDef() const override; // typedef struct { q[16], prev_clk } _S_dff_xxx
     std::string genStateDecl() const override; // static _S_dff_xxx _s_dff_xxx;
     std::string genInitCode() const override; // memset(&_s_xxx, 0, sizeof(...))
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -55,7 +55,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -81,7 +81,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -108,7 +108,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -135,7 +135,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -170,7 +170,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -202,7 +202,7 @@ public:
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -224,8 +224,8 @@ public:
     ClockGen(const std::string &name, int high_ticks = 1, int low_ticks = 1);
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
-    std::string genInitCode()  const override;
-    std::string genFuncDef()   const override;
+    std::string genInitCode() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:

@@ -24,7 +24,7 @@ DFlipFlop::DFlipFlop(const std::string &name, int bit_width, bool has_en, bool h
         addInput("rst", 1);
     if (_has_preset)
         addInput("pre", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 
 std::string DFlipFlop::genStructDef() const {
@@ -41,7 +41,7 @@ std::string DFlipFlop::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
 
-std::string DFlipFlop::genFuncDef() const {
+std::string DFlipFlop::genFuncDef_seq() const {
     int d_nid = inputs()[0]->netId();
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int clk_nid = inputs()[1]->netId();
@@ -53,20 +53,20 @@ std::string DFlipFlop::genFuncDef() const {
     int pre_nid = _has_preset ? inputs()[_has_en + _has_rst + 1]->netId() : -1;
 
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
-    std::string read_clk =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                        : "bool _clk = false;";
 
     std::string read_opt;
     if (_has_en && en_nid >= 0)
-        read_opt += std::format("\n    bool _en; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
+        read_opt += std::format("\n    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
     else if (_has_en)
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
     if (_has_rst && rst_nid >= 0)
-        read_opt += std::format("\n    bool _rst; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
+        read_opt += std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
     if (_has_preset && pre_nid >= 0)
-        read_opt += std::format("\n    bool _pre; dcs_memcpy(&_pre, _w[{}], 1);", pre_nid);
+        read_opt += std::format("\n    bool _pre = false; dcs_memcpy(&_pre, _w[{}], 1);", pre_nid);
 
     std::string edge = std::format("bool _rising = (_clk && !{}.prev_clk);", st);
 
@@ -107,10 +107,11 @@ std::string DFlipFlop::genFuncDef() const {
     }
 
     std::string save_clk = std::format("{}.prev_clk = _clk;", st);
-    std::string write_q =
-            q_nid >= 0 ? std::format("    dcs_memcpy(_w[{0}], {1}.q, {2});\n    dcs_memset(_w[{0}] + {2}, 0, {3});",
-                                     q_nid, st, bytes, 16 - bytes)
-                       : "    // 输出悬空";
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
+    else
+        write_q = "    // 输出悬空";
 
     return std::format(R"(static void {0}(void) {{
     {1}
@@ -120,7 +121,7 @@ std::string DFlipFlop::genFuncDef() const {
     {6}
     {7}
 }})",
-                       funcName(), read_d, read_clk, read_opt, edge, update, save_clk, write_q);
+                       funcName_seq(), read_d, read_clk, read_opt, edge, update, save_clk, write_q);
 }
 
 // ============================================================
@@ -132,7 +133,7 @@ TFlipFlop::TFlipFlop(const std::string &name, int bit_width) : SequentialCompone
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("t", 1);
     addInput("clk", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 std::string TFlipFlop::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t q[16]; uint8_t prev_clk; }} {};)", stateTypeName());
@@ -143,15 +144,21 @@ std::string TFlipFlop::genStateDecl() const {
 std::string TFlipFlop::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string TFlipFlop::genFuncDef() const {
+std::string TFlipFlop::genFuncDef_seq() const {
     int t_nid = inputs()[0]->netId();
     int clk_nid = inputs()[1]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
-    std::string read_t = t_nid >= 0 ? std::format("bool _t; dcs_memcpy(&_t, _w[{}], 1);", t_nid) : "bool _t = false;";
-    std::string read_clk =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_t =
+            t_nid >= 0 ? std::format("bool _t = false; dcs_memcpy(&_t, _w[{}], 1);", t_nid) : "bool _t = false;";
+    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                        : "bool _clk = false;";
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1}
     {2}
@@ -161,10 +168,9 @@ std::string TFlipFlop::genFuncDef() const {
         {3}.q[{4} - 1] &= {5};
     }}
     {3}.prev_clk = _clk;
-    dcs_memcpy(_w[{6}], {3}.q, {4});
-    dcs_memset(_w[{6}] + {4}, 0, {7});
+{6}
 }})",
-                       funcName(), read_t, read_clk, st, bytes, gen_mask(_bit_width), q_nid, 16 - bytes);
+                       funcName_seq(), read_t, read_clk, st, bytes, gen_mask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -178,7 +184,7 @@ JKFlipFlop::JKFlipFlop(const std::string &name, int bit_width) :
     addInput("j", 1);
     addInput("k", 1);
     addInput("clk", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 std::string JKFlipFlop::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t q[16]; uint8_t prev_clk; }} {};)", stateTypeName());
@@ -189,15 +195,22 @@ std::string JKFlipFlop::genStateDecl() const {
 std::string JKFlipFlop::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string JKFlipFlop::genFuncDef() const {
+std::string JKFlipFlop::genFuncDef_seq() const {
     int j_nid = inputs()[0]->netId(), k_nid = inputs()[1]->netId(), clk_nid = inputs()[2]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
-    std::string read_j = j_nid >= 0 ? std::format("bool _j; dcs_memcpy(&_j, _w[{}], 1);", j_nid) : "bool _j = false;";
-    std::string read_k = k_nid >= 0 ? std::format("bool _k; dcs_memcpy(&_k, _w[{}], 1);", k_nid) : "bool _k = false;";
-    std::string read_c =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_j =
+            j_nid >= 0 ? std::format("bool _j = false; dcs_memcpy(&_j, _w[{}], 1);", j_nid) : "bool _j = false;";
+    std::string read_k =
+            k_nid >= 0 ? std::format("bool _k = false; dcs_memcpy(&_k, _w[{}], 1);", k_nid) : "bool _k = false;";
+    std::string read_c = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                      : "bool _clk = false;";
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1} {2} {3}
     bool _rising = (_clk && !{4}.prev_clk);
@@ -209,10 +222,9 @@ std::string JKFlipFlop::genFuncDef() const {
         }} else if (_k) {{ dcs_memset({4}.q, 0, {5}); }}
     }}
     {4}.prev_clk = _clk;
-    dcs_memcpy(_w[{7}], {4}.q, {5});
-    dcs_memset(_w[{7}] + {5}, 0, {8});
+{7}
 }})",
-                       funcName(), read_j, read_k, read_c, st, bytes, gen_mask(_bit_width), q_nid, 16 - bytes);
+                       funcName_seq(), read_j, read_k, read_c, st, bytes, gen_mask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -231,7 +243,7 @@ Register::Register(const std::string &name, int bit_width, bool has_en, bool has
         addInput("en", 1);
     if (_has_rst)
         addInput("rst", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 std::string Register::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t data[16]; uint8_t prev_clk; }} {};)", stateTypeName());
@@ -242,7 +254,7 @@ std::string Register::genStateDecl() const {
 std::string Register::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string Register::genFuncDef() const {
+std::string Register::genFuncDef_seq() const {
     int d_nid = inputs()[0]->netId(), clk_nid = inputs()[1]->netId(), q_nid = outputs()[0]->netId();
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int bytes = byte_count(_bit_width);
@@ -251,17 +263,17 @@ std::string Register::genFuncDef() const {
     int rst_nid = _has_rst ? inputs()[_has_en ? 3 : 2]->netId() : -1;
 
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
-    std::string read_clk =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                        : "bool _clk = false;";
     std::string read_opt;
     if (_has_en && en_nid >= 0)
-        read_opt += std::format("\n    bool _en; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
+        read_opt += std::format("\n    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
     else if (_has_en)
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
     if (_has_rst && rst_nid >= 0)
-        read_opt += std::format("\n    bool _rst; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
+        read_opt += std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
 
     std::string update;
     if (_has_rst) {
@@ -272,15 +284,19 @@ std::string Register::genFuncDef() const {
     else {
         update = std::format(R"(    if (_rising && _en) {{ dcs_memcpy({0}.data, &_dval, {1}); }})", st, bytes);
     }
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.data", st), _bit_width));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1} {2}{3}
     bool _rising = (_clk && !{4}.prev_clk);
 {5}
     {4}.prev_clk = _clk;
-    dcs_memcpy(_w[{6}], {4}.data, {7});
-    dcs_memset(_w[{6}] + {7}, 0, {8});
+{6}
 }})",
-                       funcName(), read_d, read_clk, read_opt, st, update, q_nid, bytes, 16 - bytes);
+                       funcName_seq(), read_d, read_clk, read_opt, st, update, write_q);
 }
 
 // ============================================================
@@ -292,7 +308,7 @@ Latch::Latch(const std::string &name, int bit_width) : SequentialComponent(name,
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("d", bit_width);
     addInput("en", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 std::string Latch::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t q[16]; }} {};)", stateTypeName());
@@ -303,21 +319,25 @@ std::string Latch::genStateDecl() const {
 std::string Latch::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string Latch::genFuncDef() const {
+std::string Latch::genFuncDef_seq() const {
     int d_nid = inputs()[0]->netId(), en_nid = inputs()[1]->netId(), q_nid = outputs()[0]->netId();
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
     std::string read_en =
-            en_nid >= 0 ? std::format("bool _en; dcs_memcpy(&_en, _w[{}], 1);", en_nid) : "bool _en = false;";
+            en_nid >= 0 ? std::format("bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid) : "bool _en = false;";
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1} {2}
     if (_en) {{ dcs_memcpy({3}.q, &_dval, {4}); }}
-    dcs_memcpy(_w[{5}], {3}.q, {4});
-    dcs_memset(_w[{5}] + {4}, 0, {6});
+{5}
 }})",
-                       funcName(), read_d, read_en, st, bytes, q_nid, 16 - bytes);
+                       funcName_seq(), read_d, read_en, st, bytes, write_q);
 }
 
 // ============================================================
@@ -344,7 +364,7 @@ Counter::Counter(const std::string &name, int bit_width, bool has_load, bool has
         addInput("updown", 1);
     if (_has_clr)
         addInput("clr", 1);
-    addOutput("q", bit_width);
+    addOutput("q", bit_width, false, true);
 }
 std::string Counter::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t count[16]; uint8_t prev_clk; }} {};)", stateTypeName());
@@ -355,7 +375,7 @@ std::string Counter::genStateDecl() const {
 std::string Counter::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string Counter::genFuncDef() const {
+std::string Counter::genFuncDef_seq() const {
     int clk_nid = inputs()[0]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
@@ -367,11 +387,11 @@ std::string Counter::genFuncDef() const {
     int updown_nid = _has_updown ? inputs()[pi++]->netId() : -1;
     int clr_nid = _has_clr ? inputs()[pi++]->netId() : -1;
 
-    std::string read_clk =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                        : "bool _clk = false;";
     std::string read_opt, load_decl;
     if (_has_load) {
-        load_decl = load_nid >= 0 ? std::format("bool _load; dcs_memcpy(&_load, _w[{}], 1);", load_nid)
+        load_decl = load_nid >= 0 ? std::format("bool _load = false; dcs_memcpy(&_load, _w[{}], 1);", load_nid)
                                   : "bool _load = false;";
         int din_nw = din_nid >= 0 ? inputs()[2]->net()->bit_width() : 0;
         read_opt += std::format("\n    {}\n    {}", load_decl, gen_read_wire(din_nid, _bit_width, din_nw, "_din"));
@@ -382,15 +402,15 @@ std::string Counter::genFuncDef() const {
     }
 
     if (_has_en && en_nid >= 0)
-        read_opt += std::format("\n    bool _en; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
+        read_opt += std::format("\n    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
     else if (_has_en)
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
     if (_has_updown && updown_nid >= 0)
-        read_opt += std::format("\n    bool _updown; dcs_memcpy(&_updown, _w[{}], 1);", updown_nid);
+        read_opt += std::format("\n    bool _updown = false; dcs_memcpy(&_updown, _w[{}], 1);", updown_nid);
     if (_has_clr && clr_nid >= 0)
-        read_opt += std::format("\n    bool _clr; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
+        read_opt += std::format("\n    bool _clr = false; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
     else if (_has_clr)
         read_opt += "\n    bool _clr = false;";
 
@@ -439,16 +459,20 @@ std::string Counter::genFuncDef() const {
                              st, body);
     }
 
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.count", st), _bit_width));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1}{2}
     bool _rising = (_clk && !{3}.prev_clk);
     {4}
 {5}
     {3}.prev_clk = _clk;
-    dcs_memcpy(_w[{6}], {3}.count, {7});
-    dcs_memset(_w[{6}] + {7}, 0, {8});
+{6}
 }})",
-                       funcName(), read_clk, read_opt, st, load_decl, update, q_nid, bytes, 16 - bytes);
+                       funcName_seq(), read_clk, read_opt, st, load_decl, update, write_q);
 }
 
 // ============================================================
@@ -467,7 +491,7 @@ ShiftRegister::ShiftRegister(const std::string &name, int length, bool has_dir, 
         addInput("dir", 1);
     if (_has_clr)
         addInput("clr", 1);
-    addOutput("q", length);
+    addOutput("q", length, false, true);
 }
 std::string ShiftRegister::genStructDef() const {
     return std::format(R"(typedef struct {{ uint8_t stages[16]; uint8_t prev_clk; }} {};)", stateTypeName());
@@ -478,7 +502,7 @@ std::string ShiftRegister::genStateDecl() const {
 std::string ShiftRegister::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
-std::string ShiftRegister::genFuncDef() const {
+std::string ShiftRegister::genFuncDef_seq() const {
     int sin_nid = inputs()[0]->netId(), clk_nid = inputs()[1]->netId(), q_nid = outputs()[0]->netId();
     int bytes = byte_count(_length);
     auto st = stateVarName();
@@ -486,15 +510,15 @@ std::string ShiftRegister::genFuncDef() const {
     int clr_nid = _has_clr ? inputs()[_has_dir ? 3 : 2]->netId() : -1;
     int utype = _length == 64 ? 64 : (_length <= 8 ? 8 : _length <= 16 ? 16 : _length <= 32 ? 32 : 64);
 
-    std::string read_sin =
-            sin_nid >= 0 ? std::format("bool _sin; dcs_memcpy(&_sin, _w[{}], 1);", sin_nid) : "bool _sin = false;";
-    std::string read_clk =
-            clk_nid >= 0 ? std::format("bool _clk; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid) : "bool _clk = false;";
+    std::string read_sin = sin_nid >= 0 ? std::format("bool _sin = false; dcs_memcpy(&_sin, _w[{}], 1);", sin_nid)
+                                        : "bool _sin = false;";
+    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                                        : "bool _clk = false;";
     std::string read_opt;
     if (_has_dir && dir_nid >= 0)
-        read_opt += std::format("\n    bool _dir; dcs_memcpy(&_dir, _w[{}], 1);", dir_nid);
+        read_opt += std::format("\n    bool _dir = false; dcs_memcpy(&_dir, _w[{}], 1);", dir_nid);
     if (_has_clr && clr_nid >= 0)
-        read_opt += std::format("\n    bool _clr; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
+        read_opt += std::format("\n    bool _clr = false; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
     else if (_has_clr)
         read_opt += "\n    bool _clr = false;";
 
@@ -532,15 +556,19 @@ std::string ShiftRegister::genFuncDef() const {
                              st, shift_code);
     }
 
+    std::string write_q;
+    if (q_nid >= 0)
+        write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.stages", st), _length));
+    else
+        write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1} {2}{3}
     bool _rising = (_clk && !{4}.prev_clk);
 {5}
     {4}.prev_clk = _clk;
-    dcs_memcpy(_w[{6}], {4}.stages, {7});
-    dcs_memset(_w[{6}] + {7}, 0, {8});
+{6}
 }})",
-                       funcName(), read_sin, read_clk, read_opt, st, update, q_nid, bytes, 16 - bytes);
+                       funcName_seq(), read_sin, read_clk, read_opt, st, update, write_q);
 }
 
 
@@ -580,13 +608,14 @@ ClockGen::ClockGen(const std::string &name, int high_ticks, int low_ticks) :
         throw std::invalid_argument("高低电平 tick 数必须 ≥1");
     setParam("high_ticks", std::to_string(high_ticks));
     setParam("low_ticks", std::to_string(low_ticks));
-    addOutput("clk", 1);
+    addOutput("clk", 1, false, true);
 }
 
 std::string ClockGen::genStructDef() const {
     return std::format(R"(typedef struct {{
     int _cnt;
-}} {};)", stateTypeName());
+}} {};)",
+                       stateTypeName());
 }
 
 std::string ClockGen::genStateDecl() const {
@@ -597,17 +626,22 @@ std::string ClockGen::genInitCode() const {
     return std::format("    {}._cnt = 0;", stateVarName());
 }
 
-std::string ClockGen::genFuncDef() const {
+std::string ClockGen::genFuncDef_seq() const {
     int o_nid = outputs()[0]->netId();
     auto st = stateVarName();
+    std::string write_o;
+    if (o_nid >= 0)
+        write_o = std::format("    {}\n", genOutputWrite(0, "_clk", 1));
+    else
+        write_o = "    // 输出悬空\n";
     return std::format(R"(static void {}() {{
     int _pos = {}._cnt;
     uint8_t _clk = (_pos < {}) ? 1 : 0;
     if (++_pos >= {}) _pos = 0;
     {}._cnt = _pos;
-    dcs_memcpy(_w[{}], &_clk, 1);
+{}
 }})",
-        funcName(), st, _high, _period, st, o_nid >= 0 ? o_nid : 0);
+                       funcName_seq(), st, _high, _period, st, write_o);
 }
 
 std::unique_ptr<Component> ClockGen::clone(const std::string &n) const {

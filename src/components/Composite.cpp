@@ -48,17 +48,7 @@ void CompositeComponent::loadPinsFromDef() {
     }
 }
 
-// ============================================================
-// isSequential — 保守返回 true，确保环路检测安全
-// ============================================================
-
-bool CompositeComponent::isSequential() const {
-    // 保守策略：复合元件是"黑盒"，不知道内部是否有组合环路，
-    // 返回 true 确保打破所有组合环路。真正的环路检测在展开后进行。
-    return true;
-}
-
-std::string CompositeComponent::genFuncDef() const {
+std::string CompositeComponent::genFuncDef_seq() const {
     return std::format("// Composite: {} (definition: {})\n", name(), _def_name);
 }
 
@@ -128,7 +118,8 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
 
     // ---- 5. 按配方创建子元件 ----
     for (auto &recipe: def->components) {
-        auto comp = ComponentFactory::instance().create(recipe.type_name, prefix + recipe.instance_name, recipe.params);
+        auto comp = ComponentFactory::instance().createUnchecked(recipe.type_name, prefix + recipe.instance_name,
+                                                                 recipe.params);
         if (!comp)
             continue;
 

@@ -27,7 +27,7 @@ Mux::Mux(const std::string &name, int n_selects, int bit_width) :
     addOutput("out", bit_width);
 }
 
-std::string Mux::genFuncDef() const {
+std::string Mux::genFuncDef_comb() const {
     const char *ct = c_int_type(_bit_width);
     int bytes = byte_count(_bit_width);
     int n = 1 << _n_selects;
@@ -37,7 +37,7 @@ std::string Mux::genFuncDef() const {
     std::string sel_reads;
     for (int i = 0; i < _n_selects; i++) {
         int nid = inputs()[i]->netId();
-        sel_reads += nid >= 0 ? std::format("    bool _sel{}; dcs_memcpy(&_sel{}, _w[{}], 1);\n", i, i, nid)
+        sel_reads += nid >= 0 ? std::format("    bool _sel{} = false; dcs_memcpy(&_sel{}, _w[{}], 1);\n", i, i, nid)
                               : std::format("    bool _sel{} = false;\n", i);
     }
 
@@ -71,7 +71,9 @@ std::string Mux::genFuncDef() const {
         select += std::format("    {}if ({} == {}) _out = _in{};\n", i == 0 ? "" : "else ", sel_idx, i, i);
     }
 
-    std::string write = out_nid >= 0 ? std::format("    {}\n", gen_write_wire(out_nid, "_out", _bit_width)) : "";
+    std::string write;
+    if (out_nid >= 0)
+        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
 
     return std::format(R"(static void {}(void) {{
 {}
@@ -80,14 +82,15 @@ std::string Mux::genFuncDef() const {
 {}
 {}
 }})",
-                       funcName(), sel_reads, data_reads, ct, select, write);
+                       funcName_comb(), sel_reads, data_reads, ct, select, write);
 }
 
 // ============================================================
 // Adder
 // ============================================================
 
-Adder::Adder(const std::string &name, int bit_width, bool is_signed) : CombinationalComponent(name, "adder"), _bit_width(bit_width), _signed(is_signed) {
+Adder::Adder(const std::string &name, int bit_width, bool is_signed) :
+    CombinationalComponent(name, "adder"), _bit_width(bit_width), _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
@@ -98,7 +101,7 @@ Adder::Adder(const std::string &name, int bit_width, bool is_signed) : Combinati
     addOutput("cout", 1);
 }
 
-std::string Adder::genFuncDef() const {
+std::string Adder::genFuncDef_comb() const {
     const char *ct = c_int_type(_bit_width);
     int bytes = byte_count(_bit_width);
 
@@ -110,16 +113,17 @@ std::string Adder::genFuncDef() const {
     int sum_nid = outputs()[0]->netId();
     int cout_nid = outputs()[1]->netId();
 
-    std::string cin_read =
-            cin_nid >= 0 ? std::format("bool _cin; dcs_memcpy(&_cin, _w[{}], 1);", cin_nid) : "bool _cin = false;";
+    std::string cin_read = cin_nid >= 0 ? std::format("bool _cin = false; dcs_memcpy(&_cin, _w[{}], 1);", cin_nid)
+                                        : "bool _cin = false;";
 
     std::string mask = gen_mask(_bit_width);
 
-    std::string cout_write = cout_nid >= 0 ? std::format("    uint8_t _cout8 = _cout ? 1 : 0;\n"
-                                                         "    dcs_memcpy(_w[{}], &_cout8, 1);"
-                                                         "    dcs_memset(_w[{}] + 1, 0, 15);\n",
-                                                         cout_nid, cout_nid)
-                                           : "";
+    std::string cout_write;
+    if (cout_nid >= 0)
+        cout_write = std::format("    uint8_t _cout8 = _cout ? 1 : 0;\n"
+                                 "    {}\n"
+                                 "    _c_oe_{}_1 = true;\n",
+                                 genOutputWrite(1, "_cout8", 1), _id);
 
     // 进位检测：用 uint64_t 扩展精度
     if (_bit_width < 64) {
@@ -133,9 +137,9 @@ std::string Adder::genFuncDef() const {
     {7}
     {8}
 }})",
-                           funcName(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                           funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                            gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cin_read, c_int_type(_bit_width), mask,
-                           _bit_width, gen_write_wire(sum_nid, "_sum", _bit_width), cout_write);
+                           _bit_width, genOutputWrite(0, "_sum", _bit_width), cout_write);
     }
     else {
         // 64 位：不能使用 >> 64（UB），用溢出检测
@@ -149,9 +153,9 @@ std::string Adder::genFuncDef() const {
     {4}
     {5}
 }})",
-                           funcName(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                           funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                            gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cin_read,
-                           gen_write_wire(sum_nid, "_sum", _bit_width), cout_write);
+                           genOutputWrite(0, "_sum", _bit_width), cout_write);
     }
 }
 
@@ -209,7 +213,7 @@ Comparator::Comparator(const std::string &name, int bit_width, CmpOp op, bool is
     addOutput("out", 1);
 }
 
-std::string Comparator::genFuncDef() const {
+std::string Comparator::genFuncDef_comb() const {
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int b_nid = inputs()[1]->netId();
@@ -224,9 +228,9 @@ std::string Comparator::genFuncDef() const {
     uint8_t _out = (({})({})_a {} ({})({})_b) ? 1 : 0;
     {}
 }})",
-                       funcName(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                       funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                        gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cast, c_int_type(_bit_width), cmpOpCOp(_op), cast,
-                       c_int_type(_bit_width), gen_write_wire(out_nid, "_out", 1));
+                       c_int_type(_bit_width), genOutputWrite(0, "_out", 1));
 }
 
 // ============================================================
@@ -247,7 +251,7 @@ Decoder::Decoder(const std::string &name, int n_selects) :
         addOutput(std::format("out{}", i), 1);
 }
 
-std::string Decoder::genFuncDef() const {
+std::string Decoder::genFuncDef_comb() const {
     int n = 1 << _n_selects;
 
     // 读取选择线，并构建索引
@@ -255,7 +259,7 @@ std::string Decoder::genFuncDef() const {
     std::string idx = "0";
     for (int i = _n_selects - 1; i >= 0; i--) {
         int nid = inputs()[i]->netId();
-        reads += nid >= 0 ? std::format("    bool _sel{}; dcs_memcpy(&_sel{}, _w[{}], 1);\n", i, i, nid)
+        reads += nid >= 0 ? std::format("    bool _sel{} = false; dcs_memcpy(&_sel{}, _w[{}], 1);\n", i, i, nid)
                           : std::format("    bool _sel{} = false;\n", i);
         idx = std::format("(({}) << 1) | _sel{}", idx, i);
     }
@@ -266,7 +270,7 @@ std::string Decoder::genFuncDef() const {
         int out_nid = outputs()[i]->netId();
         if (out_nid >= 0) {
             writes += std::format("    uint8_t _out{} = (_idx == {}) ? 1 : 0;\n", i, i);
-            writes += std::format("    {}\n", gen_write_wire(out_nid, std::format("_out{}", i), 1));
+            writes += std::format("    {}\n", genOutputWrite(i, std::format("_out{}", i), 1));
         }
     }
 
@@ -275,7 +279,7 @@ std::string Decoder::genFuncDef() const {
     int _idx = {};
 {}
 }})",
-                       funcName(), reads, idx, writes);
+                       funcName_comb(), reads, idx, writes);
 }
 
 
@@ -313,14 +317,14 @@ Encoder::Encoder(const std::string &name, int n_selects) :
         addOutput(std::format("out{}", i), 1);
 }
 
-std::string Encoder::genFuncDef() const {
+std::string Encoder::genFuncDef_comb() const {
     int n = 1 << _n_selects;
 
     // 读所有输入
     std::string reads;
     for (int i = 0; i < n; i++) {
         int nid = inputs()[i]->netId();
-        reads += nid >= 0 ? std::format("    bool _in{}; dcs_memcpy(&_in{}, _w[{}], 1);\n", i, i, nid)
+        reads += nid >= 0 ? std::format("    bool _in{} = false; dcs_memcpy(&_in{}, _w[{}], 1);\n", i, i, nid)
                           : std::format("    bool _in{} = false;\n", i);
     }
 
@@ -337,7 +341,7 @@ std::string Encoder::genFuncDef() const {
         if (nid < 0)
             continue;
         writes += std::format("    uint8_t _out{} = (_idx >> {}) & 1;\n", i, i);
-        writes += std::format("    dcs_memcpy(_w[{}], &_out{}, 1);\n", nid, i);
+        writes += std::format("    {}\n", genOutputWrite(i, std::format("_out{}", i), 1));
     }
 
     return std::format(R"(static void {}() {{
@@ -346,7 +350,7 @@ std::string Encoder::genFuncDef() const {
 {}
 {}
 }})",
-                       funcName(), reads, chain, writes);
+                       funcName_comb(), reads, chain, writes);
 }
 
 std::unique_ptr<Component> Encoder::clone(const std::string &n) const {
@@ -369,7 +373,7 @@ Subtractor::Subtractor(const std::string &name, int bit_width) :
     addOutput("bout", 1);
 }
 
-std::string Subtractor::genFuncDef() const {
+std::string Subtractor::genFuncDef_comb() const {
     const char *ct = c_int_type(_bit_width);
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
@@ -379,14 +383,14 @@ std::string Subtractor::genFuncDef() const {
     int diff_nid = outputs()[0]->netId();
     int bout_nid = outputs()[1]->netId();
 
-    std::string bin_read =
-            bin_nid >= 0 ? std::format("bool _bin; dcs_memcpy(&_bin, _w[{}], 1);", bin_nid) : "bool _bin = false;";
+    std::string bin_read = bin_nid >= 0 ? std::format("bool _bin = false; dcs_memcpy(&_bin, _w[{}], 1);", bin_nid)
+                                        : "bool _bin = false;";
 
-    std::string bout_write = bout_nid >= 0 ? std::format("    uint8_t _bout8 = _bout ? 1 : 0;\n"
-                                                         "    dcs_memcpy(_w[{}], &_bout8, 1);"
-                                                         "    dcs_memset(_w[{}] + 1, 0, 15);\n",
-                                                         bout_nid, bout_nid)
-                                           : "";
+    std::string bout_write;
+    if (bout_nid >= 0)
+        bout_write = std::format("    uint8_t _bout8 = _bout ? 1 : 0;\n"
+                                 "    {}\n",
+                                 genOutputWrite(1, "_bout8", 1));
 
     // 64 位用溢出检测，<64 位用扩展精度，ct 同时用于类型声明和转型
     if (_bit_width < 64) {
@@ -395,14 +399,14 @@ std::string Subtractor::genFuncDef() const {
     {}
     {}
     uint64_t _full = (uint64_t)_a - (uint64_t)_b - (_bin ? 1ULL : 0ULL);
-    {} _diff = ({})_full;
+    {} _diff = ({})_full & {};
     bool _bout = (_full >> {}) != 0;
     {}
     {}
 }})",
-                           funcName(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), bin_read, ct, ct, _bit_width,
-                           gen_write_wire(diff_nid, "_diff", _bit_width), bout_write);
+                           funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), bin_read, ct, ct, gen_mask(_bit_width),
+                           _bit_width, genOutputWrite(0, "_diff", _bit_width), bout_write);
     }
     else {
         return std::format(R"(static void {}() {{
@@ -414,9 +418,9 @@ std::string Subtractor::genFuncDef() const {
     {}
     {}
 }})",
-                           funcName(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                           funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                            gen_read_wire(b_nid, _bit_width, b_nw, "_b"), bin_read,
-                           gen_write_wire(diff_nid, "_diff", _bit_width), bout_write);
+                           genOutputWrite(0, "_diff", _bit_width), bout_write);
     }
 }
 
@@ -430,36 +434,85 @@ std::unique_ptr<Component> Subtractor::clone(const std::string &n) const {
 
 Multiplier::Multiplier(const std::string &name, int bit_width, bool is_signed) :
     CombinationalComponent(name, is_signed ? "smul" : "mul"), _bit_width(bit_width), _signed(is_signed) {
-    if (bit_width < 1 || bit_width > 32)
-        throw std::invalid_argument("乘法器位宽必须在1-32之间（乘积最大64位）");
+    if (bit_width < 1 || bit_width > 64)
+        throw std::invalid_argument("位宽必须在1-64之间");
     setParam("bit_width", std::to_string(bit_width));
-    if (is_signed) setParam("signed", "1");
+    if (is_signed)
+        setParam("signed", "1");
     addInput("a", bit_width);
     addInput("b", bit_width);
-    addOutput("prod", bit_width * 2);
+    addOutput("prod_lo", bit_width);
+    addOutput("prod_hi", bit_width);
 }
 
-std::string Multiplier::genFuncDef() const {
+std::string Multiplier::genFuncDef_comb() const {
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int b_nid = inputs()[1]->netId();
     int b_nw = b_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
-    int prod_nid = outputs()[0]->netId();
-    int prod_w = _bit_width * 2;
 
-    // 有符号：int64_t 符号扩展相乘；无符号：uint64_t 零扩展相乘
-    const char* cast = _signed ? "int64_t" : "uint64_t";
-    return std::format(R"(static void {}() {{
-    {}
-    {}
-    {} _prod = ({})_a * ({})_b;
-    {}
-}})",
-        funcName(),
-        gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-        gen_read_wire(b_nid, _bit_width, b_nw, "_b"),
-        c_int_type(prod_w), cast, cast,
-        gen_write_wire(prod_nid, "_prod", prod_w));
+    // 纯标准 C：64×64→128 无符号乘法，拆 4 个 32×32→64 部分积
+    // 有符号：取绝对值做无符号乘法，再按符号位对 128 位结果取反加一
+    // 128 位乘积 [ _hi : _lo ] 中提取 prod_lo[bw:0] 和 prod_hi[2*bw-1:bw]
+    std::string mask = gen_mask(_bit_width);
+
+    // 公共：乘法本体 → _lo, _hi（128 位）
+    auto mul_body = R"(
+    uint64_t _ua = (uint64_t)_a, _ub = (uint64_t)_b;
+    uint64_t _ah = _ua >> 32, _al = _ua & 0xFFFFFFFFULL;
+    uint64_t _bh = _ub >> 32, _bl = _ub & 0xFFFFFFFFULL;
+    uint64_t _p0 = _al * _bl, _p1 = _ah * _bl, _p2 = _al * _bh, _p3 = _ah * _bh;
+    uint64_t _lo = _p0;
+    _lo += (_p1 & 0xFFFFFFFFULL) << 32; uint64_t _cy = _lo < _p0;
+    uint64_t _pv = _lo;
+    _lo += (_p2 & 0xFFFFFFFFULL) << 32; _cy += _lo < _pv;
+    uint64_t _hi = _p3 + (_p1 >> 32) + (_p2 >> 32) + _cy;)";
+
+    // 从 128 位乘积中提取 hi / lo
+    std::string extract_lo, extract_hi;
+    if (_bit_width == 64) {
+        extract_lo = std::format("{} _prod_lo = ({})_lo;", c_int_type(64), c_int_type(64));
+        extract_hi = std::format("{} _prod_hi = ({})_hi;", c_int_type(64), c_int_type(64));
+    }
+    else {
+        extract_lo = std::format("{} _prod_lo = ({})_lo & {};", c_int_type(_bit_width), c_int_type(_bit_width), mask);
+        extract_hi = std::format("{} _prod_hi = ({})(((_hi << {}) | (_lo >> {})) & {});", c_int_type(_bit_width),
+                                 c_int_type(_bit_width), 64 - _bit_width, _bit_width, mask);
+    }
+
+    if (!_signed) {
+        return std::format("static void {0}() {{{{\n"
+                           "    {1}\n"
+                           "    {2}\n"
+                           "    {3}\n"
+                           "    {4}\n"
+                           "    {5}\n"
+                           "    {6}\n"
+                           "}}}}",
+                           funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), mul_body, extract_lo, extract_hi,
+                           genOutputWrite(0, "_prod_lo", _bit_width) + "\n    " +
+                                   genOutputWrite(1, "_prod_hi", _bit_width));
+    }
+
+    // 有符号版
+    return std::format("static void {0}() {{{{\n"
+                       "    {1}\n"
+                       "    {2}\n"
+                       "    int64_t _sa = (int64_t)_a, _sb = (int64_t)_b;\n"
+                       "    int _sign = ((_sa < 0) != (_sb < 0));\n"
+                       "    uint64_t _ua = _sa < 0 ? (uint64_t)(-(_sa + 1)) + 1 : (uint64_t)_sa;\n"
+                       "    uint64_t _ub = _sb < 0 ? (uint64_t)(-(_sb + 1)) + 1 : (uint64_t)_sb;\n"
+                       "{3}\n"
+                       "    if (_sign) {{ _lo = ~_lo + 1; _hi = ~_hi + (_lo == 0); }}\n"
+                       "    {4}\n"
+                       "    {5}\n"
+                       "    {6}\n"
+                       "}}}}",
+                       funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                       gen_read_wire(b_nid, _bit_width, b_nw, "_b"), mul_body, extract_lo, extract_hi,
+                       genOutputWrite(0, "_prod_lo", _bit_width) + "\n    " +
+                               genOutputWrite(1, "_prod_hi", _bit_width));
 }
 
 std::unique_ptr<Component> Multiplier::clone(const std::string &n) const {
@@ -470,19 +523,20 @@ std::unique_ptr<Component> Multiplier::clone(const std::string &n) const {
 // Divider — {quot, rem} = a / b（无符号）
 // ============================================================
 
-Divider::Divider(const std::string &name, int bit_width, bool is_signed)
-    : CombinationalComponent(name, is_signed ? "sdiv" : "div"), _bit_width(bit_width), _signed(is_signed) {
+Divider::Divider(const std::string &name, int bit_width, bool is_signed) :
+    CombinationalComponent(name, is_signed ? "sdiv" : "div"), _bit_width(bit_width), _signed(is_signed) {
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("除法器位宽必须在1-64之间");
     setParam("bit_width", std::to_string(bit_width));
-    if (is_signed) setParam("signed", "1");
+    if (is_signed)
+        setParam("signed", "1");
     addInput("a", bit_width);
     addInput("b", bit_width);
     addOutput("quot", bit_width);
     addOutput("rem", bit_width);
 }
 
-std::string Divider::genFuncDef() const {
+std::string Divider::genFuncDef_comb() const {
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int b_nid = inputs()[1]->netId();
@@ -490,7 +544,7 @@ std::string Divider::genFuncDef() const {
     int q_nid = outputs()[0]->netId();
     int r_nid = outputs()[1]->netId();
 
-    const char* cast = _signed ? "int64_t" : "uint64_t";
+    const char *cast = _signed ? "int64_t" : "uint64_t";
     // 全部用编号占位符，避免 std::format 混用限制
     return std::format(R"(static void {0}() {{
     {1}
@@ -503,12 +557,9 @@ std::string Divider::genFuncDef() const {
     {4}
     {5}
 }})",
-        funcName(),
-        gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-        gen_read_wire(b_nid, _bit_width, b_nw, "_b"),
-        cast,
-        gen_write_wire(q_nid, "_quot", _bit_width),
-        gen_write_wire(r_nid, "_rem", _bit_width));
+                       funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
+                       gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cast, genOutputWrite(0, "_quot", _bit_width),
+                       genOutputWrite(1, "_rem", _bit_width));
 }
 
 std::unique_ptr<Component> Divider::clone(const std::string &n) const {

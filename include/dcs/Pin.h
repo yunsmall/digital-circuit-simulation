@@ -23,7 +23,10 @@ enum class PinDir { INPUT, OUTPUT };
 class Pin {
 public:
     // parent: 所属元件指针
-    Pin(const std::string &name, PinDir dir, int bit_width, Component *parent);
+    // is_tri_state: 输出引脚是否为三态（仅输出有效）
+    // is_sequential: 输出引脚是否依赖内部状态、打破组合环路（仅输出有效）
+    Pin(const std::string &name, PinDir dir, int bit_width, Component *parent, bool is_tri_state = false,
+        bool is_sequential = false);
 
     const std::string &name() const {
         return _name;
@@ -38,19 +41,28 @@ public:
         return _parent;
     }
 
-    // 连接的线网（nullptr = 悬空，悬空输入视为 0）
+    bool isTriState() const {
+        return _is_tri_state;
+    }
+    bool isSequential() const {
+        return _is_sequential;
+    }
+    void setTriState(bool v) {
+        _is_tri_state = v;
+    }
+    void setSequential(bool v) {
+        _is_sequential = v;
+    }
+
     Net *net() const {
         return _net;
     }
     void setNet(Net *n) {
         _net = n;
     }
-
-    // 便捷方法：返回连接线网的 id（-1 = 悬空）
     int netId() const {
         return _net ? _net->id() : -1;
     }
-
     bool isInput() const {
         return _dir == PinDir::INPUT;
     }
@@ -61,9 +73,11 @@ public:
 private:
     std::string _name;
     PinDir _dir;
-    int _bit_width; // 1~64
+    int _bit_width;
     Component *_parent;
     Net *_net = nullptr;
+    bool _is_tri_state = false;
+    bool _is_sequential = false;
 };
 
 } // namespace dsc

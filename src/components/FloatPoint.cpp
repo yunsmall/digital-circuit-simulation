@@ -14,7 +14,7 @@ static std::pair<const char *, int> float_info(int precision) {
     throw std::invalid_argument(std::format("浮点精度必须是 32 或 64，当前 {}", precision));
 }
 
-// 辅助：genFuncDef 模版
+// 辅助：genFuncDef_comb 模版
 static std::string gen_float_func(const Component *comp, int precision, const char *expr) {
     auto [ct, bytes] = float_info(precision);
     int a_nid = comp->inputs()[0]->netId();
@@ -26,15 +26,15 @@ static std::string gen_float_func(const Component *comp, int precision, const ch
     return std::format(R"(static void {}() {{
     {}
     {}
-    {} _a, _b;
+    {} _a = 0, _b = 0;
     dcs_memcpy(&_a, &_tmp_a, {});
     dcs_memcpy(&_b, &_tmp_b, {});
     {} _out = {};
     {}
 }})",
-                       comp->funcName(), gen_read_wire(a_nid, precision, a_nw, "_tmp_a"),
+                       comp->funcName_comb(), gen_read_wire(a_nid, precision, a_nw, "_tmp_a"),
                        gen_read_wire(b_nid, precision, b_nw, "_tmp_b"), ct, bytes, bytes, ct, expr,
-                       gen_write_wire(o_nid, "_out", precision));
+                       comp->genOutputWrite(0, "_out", precision));
 }
 
 // ============================================================
@@ -49,7 +49,7 @@ FloatAdd::FloatAdd(const std::string &name, int precision) :
     addOutput("out", precision);
 }
 
-std::string FloatAdd::genFuncDef() const {
+std::string FloatAdd::genFuncDef_comb() const {
     return gen_float_func(this, _precision, "_a + _b");
 }
 std::unique_ptr<Component> FloatAdd::clone(const std::string &n) const {
@@ -68,7 +68,7 @@ FloatSub::FloatSub(const std::string &name, int precision) :
     addOutput("out", precision);
 }
 
-std::string FloatSub::genFuncDef() const {
+std::string FloatSub::genFuncDef_comb() const {
     return gen_float_func(this, _precision, "_a - _b");
 }
 std::unique_ptr<Component> FloatSub::clone(const std::string &n) const {
@@ -87,7 +87,7 @@ FloatMul::FloatMul(const std::string &name, int precision) :
     addOutput("out", precision);
 }
 
-std::string FloatMul::genFuncDef() const {
+std::string FloatMul::genFuncDef_comb() const {
     return gen_float_func(this, _precision, "_a * _b");
 }
 std::unique_ptr<Component> FloatMul::clone(const std::string &n) const {
@@ -106,7 +106,7 @@ FloatDiv::FloatDiv(const std::string &name, int precision) :
     addOutput("out", precision);
 }
 
-std::string FloatDiv::genFuncDef() const {
+std::string FloatDiv::genFuncDef_comb() const {
     return gen_float_func(this, _precision, "_a / _b");
 }
 std::unique_ptr<Component> FloatDiv::clone(const std::string &n) const {
@@ -163,7 +163,7 @@ FloatCmp::FloatCmp(const std::string &name, int precision, FloatCmpOp op) :
     addOutput("out", 1);
 }
 
-std::string FloatCmp::genFuncDef() const {
+std::string FloatCmp::genFuncDef_comb() const {
     auto [ct, bytes] = float_info(_precision);
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
@@ -180,9 +180,9 @@ std::string FloatCmp::genFuncDef() const {
     uint8_t _out = (_a {} _b) ? 1 : 0;
     {}
 }})",
-                       funcName(), gen_read_wire(a_nid, _precision, a_nw, "_tmp_a"),
+                       funcName_comb(), gen_read_wire(a_nid, _precision, a_nw, "_tmp_a"),
                        gen_read_wire(b_nid, _precision, b_nw, "_tmp_b"), ct, bytes, bytes, float_cmp_op(_op),
-                       gen_write_wire(o_nid, "_out", 1));
+                       genOutputWrite(0, "_out", 1));
 }
 
 std::unique_ptr<Component> FloatCmp::clone(const std::string &n) const {
@@ -200,7 +200,7 @@ FloatConst::FloatConst(const std::string &name, int precision, double value) :
     addOutput("out", precision);
 }
 
-std::string FloatConst::genFuncDef() const {
+std::string FloatConst::genFuncDef_comb() const {
     auto [ct, bytes] = float_info(_precision);
     int o_nid = outputs()[0]->netId();
 
@@ -208,9 +208,7 @@ std::string FloatConst::genFuncDef() const {
     {} _c = {};
     {}
 }})",
-        funcName(),
-        ct, std::format("{:.9g}", _value),
-        gen_write_wire(o_nid, "_c", _precision));
+                       funcName_comb(), ct, std::format("{:.9g}", _value), genOutputWrite(0, "_c", _precision));
 }
 
 std::unique_ptr<Component> FloatConst::clone(const std::string &n) const {

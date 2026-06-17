@@ -1,6 +1,5 @@
 # Build
-build/
-build_tcc/
+build*/
 cmake-build-*/
 
 # IDE

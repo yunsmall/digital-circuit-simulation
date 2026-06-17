@@ -18,18 +18,18 @@ Constant::Constant(const std::string &name, int bit_width, uint64_t value) :
     addOutput("out", bit_width);
 }
 
-std::string Constant::genFuncDef() const {
+std::string Constant::genFuncDef_comb() const {
     int o0 = outputs()[0]->netId();
     if (o0 < 0)
-        return std::format("static void {}() {{ /* 输出悬空 */ }}", funcName());
+        return std::format("static void {}() {{ /* 输出悬空 */ }}", funcName_comb());
 
     int bytes = byte_count(_bit_width);
     uint64_t mask = (_bit_width == 64) ? ~0ULL : (1ULL << _bit_width) - 1;
     std::string code;
-    code += std::format("static void {}() {{\n", funcName());
+    code += std::format("static void {}() {{\n", funcName_comb());
     code += std::format("    {} _c = 0x{:X}ULL;\n", c_int_type(_bit_width), _value & mask);
-    code += std::format("    dcs_memcpy(_w[{}], &_c, {});\n", o0, bytes);
-    code += std::format("    dcs_memset(_w[{}] + {}, 0, {});\n", o0, bytes, 16 - bytes);
+    code += std::format("    {}\n", genOutputWrite(0, "_c", _bit_width));
+    code += std::format("    _c_oe_{}_0 = true;\n", _id);
     code += "}\n";
     return code;
 }
@@ -51,18 +51,21 @@ Switch::Switch(const std::string &name, int bit_width) : CombinationalComponent(
     addOutput("out", bit_width);
 }
 
-std::string Switch::genFuncDef() const {
+std::string Switch::genFuncDef_comb() const {
     int i0 = inputs()[0]->netId(), i0nw = i0 >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int en = inputs()[1]->netId();
     int o0 = outputs()[0]->netId();
+    std::string write;
+    if (o0 >= 0)
+        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
     return std::format(R"(static void {}() {{
     {}
     bool _en = false; dcs_memcpy(&_en, _w[{}], 1);
     {} _out = _en ? _in : ({})0;
-    {}
+{}
 }})",
-                       funcName(), gen_read_wire(i0, _bit_width, i0nw, "_in"), en >= 0 ? en : 0, c_int_type(_bit_width),
-                       c_int_type(_bit_width), gen_write_wire(o0, "_out", _bit_width));
+                       funcName_comb(), gen_read_wire(i0, _bit_width, i0nw, "_in"), en >= 0 ? en : 0,
+                       c_int_type(_bit_width), c_int_type(_bit_width), write);
 }
 
 std::unique_ptr<Component> Switch::clone(const std::string &n) const {
@@ -82,7 +85,7 @@ Merge::Merge(const std::string &name, int num_bits) : CombinationalComponent(nam
     addOutput("out", num_bits);
 }
 
-std::string Merge::genFuncDef() const {
+std::string Merge::genFuncDef_comb() const {
     int out_nid = outputs()[0]->netId();
     int bytes = byte_count(_num_bits);
 
@@ -95,12 +98,13 @@ std::string Merge::genFuncDef() const {
     }
 
     std::string code;
-    code += std::format("static void {}() {{\n", funcName());
+    code += std::format("static void {}() {{\n", funcName_comb());
     code += reads;
     code += std::format("    {} _out = 0;\n", c_int_type(_num_bits));
     for (int i = 0; i < _num_bits; i++)
         code += std::format("    _out |= (({})_b{}) << {};\n", c_int_type(_num_bits), i, i);
-    code += std::format("    {}\n", gen_write_wire(out_nid, "_out", _num_bits));
+    code += std::format("    {}\n", genOutputWrite(0, "_out", _num_bits));
+    code += std::format("    _c_oe_{}_0 = true;\n", _id);
     code += "}\n";
     return code;
 }
@@ -122,17 +126,18 @@ Split::Split(const std::string &name, int num_bits) : CombinationalComponent(nam
         addOutput(std::format("out{}", i), 1);
 }
 
-std::string Split::genFuncDef() const {
+std::string Split::genFuncDef_comb() const {
     int i0 = inputs()[0]->netId(), i0nw = i0 >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
     std::string code;
-    code += std::format("static void {}() {{\n", funcName());
+    code += std::format("static void {}() {{\n", funcName_comb());
     code += "    " + gen_read_wire(i0, _num_bits, i0nw, "_in") + "\n";
     for (int i = 0; i < _num_bits; i++) {
         int nid = outputs()[i]->netId();
         if (nid >= 0) {
             code += std::format("    uint8_t _b{} = (_in >> {}) & 1;\n", i, i);
-            code += std::format("    dcs_memcpy(_w[{}], &_b{}, 1);\n", nid, i);
+            code += std::format("    {}\n", genOutputWrite(i, std::format("_b{}", i), 1));
+            code += std::format("    _c_oe_{}_{} = true;\n", _id, i);
         }
     }
     code += "}\n";

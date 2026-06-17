@@ -10,8 +10,8 @@ public:
     Print(const std::string &name, int bit_width);
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
-    std::string genInitCode()  const override;
-    std::string genFuncDef()   const override;
+    std::string genInitCode() const override;
+    std::string genFuncDef_seq() const override;
     std::vector<JitSymbol> extraJitSymbols() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 

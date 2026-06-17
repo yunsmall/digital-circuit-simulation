@@ -1,0 +1,23 @@
+{
+  "nets": ["clk", "d_val", "q_val", "dout_val"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "osc",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "constant",
+      "name": "src",
+      "params": {"bit_width": "8", "value": "66"},
+      "connections": {"out": "d_val"}
+    },
+    {
+      "type": "dll",
+      "name": "reg",
+      "params": {"path": "reg8_dll.dll"},
+      "connections": {"clk": "clk", "d": "d_val", "q": "q_val", "d_out": "dout_val"}
+    }
+  ]
+}

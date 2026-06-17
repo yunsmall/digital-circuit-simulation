@@ -44,7 +44,7 @@ public:
         return "";
     }
     std::string genStateDecl() const override;
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::string genInitCode() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
@@ -56,47 +56,4 @@ private:
 };
 
 // ============================================================
-// ROM — 只读存储器，初始化时写入固定数据，仿真时只读
-//
-// 输入: addr（读地址）、clk（时钟）
-// 输出: data_out（读数据）
-// 读延迟: 地址改变后经过 read_latency 个周期数据有效
-// ============================================================
-class ROM : public SequentialComponent {
-public:
-    // addr_width: 地址位宽（1~12）
-    // data_width: 数据位宽（1~64）
-    // initial_data: 初始化数据（hex 字符串，每 2 字符 = 1 字节，低字节在前）
-    // read_latency: 读延迟（0~15）
-    ROM(const std::string &name, int addr_width, int data_width, const std::string &initial_data = "",
-        int read_latency = 0);
-
-    int depth() const {
-        return _depth;
-    }
-    int addrWidth() const {
-        return _addr_width;
-    }
-    int dataWidth() const {
-        return _data_width;
-    }
-    const uint8_t *data() const {
-        return _mem.data();
-    }
-
-    std::string genStructDef() const override {
-        return "";
-    }
-    std::string genStateDecl() const override;
-    std::string genFuncDef() const override;
-    std::string genInitCode() const override;
-    std::unique_ptr<Component> clone(const std::string &n) const override;
-
-private:
-    int _addr_width, _data_width, _depth;
-    int _read_latency, _rd_stages;
-    std::string _initial_data;
-    std::vector<uint8_t> _mem;
-};
-
 } // namespace dsc

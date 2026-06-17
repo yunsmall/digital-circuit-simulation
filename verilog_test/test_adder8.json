@@ -1,0 +1,11 @@
+{
+  "nets": ["a", "b", "cin", "sum", "cout"],
+  "components": [
+    {
+      "type": "dll",
+      "name": "adder",
+      "params": {"path": "adder8_dll.dll"},
+      "connections": {"a": "a", "b": "b", "cin": "cin", "sum": "sum", "cout": "cout"}
+    }
+  ]
+}

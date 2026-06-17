@@ -1,0 +1,29 @@
+{
+  "nets": ["clk", "rst", "en", "cnt"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "osc",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "constant",
+      "name": "vcc",
+      "params": {"bit_width": "1", "value": "1"},
+      "connections": {"out": "en"}
+    },
+    {
+      "type": "constant",
+      "name": "gnd",
+      "params": {"bit_width": "1", "value": "0"},
+      "connections": {"out": "rst"}
+    },
+    {
+      "type": "dll",
+      "name": "ctr",
+      "params": {"path": "counter8_dll.dll"},
+      "connections": {"clk": "clk", "rst": "rst", "en": "en", "count": "cnt"}
+    }
+  ]
+}

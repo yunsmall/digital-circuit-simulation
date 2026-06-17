@@ -1,0 +1,88 @@
+{
+  "nets": [
+    "clk", "sel", "sel0", "sel1",
+    "en0", "en1", "en2", "en3",
+    "c0", "c1", "c2", "c3",
+    "dbus"
+  ],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "counter",
+      "name": "addr",
+      "params": {"bit_width": "2"},
+      "connections": {"clk": "clk", "q": "sel"}
+    },
+    {
+      "type": "split",
+      "name": "sel_split",
+      "params": {"num_bits": "2"},
+      "connections": {"in": "sel", "out0": "sel0", "out1": "sel1"}
+    },
+    {
+      "type": "decoder",
+      "name": "sel_dec",
+      "params": {"n_selects": "2"},
+      "connections": {"sel0": "sel0", "sel1": "sel1", "out0": "en0", "out1": "en1", "out2": "en2", "out3": "en3"}
+    },
+    {
+      "type": "constant",
+      "name": "src0",
+      "params": {"bit_width": "8", "value": "17"},
+      "connections": {"out": "c0"}
+    },
+    {
+      "type": "constant",
+      "name": "src1",
+      "params": {"bit_width": "8", "value": "34"},
+      "connections": {"out": "c1"}
+    },
+    {
+      "type": "constant",
+      "name": "src2",
+      "params": {"bit_width": "8", "value": "68"},
+      "connections": {"out": "c2"}
+    },
+    {
+      "type": "constant",
+      "name": "src3",
+      "params": {"bit_width": "8", "value": "136"},
+      "connections": {"out": "c3"}
+    },
+    {
+      "type": "tsbuf",
+      "name": "ts0",
+      "params": {"bit_width": "8"},
+      "connections": {"in": "c0", "oe": "en0", "out": "dbus"}
+    },
+    {
+      "type": "tsbuf",
+      "name": "ts1",
+      "params": {"bit_width": "8"},
+      "connections": {"in": "c1", "oe": "en1", "out": "dbus"}
+    },
+    {
+      "type": "tsbuf",
+      "name": "ts2",
+      "params": {"bit_width": "8"},
+      "connections": {"in": "c2", "oe": "en2", "out": "dbus"}
+    },
+    {
+      "type": "tsbuf",
+      "name": "ts3",
+      "params": {"bit_width": "8"},
+      "connections": {"in": "c3", "oe": "en3", "out": "dbus"}
+    },
+    {
+      "type": "print",
+      "name": "bus_mon",
+      "params": {"bit_width": "8"},
+      "connections": {"in": "dbus", "clk": "clk"}
+    }
+  ]
+}

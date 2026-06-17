@@ -27,11 +27,16 @@ public:
         return _def_name;
     }
 
-    bool isSequential() const override;
+    bool hasCombinational() const override {
+        return false;
+    }
+    bool hasSequential() const override {
+        return true;
+    }
     bool isComposite() const override {
         return true;
     }
-    std::string genFuncDef() const override;
+    std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
     // 编译前准备：加载定义、创建引脚

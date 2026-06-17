@@ -1,0 +1,99 @@
+{
+  "nets": [
+    "clk", "sel", "sel0", "sel1",
+    "a0","b0","a1","b1","a2","b2","a3","b3",
+    "a_out","b_out","sum","diff","prod"
+  ],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "counter",
+      "name": "state_cnt",
+      "params": {"bit_width": "2"},
+      "connections": {"clk": "clk", "q": "sel" }
+    },
+    {
+      "type": "split",
+      "name": "sel_split",
+      "params": {"num_bits": "2"},
+      "connections": {"in": "sel", "out0": "sel0", "out1": "sel1"}
+    },
+    {
+      "type": "fconst","name": "a0","params": {"precision":"32","value":"1.0"},"connections":{"out":"a0"}
+    },
+    {
+      "type": "fconst","name": "b0","params": {"precision":"32","value":"2.0"},"connections":{"out":"b0"}
+    },
+    {
+      "type": "fconst","name": "a1","params": {"precision":"32","value":"3.0"},"connections":{"out":"a1"}
+    },
+    {
+      "type": "fconst","name": "b1","params": {"precision":"32","value":"4.0"},"connections":{"out":"b1"}
+    },
+    {
+      "type": "fconst","name": "a2","params": {"precision":"32","value":"5.0"},"connections":{"out":"a2"}
+    },
+    {
+      "type": "fconst","name": "b2","params": {"precision":"32","value":"6.0"},"connections":{"out":"b2"}
+    },
+    {
+      "type": "fconst","name": "a3","params": {"precision":"32","value":"7.0"},"connections":{"out":"a3"}
+    },
+    {
+      "type": "fconst","name": "b3","params": {"precision":"32","value":"8.0"},"connections":{"out":"b3"}
+    },
+    {
+      "type": "mux",
+      "name": "mux_a",
+      "params": {"n_selects": "2", "bit_width": "32"},
+      "connections": {"sel0":"sel0","sel1":"sel1","in0":"a0","in1":"a1","in2":"a2","in3":"a3","out":"a_out"}
+    },
+    {
+      "type": "mux",
+      "name": "mux_b",
+      "params": {"n_selects": "2", "bit_width": "32"},
+      "connections": {"sel0":"sel0","sel1":"sel1","in0":"b0","in1":"b1","in2":"b2","in3":"b3","out":"b_out"}
+    },
+    {
+      "type": "fadd",
+      "name": "add_ab",
+      "params": {"precision": "32"},
+      "connections": {"a":"a_out","b":"b_out","out":"sum"}
+    },
+    {
+      "type": "fsub",
+      "name": "sub_ab",
+      "params": {"precision": "32"},
+      "connections": {"a":"a_out","b":"b_out","out":"diff"}
+    },
+    {
+      "type": "fmul",
+      "name": "mul_sd",
+      "params": {"precision": "32"},
+      "connections": {"a":"sum","b":"diff","out":"prod"}
+    },
+    {
+      "type": "fprint",
+      "name": "mon_sum",
+      "params": {"precision": "32"},
+      "connections": {"in":"sum","clk":"clk"}
+    },
+    {
+      "type": "fprint",
+      "name": "mon_diff",
+      "params": {"precision": "32"},
+      "connections": {"in":"diff","clk":"clk"}
+    },
+    {
+      "type": "fprint",
+      "name": "mon_prod",
+      "params": {"precision": "32"},
+      "connections": {"in":"prod","clk":"clk"}
+    }
+  ]
+}

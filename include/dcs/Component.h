@@ -10,7 +10,7 @@ namespace dsc {
 
 // ============================================================
 // C 代码生成工具函数 — 实现在 src/Component.cpp
-// 各元件的 genFuncDef() 调用这些函数生成 C 代码片段
+// 各元件的 genFuncDef_comb() / genFuncDef_seq() 调用这些函数生成 C 代码片段
 // ============================================================
 
 // 根据位宽返回 C 整数类型名（1~8→uint8_t, 9~16→uint16_t, 17~32→uint32_t, 33~64→uint64_t）
@@ -25,8 +25,8 @@ std::string gen_mask(int width);
 // 生成"从线网读取值"的 C 代码片段，悬空输入自动初始化为 0，超宽自动加掩码
 std::string gen_read_wire(int net_id, int pin_w, int net_w, std::string_view var);
 
-// 生成"写入线网值"的 C 代码片段，自动清零超出位宽的字节
-std::string gen_write_wire(int net_id, std::string_view val, int pin_w);
+// 生成"写入线网值"的 C 代码片段（写到 _c_out_<comp_id>_<out_idx>），自动清零超出位宽的字节
+std::string gen_write_wire(int comp_id, int out_idx, std::string_view val, int pin_w);
 
 // ============================================================
 // 元件抽象基类
@@ -60,14 +60,9 @@ public:
         return _outputs;
     }
 
-    // 是否为时序元件。用于: ①环路检测（时序输出不产生组合环路） ②tick() 排序
-    virtual bool isSequential() const {
-        return false;
-    }
-
     // 环路检测：返回输出引脚 out_idx 的组合逻辑依赖输入索引列表
-    // 组合逻辑返回所有输入，时序逻辑返回空（输出由内部状态决定）
-    virtual std::vector<int> getCombinationalDeps(int) const;
+    // 默认检查引脚 is_sequential 属性，子类可重写
+    virtual std::vector<int> getCombinationalDeps(int out_idx) const;
 
     // ======== C 代码生成虚方法 ========
 
@@ -81,8 +76,25 @@ public:
         return "";
     }
 
-    // 更新函数完整定义（函数签名 + 函数体），每个元件必须实现
-    virtual std::string genFuncDef() const = 0;
+    // === 组合/时序双函数（拆分执行阶段） ===
+    virtual bool hasCombinational() const {
+        return true;
+    }
+    virtual bool hasSequential() const {
+        return false;
+    }
+    // 组合部分函数定义（默认为空，组合子类必须重写）
+    virtual std::string genFuncDef_comb() const {
+        return "";
+    }
+    // 时序部分函数定义（默认为空，时序子类必须重写）
+    virtual std::string genFuncDef_seq() const {
+        return "";
+    }
+    virtual std::string genFuncDecl_comb() const;
+    virtual std::string genFuncDecl_seq() const;
+    virtual std::string funcName_comb() const;
+    virtual std::string funcName_seq() const;
 
     // 初始化代码片段，插入到 circuit_init() 函数体中
     virtual std::string genInitCode() const {
@@ -94,11 +106,11 @@ public:
         return "";
     }
 
-    // 函数前向声明（如 static void _update_and_g1(void);）
-    virtual std::string genFuncDecl() const;
-
-    // 生成唯一 C 函数名: _update_<type>_<name>
-    virtual std::string funcName() const;
+    // 复位代码片段，插入到 circuit_reset() 函数体中。
+    // 默认与 init 相同（清零状态），子类可重写（如 DLL 只复位不重建）
+    virtual std::string genResetCode() const {
+        return genInitCode();
+    }
 
     // 状态变量名: _s_<type>_<name>    状态类型名: _S_<type>_<name>
     std::string stateVarName() const;
@@ -144,23 +156,14 @@ public:
     virtual void simDeinit() {
     }
 
-    // 编译成功后调用（一次性初始化，如分配资源）
-    virtual void onCompiled() {
-    }
-
-    // JIT 编译+重定位完成后调用（Memory: 写入内存指针到 JIT 变量）
-    // lookup 用于查找 JIT 中的符号地址
-    virtual void onJitReady(void *(*lookup)(void *, const char *), void *ctx) {
-    }
-
-    // 元件从电路移除时调用（DLL: FreeLibrary）
-    virtual void onCleanup() {
-    }
-
     // JSON 序列化：导出构造参数
     virtual std::unordered_map<std::string, std::string> exportParams() const {
         return _params;
     }
+
+    // 生成写输出槽 _c_out_<comp_id>_<out_idx> 的 C 代码
+    // （包含 _c_oe = true，三态门可在其后覆盖 oe）
+    std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
 
 protected:
     void setParam(const std::string &key, const std::string &value) {
@@ -168,7 +171,7 @@ protected:
     }
     // 子类用：创建输入/输出引脚
     Pin *addInput(const std::string &pin_name, int bit_width);
-    Pin *addOutput(const std::string &pin_name, int bit_width);
+    Pin *addOutput(const std::string &pin_name, int bit_width, bool is_tri_state = false, bool is_sequential = false);
 
     std::string _name;
     std::string _type_name;
@@ -178,13 +181,19 @@ protected:
     std::unordered_map<std::string, std::string> _params;
 };
 
-// 组合逻辑元件基类 — isSequential() 永远返回 false，无状态结构体
+// 组合逻辑元件基类 — 无状态，只有 comb 部分
 class CombinationalComponent : public Component {
 public:
     using Component::Component;
-    bool isSequential() const final {
+    bool hasCombinational() const final {
+        return true;
+    }
+    bool hasSequential() const final {
         return false;
     }
+    std::string genFuncDef_comb() const override {
+        return "";
+    } // 组合子类必须重写
     std::string genStructDef() const final {
         return "";
     }
@@ -196,13 +205,19 @@ public:
     }
 };
 
-// 时序逻辑元件基类 — isSequential() 永远返回 true，环路检测不产生边
+// 时序逻辑元件基类 — 有状态，只有 seq 部分，环路检测不产生边
 class SequentialComponent : public Component {
 public:
     using Component::Component;
-    bool isSequential() const final {
+    bool hasCombinational() const final {
+        return false;
+    }
+    bool hasSequential() const final {
         return true;
     }
+    std::string genFuncDef_seq() const override {
+        return "";
+    } // 时序子类必须重写
     std::vector<int> getCombinationalDeps(int) const final {
         return {};
     }
