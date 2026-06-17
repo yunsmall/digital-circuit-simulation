@@ -72,20 +72,21 @@ jobs:
       # ============================================================
       # TCC — 从 GitHub HEAD 编译
       # ============================================================
-      - name: Build TCC from HEAD (Linux)
+      - name: Build TCC (Linux)
         if: runner.os == 'Linux' && matrix.backend == 'tcc'
         run: |
-          git clone --depth 1 https://github.com/TinyCC/tinycc.git /tmp/tinycc
-          cd /tmp/tinycc
-          ./configure
+          git clone https://github.com/TinyCC/tinycc.git /tmp/tinycc
+          cd /tmp/tinycc && git checkout a338258d309c888bde96b2d1f206299231a54ddf
+          ./configure --disable-static
           make -j$(nproc)
           sudo make install
         shell: bash
 
-      - name: Build TCC from HEAD (Windows)
+      - name: Build TCC (Windows)
         if: runner.os == 'Windows' && matrix.backend == 'tcc'
         run: |
-          git clone --depth 1 https://github.com/TinyCC/tinycc.git C:/tinycc
+          git clone https://github.com/TinyCC/tinycc.git C:/tinycc
+          cd /d C:/tinycc && git checkout a338258d309c888bde96b2d1f206299231a54ddf
           cd /d C:/tinycc/win32
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           .\build-tcc.bat -c cl -i
