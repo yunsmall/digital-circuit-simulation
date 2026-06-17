@@ -15,6 +15,18 @@
 
 namespace dsc {
 
+// 元件分类枚举，供外部工具按类别筛选
+enum class ComponentCategory {
+    Gate,       // 门电路
+    Reduction,  // 归约运算
+    Arithmetic, // 算术/比较运算
+    Sequential, // 时序逻辑
+    Float,      // 浮点运算
+    Memory,     // 存储元件
+    DataPath,   // 数据通路（Mux/Decoder/移位/合并拆分/符号扩展/延迟线等）
+    Misc,       // 杂项（打印/复合/DLL 等）
+};
+
 class ComponentFactory {
 public:
     // 参数描述
@@ -30,6 +42,8 @@ public:
         std::vector<ParamMeta> params; // 构造参数
         std::vector<std::string> input_pins; // 引脚名列表（空 = 自动从实例获取）
         std::vector<std::string> output_pins;
+        ComponentCategory category = ComponentCategory::Misc;
+        std::string description; // 元件功能简介（空 = 未填写）
     };
 
     // params: 参数名 → 值的字符串映射，creator 自行解析
@@ -124,5 +138,20 @@ private:
             }                                                                                                          \
         } _reg_##class_name;                                                                                           \
     }
+
+// 分类名称（供 CLI / 外部工具展示）
+inline const char *categoryName(ComponentCategory c) {
+    switch (c) {
+        case ComponentCategory::Gate:       return "门电路";
+        case ComponentCategory::Reduction:  return "归约运算";
+        case ComponentCategory::Arithmetic: return "算术运算";
+        case ComponentCategory::Sequential: return "时序逻辑";
+        case ComponentCategory::Float:      return "浮点运算";
+        case ComponentCategory::Memory:     return "存储元件";
+        case ComponentCategory::DataPath:   return "数据通路";
+        case ComponentCategory::Misc:       return "杂项";
+    }
+    return "未知";
+}
 
 } // namespace dsc

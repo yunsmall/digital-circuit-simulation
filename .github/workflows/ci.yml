@@ -95,51 +95,49 @@ jobs:
       # ============================================================
       # 配置 & 编译 & 测试
       # ============================================================
-      - name: CMake configure (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          ARGS=(-B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DDCS_BUILD_VERILOG=OFF)
-          if [ "${{ matrix.backend }}" = "tcc" ]; then
-            ARGS+=(-DDCS_USE_TCC=ON)
-            if [ -d "C:/tinycc/win32" ]; then ARGS+=(-DTCC_ROOT=C:/tinycc/win32); fi
-          fi
-          if [ -n "$LLVM_ROOT" ]; then ARGS+=(-DLLVM_ROOT="$LLVM_ROOT"); fi
-          cmake "${ARGS[@]}"
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y -qq ninja-build
         shell: bash
 
-      - name: CMake configure (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: pip install ninja
+        shell: bash
+
+      # Windows: 导出 MSVC 环境变量到 GITHUB_ENV，使后续 step 中 Ninja 能找到 cl.exe
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
         run: |
-          sudo apt-get install -y -qq ninja-build
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" > NUL
+          echo PATH=%PATH%>> %GITHUB_ENV%
+          echo INCLUDE=%INCLUDE%>> %GITHUB_ENV%
+          echo LIB=%LIB%>> %GITHUB_ENV%
+          echo LIBPATH=%LIBPATH%>> %GITHUB_ENV%
+        shell: cmd
+
+      - name: CMake configure
+        run: |
           ARGS=(-B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DDCS_BUILD_VERILOG=OFF)
           if [ "${{ matrix.backend }}" = "tcc" ]; then
             ARGS+=(-DDCS_USE_TCC=ON)
+            if [ "$RUNNER_OS" = "Windows" ] && [ -d "C:/tinycc/win32" ]; then ARGS+=(-DTCC_ROOT=C:/tinycc/win32); fi
           fi
           if [ -n "$LLVM_ROOT" ]; then ARGS+=(-DLLVM_ROOT="$LLVM_ROOT"); fi
           cmake "${ARGS[@]}"
         shell: bash
 
       - name: Build
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake --build build --parallel --config RelWithDebInfo
-          else
-            cmake --build build --parallel
-          fi
+        run: cmake --build build --parallel
         shell: bash
 
       - name: Test
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            ctest --test-dir build -C RelWithDebInfo --output-on-failure
-          else
-            ctest --test-dir build --output-on-failure
-          fi
+        run: ctest --test-dir build --output-on-failure
         shell: bash
 
       - name: Install
         run: |
-          cmake --install build --prefix "_artifact/dcs-${{ matrix.os }}-${{ matrix.backend }}" --config RelWithDebInfo
+          cmake --install build --prefix "_artifact/dcs-${{ matrix.os }}-${{ matrix.backend }}"
           echo "=== 安装目录结构 ==="
           ls -R _artifact
         shell: bash

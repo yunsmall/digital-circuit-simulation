@@ -34,7 +34,9 @@ void listTypes() {
     const auto &metas = f.metas();
     std::cout << std::format("已注册元件类型: {} 种\n\n", metas.size());
     for (auto &[name, meta]: metas) {
-        std::cout << std::format("  [{}]\n", meta.type_name);
+        std::cout << std::format("  [{}]  ({})\n", meta.type_name, dsc::categoryName(meta.category));
+        if (!meta.description.empty())
+            std::cout << std::format("    {}\n", meta.description);
         if (meta.params.empty()) {
             std::cout << "    参数: (无)\n";
         }
