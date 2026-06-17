@@ -16,12 +16,23 @@
 //   [仿真逻辑] dcs_dll_tick(void*)        — 每个时钟周期调用
 //              dcs_dll_reset(void*)       — 电路复位时调用
 //
-// 典型生命周期:
-//   dcs_dll_init()
-//   state = dcs_dll_create()
-//   loop: dcs_dll_tick(state) / dcs_dll_reset(state)
-//   dcs_dll_destroy(state)
-//   dcs_dll_deinit()
+// 典型生命周期（两阶段初始化）:
+//
+//   阶段1 — Circuit::init() 中先调用 simInit()（全局初始化）:
+//     dcs_dll_init()               ← 全局一次性，加载共享资源
+//
+//   阶段2 — Circuit::init() 中再调用 JIT circuit_init()（实例初始化）:
+//     state = dcs_dll_create()     ← 创建该实例的私有状态对象
+//
+//   运行期:
+//     loop: dcs_dll_tick(state) / dcs_dll_reset(state)
+//
+//   销毁 — Circuit::deinit() 中:
+//     dcs_dll_destroy(state)       ← 销毁实例状态
+//     dcs_dll_deinit()             ← 全局一次性，释放共享资源
+//
+// 注意: dcs_dll_init() 在 dcs_dll_create() 之前调用，因此 init 中不能依赖
+//       实例状态（state 尚未创建），只能做全局级别的初始化。
 #pragma once
 
 #include <stdint.h>

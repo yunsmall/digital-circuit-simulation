@@ -25,8 +25,11 @@ inline uint8_t runGate(int in0, int in1, int num_in, int bw, auto make) {
     return c.getWire(o->id())[0];
 }
 
-#define GATE_TEST(name, cls, in0, in1, expected)                                                                       \
-    TEST(GatesTest, name) {                                                                                            \
-        EXPECT_EQ(runGate(in0, in1, 2, 8, [](auto &&...a) { return std::make_unique<cls>(a...); }),                    \
-                  static_cast<uint8_t>(expected));                                                                     \
+#define GATE_TEST_OP(name, op, in0, in1, expected)                                                                         \
+    TEST(GatesTest, name) {                                                                                                \
+        EXPECT_EQ(runGate(in0, in1, 2, 8,                                                                                  \
+                          [](const std::string &n, int ni, int bw) {                                                       \
+                              return std::make_unique<dsc::LogicGate>(n, ni, bw, dsc::GateOp::op);                         \
+                          }),                                                                                              \
+                  static_cast<uint8_t>(expected));                                                                         \
     }

@@ -14,7 +14,7 @@ static uint64_t f32(double v) {
 TEST(FloatSubTest, BasicSub32) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatSub>("fs", 32));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fs", 32, dsc::FloatBinOpKind::SUB));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);

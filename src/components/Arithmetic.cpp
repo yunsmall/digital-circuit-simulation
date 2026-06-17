@@ -203,7 +203,6 @@ Comparator::Comparator(const std::string &name, int bit_width, CmpOp op, bool is
     CombinationalComponent(name, std::string("cmp_") + cmpOpStr(op)), _bit_width(bit_width), _op(op),
     _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
-    setParam("op", cmpOpStr(_op));
     if (is_signed)
         setParam("signed", "1");
     if (bit_width < 1 || bit_width > 64)
@@ -564,6 +563,90 @@ std::string Divider::genFuncDef_comb() const {
 
 std::unique_ptr<Component> Divider::clone(const std::string &n) const {
     return std::make_unique<Divider>(n, _bit_width, _signed);
+}
+
+// ============================================================
+// Abs — 绝对值
+// ============================================================
+Abs::Abs(const std::string &name, int bit_width) :
+    CombinationalComponent(name, "abs"), _bit_width(bit_width) {
+    setParam("bit_width", std::to_string(bit_width));
+    addInput("in", bit_width);
+    addOutput("out", bit_width);
+}
+
+std::string Abs::genFuncDef_comb() const {
+    int in_nid = inputs()[0]->netId();
+    int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
+    int bw = _bit_width;
+
+    // 纯无符号位运算取反，避免有符号溢出 UB
+    return std::format(R"(static void {}() {{
+    {}
+    uint64_t _v = _tmp_in;
+    if (_v & (1ULL << {}))
+        _v = (~_v + 1) & {};
+    {}
+}})",
+                       funcName_comb(), gen_read_wire(in_nid, bw, in_nw, "_tmp_in"), bw - 1, gen_mask(bw),
+                       genOutputWrite(0, "_v", bw));
+}
+
+std::unique_ptr<Component> Abs::clone(const std::string &n) const {
+    return std::make_unique<Abs>(n, _bit_width);
+}
+
+// ============================================================
+// MinMax — 最小/最大值
+// ============================================================
+MinMax::MinMax(const std::string &name, int bit_width, bool is_max, bool is_signed) :
+    CombinationalComponent(name, is_max ? "max" : "min"),
+    _bit_width(bit_width), _is_max(is_max), _signed(is_signed) {
+    setParam("bit_width", std::to_string(bit_width));
+    setParam("mode", is_max ? "max" : "min");
+    setParam("signed", std::to_string(is_signed));
+    addInput("a", bit_width);
+    addInput("b", bit_width);
+    addOutput("out", bit_width);
+}
+
+std::string MinMax::genFuncDef_comb() const {
+    int a_nid = inputs()[0]->netId();
+    int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
+    int b_nid = inputs()[1]->netId();
+    int b_nw = b_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
+    int bw = _bit_width;
+
+    std::string cmp;
+    if (_signed && bw < 64) {
+        // 符号扩展到 int64_t 再比较
+        std::string mask = gen_mask(bw);
+        cmp = std::format(R"(
+    int64_t _sa, _sb;
+    {{ uint64_t _u = _a; if (_u & (1ULL << {})) _u |= ~{}; _sa = (int64_t)_u; }}
+    {{ uint64_t _u = _b; if (_u & (1ULL << {})) _u |= ~{}; _sb = (int64_t)_u; }}
+    uint64_t _out = (_sa {} _sb) ? _a : _b;)", bw - 1, mask, bw - 1, mask, _is_max ? ">" : "<");
+    } else if (_signed) {
+        // 64 位直接转 int64_t 比较
+        cmp = std::format(R"(
+    uint64_t _out = ((int64_t)_a {} (int64_t)_b) ? _a : _b;)", _is_max ? ">" : "<");
+    } else {
+        cmp = std::format(R"(
+    uint64_t _out = (_a {} _b) ? _a : _b;)", _is_max ? ">" : "<");
+    }
+
+    return std::format(R"(static void {}() {{
+    {}
+    {}
+    {}
+    {}
+}})",
+                       funcName_comb(), gen_read_wire(a_nid, bw, a_nw, "_a"),
+                       gen_read_wire(b_nid, bw, b_nw, "_b"), cmp, genOutputWrite(0, "_out", bw));
+}
+
+std::unique_ptr<Component> MinMax::clone(const std::string &n) const {
+    return std::make_unique<MinMax>(n, _bit_width, _is_max, _signed);
 }
 
 } // namespace dsc

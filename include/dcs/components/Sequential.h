@@ -232,4 +232,46 @@ private:
     int _high, _low, _period;
 };
 
+// ============================================================
+// EdgeDetect — 边沿检测（时钟采样型）
+//
+// 在 clk 上升沿采样 in，与上一周期采样值比较，检测边沿跳变。
+// edge: "rising"(0→1)、"falling"(1→0)、"both"(任一跳变)
+// 状态: prev_in（上一时钟周期的 in 值）
+// ============================================================
+enum class EdgeType { Rising, Falling, Both };
+
+class EdgeDetect : public SequentialComponent {
+public:
+    EdgeDetect(const std::string &name, EdgeType edge = EdgeType::Rising);
+    std::string genStructDef() const override;
+    std::string genStateDecl() const override;
+    std::string genInitCode() const override;
+    std::string genFuncDef_seq() const override;
+    std::unique_ptr<Component> clone(const std::string &n) const override;
+
+private:
+    EdgeType _edge;
+};
+
+// ============================================================
+// ClockDivider — 输入时钟分频器
+//
+// 检测输入 clk 的上升沿，每 N/2 个周期翻转输出，产生 50% 占空比分频。
+// divisor: 分频比（≥2）
+// 状态: prev_clk、counter（0..divisor-1）
+// ============================================================
+class ClockDivider : public SequentialComponent {
+public:
+    ClockDivider(const std::string &name, int divisor);
+    std::string genStructDef() const override;
+    std::string genStateDecl() const override;
+    std::string genInitCode() const override;
+    std::string genFuncDef_seq() const override;
+    std::unique_ptr<Component> clone(const std::string &n) const override;
+
+private:
+    int _divisor;
+};
+
 } // namespace dsc

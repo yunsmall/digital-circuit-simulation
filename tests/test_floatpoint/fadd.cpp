@@ -15,7 +15,7 @@ static uint64_t f32(double v) {
 TEST(FloatAddTest, BasicAdd32) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatAdd>("fa", 32));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fa", 32, dsc::FloatBinOpKind::ADD));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);
@@ -39,7 +39,7 @@ TEST(FloatAddTest, BasicAdd32) {
 TEST(FloatAddTest, Negate32) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatAdd>("fa", 32));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fa", 32, dsc::FloatBinOpKind::ADD));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);
@@ -63,7 +63,7 @@ TEST(FloatAddTest, Negate32) {
 TEST(FloatAddTest, BasicAdd64) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatAdd>("fa", 64));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fa", 64, dsc::FloatBinOpKind::ADD));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);

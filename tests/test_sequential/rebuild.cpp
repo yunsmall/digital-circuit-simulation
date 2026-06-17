@@ -6,7 +6,7 @@
 TEST(CircuitRebuildTest, Rebuild) {
     dsc::Circuit c;
     auto *in0 = c.createNet("in0"), *in1 = c.createNet("in1"), *out = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateAND>("g", 2, 8));
+    auto *g = c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 8, dsc::GateOp::AND));
     c.connect(g, "in0", in0);
     c.connect(g, "in1", in1);
     c.connect(g, "out", out);
@@ -21,7 +21,7 @@ TEST(CircuitRebuildTest, Rebuild) {
     in0 = c.createNet("in0");
     in1 = c.createNet("in1");
     out = c.createNet("out");
-    g = c.addComponent(std::make_unique<dsc::GateOR>("g", 2, 8));
+    g = c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 8, dsc::GateOp::OR));
     c.connect(g, "in0", in0);
     c.connect(g, "in1", in1);
     c.connect(g, "out", out);

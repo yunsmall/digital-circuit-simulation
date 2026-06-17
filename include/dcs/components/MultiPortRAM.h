@@ -10,11 +10,16 @@
 #include <string>
 #include <vector>
 #include "dcs/Component.h"
+#include "dcs/IStorage.h"
 
 namespace dsc {
 
-class MultiPortRAM : public SequentialComponent {
+class MultiPortRAM : public SequentialComponent, public IStorage {
 public:
+    // IStorage: 统一返回内存指针和大小
+    const uint8_t *memPtr() const override { return _mem.data(); }
+    size_t memSize() const override { return _mem.size(); }
+
     // addr_width:  地址位宽（1~12），深度 = 1 << addr_width
     // data_width:  数据位宽（1~64）
     // num_read_ports:  读端口数（1~4）

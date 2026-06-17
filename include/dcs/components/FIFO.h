@@ -20,11 +20,16 @@
 #include <cstdint>
 #include <vector>
 #include "dcs/Component.h"
+#include "dcs/IStorage.h"
 
 namespace dsc {
 
-class FIFO : public SequentialComponent {
+class FIFO : public SequentialComponent, public IStorage {
 public:
+    // IStorage: 统一返回内存指针和大小
+    const uint8_t *memPtr() const override { return _mem.data(); }
+    size_t memSize() const override { return _mem.size(); }
+
     FIFO(const std::string &name, int data_width, int depth, bool has_rst = false);
 
     int dataWidth() const {

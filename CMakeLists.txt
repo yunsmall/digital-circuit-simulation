@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.2)
-project(digital_circuit_simulation)
+project(digital_circuit_simulation VERSION 0.0.1)
 
 set(CMAKE_CXX_STANDARD 23)
 
@@ -56,7 +56,6 @@ if(DCS_USE_TCC)
         set(DCS_BACKEND_LIBS ${TCC_LIBRARY})
         set(DCS_BACKEND_INCLUDES ${TCC_INCLUDE_DIR})
     endif()
-    add_compile_definitions(DCS_USE_TCC)
 else()
     # LLVM/Clang 后端
     if(DEFINED LLVM_ROOT)
@@ -88,13 +87,16 @@ endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 
 # ---- 库（src/ 中所有 .cpp）----
-file(GLOB DCS_SOURCES "src/*.cpp" "src/components/*.cpp" "src/util/*.cpp")
+file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/components/*.cpp" "src/util/*.cpp")
 add_library(dcs_lib STATIC ${DCS_SOURCES})
 target_include_directories(dcs_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${DCS_BACKEND_INCLUDES}
 )
 target_link_libraries(dcs_lib PUBLIC ${DCS_BACKEND_LIBS} nlohmann_json::nlohmann_json)
+if(DCS_USE_TCC)
+    target_compile_definitions(dcs_lib PRIVATE DCS_USE_TCC)
+endif()
 
 # ---- 运行时资源复制到输出目录 ----
 # 挂在 dcs_lib 的 POST_BUILD 上，所有链接 dcs_lib 的目标自动获得。
@@ -116,6 +118,9 @@ if(DCS_BUILD_EXECUTABLE)
     find_package(cxxopts CONFIG REQUIRED)
     add_executable(dcs main.cpp)
     target_link_libraries(dcs PRIVATE dcs_lib cxxopts::cxxopts)
+    if(DCS_USE_TCC)
+        target_compile_definitions(dcs PRIVATE DCS_USE_TCC)
+    endif()
 endif()
 
 # ---- 测试（gtest + vcpkg）----
@@ -125,7 +130,7 @@ if(GTest_FOUND)
     enable_testing()
 
     function(add_dcs_test TEST_NAME TEST_SOURCE_GLOB)
-        file(GLOB TEST_SOURCES ${TEST_SOURCE_GLOB})
+        file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${TEST_SOURCE_GLOB})
         add_executable(${TEST_NAME} ${TEST_SOURCES})
         target_link_libraries(${TEST_NAME} PRIVATE dcs_lib GTest::gtest GTest::gtest_main)
         set_target_properties(${TEST_NAME} PROPERTIES CXX_STANDARD 23)

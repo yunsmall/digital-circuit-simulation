@@ -156,4 +156,39 @@ private:
     bool _signed;
 };
 
+// ============================================================
+// 绝对值 — 有符号补码 → 无符号绝对值
+//
+// 输入 in（N 位有符号），输出 out（N 位无符号绝对值）
+// 取负使用 ~in + 1 位运算，避免有符号溢出未定义行为
+// ============================================================
+class Abs : public CombinationalComponent {
+public:
+    Abs(const std::string &name, int bit_width);
+    std::string genFuncDef_comb() const override;
+    std::unique_ptr<Component> clone(const std::string &n) const override;
+
+private:
+    int _bit_width;
+};
+
+// ============================================================
+// MinMax — 两输入比较，输出较小/较大值
+//
+// 输入 a、b 各为 bit_width 位宽，输出 out 为 bit_width 位宽
+// is_max=true 输出最大值，false 输出最小值
+// is_signed=true 有符号比较，false 无符号比较
+// ============================================================
+class MinMax : public CombinationalComponent {
+public:
+    MinMax(const std::string &name, int bit_width, bool is_max, bool is_signed = false);
+    std::string genFuncDef_comb() const override;
+    std::unique_ptr<Component> clone(const std::string &n) const override;
+
+private:
+    int _bit_width;
+    bool _is_max;
+    bool _signed;
+};
+
 } // namespace dsc

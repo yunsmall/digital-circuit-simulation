@@ -8,14 +8,14 @@ TEST(EndToEndTest, SimplePipeline) {
     dsc::Circuit c;
     auto *in = c.createNet("in"), *n1 = c.createNet("n1"), *dout = c.createNet("dout"), *clk = c.createNet("clk"),
          *out = c.createNet("out");
-    auto *not_g = c.addComponent(std::make_unique<dsc::GateNOT>("g1", 8));
+    auto *not_g = c.addComponent(std::make_unique<dsc::UnaryGate>("g1", 8));
     c.connect(not_g, "in", in);
     c.connect(not_g, "out", n1);
     auto *dff = c.addComponent(std::make_unique<dsc::DFlipFlop>("ff", 8));
     c.connect(dff, "d", n1);
     c.connect(dff, "clk", clk);
     c.connect(dff, "q", dout);
-    auto *buf = c.addComponent(std::make_unique<dsc::GateBUF>("g2", 8));
+    auto *buf = c.addComponent(std::make_unique<dsc::UnaryGate>("g2", 8, false));
     c.connect(buf, "in", dout);
     c.connect(buf, "out", out);
 

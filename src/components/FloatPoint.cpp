@@ -38,79 +38,41 @@ static std::string gen_float_func(const Component *comp, int precision, const ch
 }
 
 // ============================================================
-// FloatAdd
+// FloatBinOp
 // ============================================================
-FloatAdd::FloatAdd(const std::string &name, int precision) :
-    CombinationalComponent(name, std::format("fadd{}", precision)), _precision(precision) {
-    auto [ct, bytes] = float_info(precision);
+static const char *float_binop_name(FloatBinOpKind op) {
+    switch (op) {
+        case FloatBinOpKind::ADD: return "fadd";
+        case FloatBinOpKind::SUB: return "fsub";
+        case FloatBinOpKind::MUL: return "fmul";
+        case FloatBinOpKind::DIV: return "fdiv";
+    }
+    return "fadd";
+}
+
+static const char *float_binop_expr(FloatBinOpKind op) {
+    switch (op) {
+        case FloatBinOpKind::ADD: return "_a + _b";
+        case FloatBinOpKind::SUB: return "_a - _b";
+        case FloatBinOpKind::MUL: return "_a * _b";
+        case FloatBinOpKind::DIV: return "_a / _b";
+    }
+    return "_a + _b";
+}
+
+FloatBinOp::FloatBinOp(const std::string &name, int precision, FloatBinOpKind op) :
+    CombinationalComponent(name, float_binop_name(op)), _precision(precision), _op(op) {
     setParam("precision", std::to_string(precision));
     addInput("a", precision);
     addInput("b", precision);
     addOutput("out", precision);
 }
 
-std::string FloatAdd::genFuncDef_comb() const {
-    return gen_float_func(this, _precision, "_a + _b");
+std::string FloatBinOp::genFuncDef_comb() const {
+    return gen_float_func(this, _precision, float_binop_expr(_op));
 }
-std::unique_ptr<Component> FloatAdd::clone(const std::string &n) const {
-    return std::make_unique<FloatAdd>(n, _precision);
-}
-
-// ============================================================
-// FloatSub
-// ============================================================
-FloatSub::FloatSub(const std::string &name, int precision) :
-    CombinationalComponent(name, std::format("fsub{}", precision)), _precision(precision) {
-    auto [ct, bytes] = float_info(precision);
-    setParam("precision", std::to_string(precision));
-    addInput("a", precision);
-    addInput("b", precision);
-    addOutput("out", precision);
-}
-
-std::string FloatSub::genFuncDef_comb() const {
-    return gen_float_func(this, _precision, "_a - _b");
-}
-std::unique_ptr<Component> FloatSub::clone(const std::string &n) const {
-    return std::make_unique<FloatSub>(n, _precision);
-}
-
-// ============================================================
-// FloatMul
-// ============================================================
-FloatMul::FloatMul(const std::string &name, int precision) :
-    CombinationalComponent(name, std::format("fmul{}", precision)), _precision(precision) {
-    auto [ct, bytes] = float_info(precision);
-    setParam("precision", std::to_string(precision));
-    addInput("a", precision);
-    addInput("b", precision);
-    addOutput("out", precision);
-}
-
-std::string FloatMul::genFuncDef_comb() const {
-    return gen_float_func(this, _precision, "_a * _b");
-}
-std::unique_ptr<Component> FloatMul::clone(const std::string &n) const {
-    return std::make_unique<FloatMul>(n, _precision);
-}
-
-// ============================================================
-// FloatDiv
-// ============================================================
-FloatDiv::FloatDiv(const std::string &name, int precision) :
-    CombinationalComponent(name, std::format("fdiv{}", precision)), _precision(precision) {
-    auto [ct, bytes] = float_info(precision);
-    setParam("precision", std::to_string(precision));
-    addInput("a", precision);
-    addInput("b", precision);
-    addOutput("out", precision);
-}
-
-std::string FloatDiv::genFuncDef_comb() const {
-    return gen_float_func(this, _precision, "_a / _b");
-}
-std::unique_ptr<Component> FloatDiv::clone(const std::string &n) const {
-    return std::make_unique<FloatDiv>(n, _precision);
+std::unique_ptr<Component> FloatBinOp::clone(const std::string &n) const {
+    return std::make_unique<FloatBinOp>(n, _precision, _op);
 }
 
 // ============================================================
@@ -153,11 +115,8 @@ static const char *float_cmp_op(FloatCmpOp op) {
 }
 
 FloatCmp::FloatCmp(const std::string &name, int precision, FloatCmpOp op) :
-    CombinationalComponent(name, std::format("fcmp{}_{}", precision, float_cmp_str(op))), _precision(precision),
-    _op(op) {
-    auto [ct, bytes] = float_info(precision);
+    CombinationalComponent(name, std::string("f") + float_cmp_str(op)), _precision(precision), _op(op) {
     setParam("precision", std::to_string(precision));
-    setParam("op", float_cmp_str(op));
     addInput("a", precision);
     addInput("b", precision);
     addOutput("out", 1);
@@ -213,6 +172,93 @@ std::string FloatConst::genFuncDef_comb() const {
 
 std::unique_ptr<Component> FloatConst::clone(const std::string &n) const {
     return std::make_unique<FloatConst>(n, _precision, _value);
+}
+
+// ============================================================
+// FloatToInt — 浮点 → 整型
+// ============================================================
+FloatToInt::FloatToInt(const std::string &name, int fp, int int_width, bool s) :
+    CombinationalComponent(name, "f2i"), _fp(fp), _int_w(int_width), _signed(s) {
+    setParam("fp", std::to_string(fp));
+    setParam("int_width", std::to_string(int_width));
+    setParam("signed", std::to_string(s));
+    addInput("in", fp);
+    addOutput("out", int_width);
+}
+
+std::string FloatToInt::genFuncDef_comb() const {
+    auto [ct, bytes] = float_info(_fp);
+    int in_nid = inputs()[0]->netId();
+    int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
+
+    // TCC 不支持 __fixunssfdi（float→uint64），绕路 int64_t 避免触发
+    // （int64_t→uint64_t 是纯整数转型，不需要编译器内置函数）
+    std::string init = "uint64_t _ival = (uint64_t)(int64_t)_fval;";
+
+    return std::format(R"(static void {}() {{
+    {}
+    {} _fval;
+    dcs_memcpy(&_fval, &_tmp_in, {});
+    {}
+    uint64_t _out = _ival{};
+    {}
+}})",
+                       funcName_comb(), gen_read_wire(in_nid, _fp, in_nw, "_tmp_in"), ct, bytes,
+                       init,
+                       _int_w < 64 ? std::format(" & {}", gen_mask(_int_w)) : "",
+                       genOutputWrite(0, "_out", _int_w));
+}
+
+std::unique_ptr<Component> FloatToInt::clone(const std::string &n) const {
+    return std::make_unique<FloatToInt>(n, _fp, _int_w, _signed);
+}
+
+// ============================================================
+// IntToFloat — 整型 → 浮点
+// ============================================================
+IntToFloat::IntToFloat(const std::string &name, int int_width, int fp, bool s) :
+    CombinationalComponent(name, "i2f"), _int_w(int_width), _fp(fp), _signed(s) {
+    setParam("int_width", std::to_string(int_width));
+    setParam("fp", std::to_string(fp));
+    setParam("signed", std::to_string(s));
+    addInput("in", int_width);
+    addOutput("out", fp);
+}
+
+std::string IntToFloat::genFuncDef_comb() const {
+    auto [ct, bytes] = float_info(_fp);
+    int in_nid = inputs()[0]->netId();
+    int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
+
+    // 符号扩展需要在 uint64_t 上做，_tmp_in 是窄类型会被截断
+    std::string conv;
+    if (_signed && _int_w < 64) {
+        conv = std::format(R"(
+    uint64_t _u = _tmp_in;
+    if (_u & (1ULL << {}))
+        _u |= ~{};
+    {} _fout = ({})(int64_t)_u;)", _int_w - 1, gen_mask(_int_w), ct, ct);
+    } else if (_signed) {
+        // 64 位有符号，直接强转
+        conv = std::format(R"(
+    {} _fout = ({})(int64_t)_tmp_in;)", ct, ct);
+    } else {
+        // TCC 不支持 __floatundisf（uint64→float），先转 int64_t
+        conv = std::format(R"(
+    {} _fout = ({})(int64_t)_tmp_in;)", ct, ct);
+    }
+
+    return std::format(R"(static void {}() {{
+    {}
+    {}
+    {}
+}})",
+                       funcName_comb(), gen_read_wire(in_nid, _int_w, in_nw, "_tmp_in"), conv,
+                       genOutputWrite(0, "_fout", _fp));
+}
+
+std::unique_ptr<Component> IntToFloat::clone(const std::string &n) const {
+    return std::make_unique<IntToFloat>(n, _int_w, _fp, _signed);
 }
 
 } // namespace dsc

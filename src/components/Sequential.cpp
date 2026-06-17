@@ -648,4 +648,121 @@ std::unique_ptr<Component> ClockGen::clone(const std::string &n) const {
     return std::make_unique<ClockGen>(n, _high, _low);
 }
 
+// ============================================================
+// EdgeDetect
+// ============================================================
+EdgeDetect::EdgeDetect(const std::string &name, EdgeType edge) :
+    SequentialComponent(name, edge == EdgeType::Rising ? "edgedet_rise" : edge == EdgeType::Falling ? "edgedet_fall"
+                                                                                                   : "edgedet_both"),
+    _edge(edge) {
+    addInput("clk", 1);
+    addInput("in", 1);
+    addOutput("out", 1, false, true);
+}
+
+std::string EdgeDetect::genStructDef() const {
+    return std::format(R"(typedef struct {{
+    uint8_t prev_clk;
+    uint8_t prev_in;
+    uint8_t out_val;
+}} {};)", stateTypeName());
+}
+std::string EdgeDetect::genStateDecl() const {
+    return std::format("static {} {};", stateTypeName(), stateVarName());
+}
+std::string EdgeDetect::genInitCode() const {
+    return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
+}
+
+std::string EdgeDetect::genFuncDef_seq() const {
+    int clk_nid = inputs()[0]->netId();
+    int in_nid = inputs()[1]->netId();
+    auto st = stateVarName();
+
+    std::string read_clk = clk_nid >= 0
+                               ? std::format("uint8_t _clk = 0; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                               : "uint8_t _clk = 0;";
+    std::string read_in = in_nid >= 0
+                              ? std::format("uint8_t _in = 0; dcs_memcpy(&_in, _w[{}], 1);", in_nid)
+                              : "uint8_t _in = 0;";
+
+    std::string cond;
+    if (_edge == EdgeType::Rising)
+        cond = std::format("(_in && !{}.prev_in)", st);
+    else if (_edge == EdgeType::Falling)
+        cond = std::format("(!_in && {}.prev_in)", st);
+    else
+        cond = std::format("(_in != {}.prev_in)", st);
+
+    return std::format(R"(static void {}() {{
+    {}
+    {}
+    bool _rising = (_clk && !{}.prev_clk);
+    if (_rising) {{
+        {}.out_val = {} ? 1 : 0;
+        {}.prev_in = _in;
+    }}
+    {}.prev_clk = _clk;
+    {}
+}})",
+                       funcName_seq(), read_clk, read_in, st, st, cond, st, st,
+                       genOutputWrite(0, std::format("{}.out_val", st), 1));
+}
+
+std::unique_ptr<Component> EdgeDetect::clone(const std::string &n) const {
+    return std::make_unique<EdgeDetect>(n, _edge);
+}
+
+// ============================================================
+// ClockDivider
+// ============================================================
+ClockDivider::ClockDivider(const std::string &name, int divisor) :
+    SequentialComponent(name, "clkdiv"), _divisor(divisor) {
+    setParam("divisor", std::to_string(divisor));
+    if (divisor < 2)
+        throw std::invalid_argument("分频比必须 >= 2");
+    addInput("clk", 1);
+    addOutput("out", 1, false, true);
+}
+
+std::string ClockDivider::genStructDef() const {
+    return std::format(R"(typedef struct {{
+    uint8_t prev_clk;
+    uint64_t counter;
+}} {};)", stateTypeName());
+}
+std::string ClockDivider::genStateDecl() const {
+    return std::format("static {} {};", stateTypeName(), stateVarName());
+}
+std::string ClockDivider::genInitCode() const {
+    return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
+}
+
+std::string ClockDivider::genFuncDef_seq() const {
+    int clk_nid = inputs()[0]->netId();
+    auto st = stateVarName();
+    int d2 = _divisor / 2;
+
+    std::string read_clk = clk_nid >= 0
+                               ? std::format("uint8_t _clk = 0; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
+                               : "uint8_t _clk = 0;";
+
+    // out_val 从 counter 实时计算，不入状态，避免初始化问题
+    return std::format(R"(static void {}() {{
+    {}
+    bool _rising = (_clk && !{}.prev_clk);
+    if (_rising)
+        {}.counter = ({}.counter + 1) % {};
+    {}.prev_clk = _clk;
+    uint8_t _out = ({}.counter < {}) ? 1 : 0;
+    {}
+}})",
+                       funcName_seq(), read_clk, st, st, st, _divisor, st, st, d2,
+                       genOutputWrite(0, "_out", 1));
+}
+
+std::unique_ptr<Component> ClockDivider::clone(const std::string &n) const {
+    return std::make_unique<ClockDivider>(n, _divisor);
+}
+
 } // namespace dsc

@@ -7,10 +7,10 @@
 TEST(ErrorTest, CombinationalLoop) {
     dsc::Circuit c;
     auto *w0 = c.createNet("w0"), *w1 = c.createNet("w1");
-    auto *g1 = c.addComponent(std::make_unique<dsc::GateNOT>("g1", 8));
+    auto *g1 = c.addComponent(std::make_unique<dsc::UnaryGate>("g1", 8));
     c.connect(g1, "in", w0);
     c.connect(g1, "out", w1);
-    auto *g2 = c.addComponent(std::make_unique<dsc::GateNOT>("g2", 8));
+    auto *g2 = c.addComponent(std::make_unique<dsc::UnaryGate>("g2", 8));
     c.connect(g2, "in", w1);
     c.connect(g2, "out", w0);
     auto err = c.compile();
@@ -21,7 +21,7 @@ TEST(ErrorTest, CombinationalLoop) {
 TEST(ErrorTest, CompileReturnsOK) {
     dsc::Circuit c;
     auto *in = c.createNet("in"), *out = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateBUF>("g", 8));
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 8));
     c.connect(g, "in", in);
     c.connect(g, "out", out);
     EXPECT_EQ(c.compile().code, dsc::ErrorCode::OK);
@@ -31,7 +31,7 @@ TEST(ErrorTest, CompileReturnsOK) {
 TEST(ErrorTest, PinNotFoundInConnect) {
     dsc::Circuit c;
     auto *net = c.createNet("n");
-    auto *g = c.addComponent(std::make_unique<dsc::GateBUF>("g", 8));
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 8));
     EXPECT_THROW(c.connect(g, "no_such_pin", net), std::runtime_error);
 }
 
@@ -42,7 +42,7 @@ TEST(ErrorTest, SequentialBreaksLoop) {
     c.connect(dff, "d", w0);
     c.connect(dff, "clk", clk);
     c.connect(dff, "q", w1);
-    auto *not_g = c.addComponent(std::make_unique<dsc::GateNOT>("not", 8));
+    auto *not_g = c.addComponent(std::make_unique<dsc::UnaryGate>("not", 8));
     c.connect(not_g, "in", w1);
     c.connect(not_g, "out", w0);
     EXPECT_EQ(c.compile().code, dsc::ErrorCode::OK);
@@ -51,10 +51,10 @@ TEST(ErrorTest, SequentialBreaksLoop) {
 TEST(ErrorTest, MultipleDrivers) {
     dsc::Circuit c;
     auto *w = c.createNet("w");
-    auto *g1 = c.addComponent(std::make_unique<dsc::GateBUF>("g1", 8));
+    auto *g1 = c.addComponent(std::make_unique<dsc::UnaryGate>("g1", 8));
     c.connect(g1, "in", c.createNet("a"));
     c.connect(g1, "out", w);
-    auto *g2 = c.addComponent(std::make_unique<dsc::GateBUF>("g2", 8));
+    auto *g2 = c.addComponent(std::make_unique<dsc::UnaryGate>("g2", 8));
     c.connect(g2, "in", c.createNet("b"));
     EXPECT_THROW(c.connect(g2, "out", w), std::runtime_error);
 }
@@ -66,7 +66,7 @@ TEST(ErrorTest, TriStateAndNormalOnSameNet) {
     c.connect(ts, "in", c.createNet("ina"));
     c.connect(ts, "oe", c.createNet("oea"));
     c.connect(ts, "out", bus);
-    auto *buf = c.addComponent(std::make_unique<dsc::GateBUF>("buf", 8));
+    auto *buf = c.addComponent(std::make_unique<dsc::UnaryGate>("buf", 8));
     c.connect(buf, "in", c.createNet("inb"));
     EXPECT_THROW(c.connect(buf, "out", bus), std::runtime_error);
 }

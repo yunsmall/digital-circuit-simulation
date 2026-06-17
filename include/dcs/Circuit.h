@@ -52,7 +52,7 @@ struct CircuitError {
 // 典型使用流程:
 //   1. 构建电路:
 //        auto* n = c.createNet("net1");
-//        auto* g = c.addComponent(std::make_unique<GateAND>("g1", 2, 8));
+//        auto* g = c.addComponent(std::make_unique<LogicGate>("g1", 2, 8));
 //        c.connect(g, "in0", n);
 //   2. 编译:  c.compile();   // 环路检测 → 展开复合 → 生成C → JIT编译
 //   3. 仿真:  c.init(); c.setWire(id, val); c.tick(); c.getWire(id);

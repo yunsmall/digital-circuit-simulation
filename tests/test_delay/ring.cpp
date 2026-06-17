@@ -7,7 +7,7 @@
 TEST(DelayLineTest, RingOscillatorWithNOT) {
     dsc::Circuit c;
     auto *n1 = c.createNet("n1"), *n2 = c.createNet("n2");
-    auto *inv = c.addComponent(std::make_unique<dsc::GateNOT>("inv", 1));
+    auto *inv = c.addComponent(std::make_unique<dsc::UnaryGate>("inv", 1));
     c.connect(inv, "in", n1);
     c.connect(inv, "out", n2);
     auto *dl = c.addComponent(std::make_unique<dsc::DelayLine>("dl", 1, 1));

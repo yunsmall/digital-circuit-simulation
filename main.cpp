@@ -223,7 +223,7 @@ int main(int argc, char *argv[]) {
                                                                          cxxopts::value<std::string>())(
             "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>());
 
-    opts.add_options("其他")("h,help", "显示帮助");
+    opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
     opts.parse_positional({"circuit"});
     opts.positional_help("circuit.json");
@@ -236,6 +236,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (result.count("version")) {
+        std::cout << "dcs 0.0.1\n";
+        return 0;
+    }
     if (result.count("help") || argc == 1) {
         std::cout << opts.help() << "\n";
 #ifdef DCS_USE_TCC

@@ -47,85 +47,85 @@ public:
     Component(const std::string &name, const std::string &type_name);
     virtual ~Component() = default;
 
-    const std::string &name() const {
+    [[nodiscard]] const std::string &name() const {
         return _name;
     }
-    const std::string &typeName() const {
+    [[nodiscard]] const std::string &typeName() const {
         return _type_name;
     }
-    const auto &inputs() const {
+    [[nodiscard]] const auto &inputs() const {
         return _inputs;
     }
-    const auto &outputs() const {
+    [[nodiscard]] const auto &outputs() const {
         return _outputs;
     }
 
     // 环路检测：返回输出引脚 out_idx 的组合逻辑依赖输入索引列表
     // 默认检查引脚 is_sequential 属性，子类可重写
-    virtual std::vector<int> getCombinationalDeps(int out_idx) const;
+    [[nodiscard]] virtual std::vector<int> getCombinationalDeps(int out_idx) const;
 
     // ======== C 代码生成虚方法 ========
 
     // 状态结构体定义（如 DFF: typedef struct { uint8_t q[16]; ... } _S_dff_xxx;）
-    virtual std::string genStructDef() const {
+    [[nodiscard]] virtual std::string genStructDef() const {
         return "";
     }
 
     // 状态变量声明（如 static _S_dff_xxx _s_dff_xxx;）
-    virtual std::string genStateDecl() const {
+    [[nodiscard]] virtual std::string genStateDecl() const {
         return "";
     }
 
     // === 组合/时序双函数（拆分执行阶段） ===
-    virtual bool hasCombinational() const {
+    [[nodiscard]] virtual bool hasCombinational() const {
         return true;
     }
-    virtual bool hasSequential() const {
+    [[nodiscard]] virtual bool hasSequential() const {
         return false;
     }
     // 组合部分函数定义（默认为空，组合子类必须重写）
-    virtual std::string genFuncDef_comb() const {
+    [[nodiscard]] virtual std::string genFuncDef_comb() const {
         return "";
     }
     // 时序部分函数定义（默认为空，时序子类必须重写）
-    virtual std::string genFuncDef_seq() const {
+    [[nodiscard]] virtual std::string genFuncDef_seq() const {
         return "";
     }
-    virtual std::string genFuncDecl_comb() const;
-    virtual std::string genFuncDecl_seq() const;
-    virtual std::string funcName_comb() const;
-    virtual std::string funcName_seq() const;
+    [[nodiscard]] virtual std::string genFuncDecl_comb() const;
+    [[nodiscard]] virtual std::string genFuncDecl_seq() const;
+    [[nodiscard]] virtual std::string funcName_comb() const;
+    [[nodiscard]] virtual std::string funcName_seq() const;
 
     // 初始化代码片段，插入到 circuit_init() 函数体中
-    virtual std::string genInitCode() const {
+    [[nodiscard]] virtual std::string genInitCode() const {
         return "";
     }
 
     // 反初始化代码片段，插入到 circuit_deinit() 函数体中（DLL 状态销毁等）
-    virtual std::string genDeinitCode() const {
+    [[nodiscard]] virtual std::string genDeinitCode() const {
         return "";
     }
 
     // 复位代码片段，插入到 circuit_reset() 函数体中。
     // 默认与 init 相同（清零状态），子类可重写（如 DLL 只复位不重建）
-    virtual std::string genResetCode() const {
+    [[nodiscard]] virtual std::string genResetCode() const {
         return genInitCode();
     }
 
     // 状态变量名: _s_<type>_<name>    状态类型名: _S_<type>_<name>
-    std::string stateVarName() const;
-    std::string stateTypeName() const;
+    [[nodiscard]] std::string stateVarName() const;
+    [[nodiscard]] std::string stateTypeName() const;
 
     // 克隆元件（保留配置参数和引脚信息，仅改名称）。用于复合元件展开
-    virtual std::unique_ptr<Component> clone(const std::string &new_name) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<Component> clone(const std::string &new_name) const = 0;
 
     // 是否为复合元件（内部包含子电路），编译前需要展开
-    virtual bool isComposite() const {
+    [[nodiscard]] virtual bool isComposite() const {
         return false;
     }
 
     // 电路内唯一 ID（由 Circuit::addComponent 分配）
-    int id() const {
+    [[nodiscard]] int id() const {
         return _id;
     }
     void setId(int id) {
@@ -144,7 +144,7 @@ public:
         std::string name;
         void *ptr;
     };
-    virtual std::vector<JitSymbol> extraJitSymbols() const {
+    [[nodiscard]] virtual std::vector<JitSymbol> extraJitSymbols() const {
         return {};
     }
 
@@ -157,13 +157,13 @@ public:
     }
 
     // JSON 序列化：导出构造参数
-    virtual std::unordered_map<std::string, std::string> exportParams() const {
+    [[nodiscard]] virtual std::unordered_map<std::string, std::string> exportParams() const {
         return _params;
     }
 
     // 生成写输出槽 _c_out_<comp_id>_<out_idx> 的 C 代码
     // （包含 _c_oe = true，三态门可在其后覆盖 oe）
-    std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
+    [[nodiscard]] std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
 
 protected:
     void setParam(const std::string &key, const std::string &value) {

@@ -9,11 +9,15 @@
 #include <string>
 #include <vector>
 #include "dcs/Component.h"
+#include "dcs/IStorage.h"
 
 namespace dsc {
 
-class ROM : public SequentialComponent {
+class ROM : public SequentialComponent, public IStorage {
 public:
+    // IStorage: 统一返回数据指针和大小
+    const uint8_t *memPtr() const override { return _data_ptr; }
+    size_t memSize() const override { return _depth * 16; }
     // ---- 构造方式1：hex 字符串（兼容旧版）--------
     // initial_data: 每 2 字符 = 1 字节（如 "AB" = 0xAB），低字节在前
     ROM(const std::string &name, int addr_width, int data_width, const std::string &initial_data = "",

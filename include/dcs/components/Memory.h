@@ -13,11 +13,15 @@
 #include <cstdint>
 #include <vector>
 #include "dcs/Component.h"
+#include "dcs/IStorage.h"
 
 namespace dsc {
 
-class Memory : public SequentialComponent {
+class Memory : public SequentialComponent, public IStorage {
 public:
+    // ...
+    const uint8_t *memPtr() const override { return _mem.data(); }
+    size_t memSize() const override { return _mem.size(); }
     // addr_width: 地址位宽（1~12）
     // data_width: 数据位宽（1~64）
     // read_latency: 读延迟（0~15，0=组合逻辑直出）

@@ -7,11 +7,11 @@ using namespace dsc;
 TEST(JsonRoundTrip, BasicGates) {
     Circuit c;
     auto *n0 = c.createNet("in0"), *n1 = c.createNet("in1"), *n2 = c.createNet("out_and"), *n3 = c.createNet("out_or");
-    auto *g1 = c.addComponent(std::make_unique<GateAND>("g1", 2, 8));
+    auto *g1 = c.addComponent(std::make_unique<LogicGate>("g1", 2, 8, GateOp::AND));
     c.connect(g1, "in0", n0);
     c.connect(g1, "in1", n1);
     c.connect(g1, "out", n2);
-    auto *g2 = c.addComponent(std::make_unique<GateOR>("g2", 2, 8));
+    auto *g2 = c.addComponent(std::make_unique<LogicGate>("g2", 2, 8, GateOp::OR));
     c.connect(g2, "in0", n0);
     c.connect(g2, "in1", n1);
     c.connect(g2, "out", n3);

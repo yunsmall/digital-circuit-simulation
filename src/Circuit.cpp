@@ -161,9 +161,15 @@ void Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
                 if (p->net() == net && p.get() != pin) {
                     // 双方都是三态输出 → 允许多驱动，标记总线
                     if (pin->isTriState() && p->isTriState()) {
-                        if (_bus_nets.find(net->id()) == _bus_nets.end())
-                            _bus_nets[net->id()].push_back({c.get(), oi});
-                        _bus_nets[net->id()].push_back({comp, this_out_idx});
+                        auto &drivers = _bus_nets[net->id()];
+                        auto add_driver = [&](Component *drv, int oidx) {
+                            for (auto &d : drivers)
+                                if (d.comp == drv && d.out_idx == oidx)
+                                    return;
+                            drivers.push_back({drv, oidx});
+                        };
+                        add_driver(c.get(), oi);
+                        add_driver(comp, this_out_idx);
                         goto allow_connect;
                     }
                     throw std::runtime_error(std::format("线网 '{}' 已被多个输出驱动", net->name()));

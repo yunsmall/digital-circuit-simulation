@@ -18,8 +18,10 @@
 #include "dcs/components/MultiPortRAM.h"
 #include "dcs/components/Print.h"
 #include "dcs/components/PriorityEncoder.h"
+#include "dcs/components/Reduction.h"
 #include "dcs/components/ROM.h"
 #include "dcs/components/Sequential.h"
+#include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
 
 #include <filesystem>
@@ -46,6 +48,12 @@ static int _gi(const Params &p, const std::string &k, int d) {
     return it != p.end() ? std::stoi(it->second) : d;
 }
 
+// 字符串参数解析
+static std::string _gs(const Params &p, const std::string &k, const std::string &d) {
+    auto it = p.find(k);
+    return it != p.end() ? it->second : d;
+}
+
 struct InitAllComponents {
     InitAllComponents() {
         auto &f = dsc::ComponentFactory::instance();
@@ -54,42 +62,85 @@ struct InitAllComponents {
         // ============================================================
         // 门电路
         // ============================================================
-        auto mk = [](const std::string &n, const Params &p, auto ctor) {
-            return ctor(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8));
-        };
         f.registerType({"and", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateAND>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::AND);
                        });
         f.registerType({"or", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateOR>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::OR);
                        });
         f.registerType({"nand", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateNAND>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::NAND);
                        });
         f.registerType({"nor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateNOR>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::NOR);
                        });
         f.registerType({"xor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateXOR>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::XOR);
                        });
         f.registerType({"xnor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}},
-                       [mk](const std::string &n, const Params &p) -> C {
-                           return mk(n, p, [](auto &&...a) { return std::make_unique<dsc::GateXNOR>(a...); });
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::LogicGate>(n, _gi(p, "inputs", 2), _gi(p, "bit_width", 8),
+                                                                    dsc::GateOp::XNOR);
                        });
         f.registerType({"not", {{"bit_width", "8"}}, {"in"}, {"out"}}, [&](const std::string &n, const Params &p) -> C {
-            return std::make_unique<dsc::GateNOT>(n, _gi(p, "bit_width", 8));
+            return std::make_unique<dsc::UnaryGate>(n, _gi(p, "bit_width", 8), true);
         });
         f.registerType({"buf", {{"bit_width", "8"}}, {"in"}, {"out"}}, [&](const std::string &n, const Params &p) -> C {
-            return std::make_unique<dsc::GateBUF>(n, _gi(p, "bit_width", 8));
+            return std::make_unique<dsc::UnaryGate>(n, _gi(p, "bit_width", 8), false);
         });
         f.registerType({"tsbuf", {{"bit_width", "8"}}, {"in", "oe"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
                            return std::make_unique<dsc::GateTSBUF>(n, _gi(p, "bit_width", 8));
+                       });
+
+        // ============================================================
+        // 绝对值 / 最小最大值
+        // ============================================================
+        f.registerType({"abs", {{"bit_width", "8"}}, {"in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Abs>(n, _gi(p, "bit_width", 8));
+                       });
+        f.registerType({"min",
+                        {{"bit_width", "8"}, {"signed", "0"}},
+                        {"a", "b"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::MinMax>(n, _gi(p, "bit_width", 8), false,
+                                                                _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"max",
+                        {{"bit_width", "8"}, {"signed", "0"}},
+                        {"a", "b"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::MinMax>(n, _gi(p, "bit_width", 8), true,
+                                                                _gi(p, "signed", 0) != 0);
+                       });
+
+        // ============================================================
+        // 归约门
+        // ============================================================
+        f.registerType({"redand", {{"bit_width", "8"}}, {"in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Reduction>(n, _gi(p, "bit_width", 8), dsc::ReductionOp::AND);
+                       });
+        f.registerType({"redor", {{"bit_width", "8"}}, {"in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Reduction>(n, _gi(p, "bit_width", 8), dsc::ReductionOp::OR);
+                       });
+        f.registerType({"redxor", {{"bit_width", "8"}}, {"in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Reduction>(n, _gi(p, "bit_width", 8), dsc::ReductionOp::XOR);
                        });
 
         // ============================================================
@@ -133,6 +184,22 @@ struct InitAllComponents {
                        [&](const std::string &n, const Params &p) -> C {
                            return std::make_unique<dsc::ClockGen>(n, _gi(p, "high_ticks", 1), _gi(p, "low_ticks", 1));
                        });
+        f.registerType({"edgedet_rise", {{}}, {"clk", "in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Rising);
+                       });
+        f.registerType({"edgedet_fall", {{}}, {"clk", "in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Falling);
+                       });
+        f.registerType({"edgedet_both", {{}}, {"clk", "in"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Both);
+                       });
+        f.registerType({"clkdiv", {{"divisor", "2"}}, {"clk"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::ClockDivider>(n, _gi(p, "divisor", 2));
+                       });
         f.registerType({"print", {{"bit_width", "8"}}, {"in", "clk"}, {}},
                        [&](const std::string &n, const Params &p) -> C {
                            return std::make_unique<dsc::Print>(n, _gi(p, "bit_width", 8));
@@ -158,27 +225,34 @@ struct InitAllComponents {
                        [&](const std::string &n, const Params &p) -> C {
                            return std::make_unique<dsc::Adder>(n, _gi(p, "bit_width", 8));
                        });
-        f.registerType({"comparator",
-                        {{"bit_width", "8"}, {"op", "eq", {"eq", "ne", "lt", "gt", "le", "ge"}}, {"signed", "0"}},
-                        {"a", "b"},
-                        {"out"}},
+        f.registerType({"eq", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           std::string op = "eq";
-                           auto it = p.find("op");
-                           if (it != p.end())
-                               op = it->second;
-                           dsc::CmpOp o = dsc::CmpOp::EQ;
-                           if (op == "ne")
-                               o = dsc::CmpOp::NE;
-                           else if (op == "lt")
-                               o = dsc::CmpOp::LT;
-                           else if (op == "gt")
-                               o = dsc::CmpOp::GT;
-                           else if (op == "le")
-                               o = dsc::CmpOp::LE;
-                           else if (op == "ge")
-                               o = dsc::CmpOp::GE;
-                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), o,
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::EQ,
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"ne", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::NE,
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"lt", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::LT,
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"gt", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::GT,
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"le", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::LE,
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"ge", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Comparator>(n, _gi(p, "bit_width", 8), dsc::CmpOp::GE,
                                                                     _gi(p, "signed", 0) != 0);
                        });
         f.registerType({"decoder", {{"n_selects", "2"}}, {}, {}}, [&](const std::string &n, const Params &p) -> C {
@@ -207,6 +281,27 @@ struct InitAllComponents {
         f.registerType({"barrel", {{"bit_width", "8"}}, {"in", "amt", "dir", "arith"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
                            return std::make_unique<dsc::BarrelShifter>(n, _gi(p, "bit_width", 8));
+                       });
+        f.registerType({"lsl",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Shifter>(n, _gi(p, "bit_width", 8), dsc::ShiftMode::LSL);
+                       });
+        f.registerType({"lsr",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Shifter>(n, _gi(p, "bit_width", 8), dsc::ShiftMode::LSR);
+                       });
+        f.registerType({"asr",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::Shifter>(n, _gi(p, "bit_width", 8), dsc::ShiftMode::ASR);
                        });
         f.registerType({"prienc", {{"num_inputs", "8"}}, {}, {"out", "valid"}},
                        [&](const std::string &n, const Params &p) -> C {
@@ -239,41 +334,43 @@ struct InitAllComponents {
         // ============================================================
         f.registerType({"fadd", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           return std::make_unique<dsc::FloatAdd>(n, _gi(p, "precision", 32));
+                           return std::make_unique<dsc::FloatBinOp>(n, _gi(p, "precision", 32), dsc::FloatBinOpKind::ADD);
                        });
-        f.registerType({"fsub", {{"precision", "32"}}, {"a", "b"}, {"out"}},
+        f.registerType({"fsub", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           return std::make_unique<dsc::FloatSub>(n, _gi(p, "precision", 32));
+                           return std::make_unique<dsc::FloatBinOp>(n, _gi(p, "precision", 32), dsc::FloatBinOpKind::SUB);
                        });
-        f.registerType({"fmul", {{"precision", "32"}}, {"a", "b"}, {"out"}},
+        f.registerType({"fmul", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           return std::make_unique<dsc::FloatMul>(n, _gi(p, "precision", 32));
+                           return std::make_unique<dsc::FloatBinOp>(n, _gi(p, "precision", 32), dsc::FloatBinOpKind::MUL);
                        });
-        f.registerType({"fdiv", {{"precision", "32"}}, {"a", "b"}, {"out"}},
+        f.registerType({"fdiv", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           return std::make_unique<dsc::FloatDiv>(n, _gi(p, "precision", 32));
+                           return std::make_unique<dsc::FloatBinOp>(n, _gi(p, "precision", 32), dsc::FloatBinOpKind::DIV);
                        });
-        f.registerType({"fcmp",
-                        {{"precision", "32", {"32", "64"}}, {"op", "eq", {"eq", "ne", "lt", "gt", "le", "ge"}}},
-                        {"a", "b"},
-                        {"out"}},
+        f.registerType({"feq", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
-                           std::string op = "eq";
-                           auto it = p.find("op");
-                           if (it != p.end())
-                               op = it->second;
-                           dsc::FloatCmpOp o = dsc::FloatCmpOp::EQ;
-                           if (op == "ne")
-                               o = dsc::FloatCmpOp::NE;
-                           else if (op == "lt")
-                               o = dsc::FloatCmpOp::LT;
-                           else if (op == "gt")
-                               o = dsc::FloatCmpOp::GT;
-                           else if (op == "le")
-                               o = dsc::FloatCmpOp::LE;
-                           else if (op == "ge")
-                               o = dsc::FloatCmpOp::GE;
-                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), o);
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::EQ);
+                       });
+        f.registerType({"fne", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::NE);
+                       });
+        f.registerType({"flt", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::LT);
+                       });
+        f.registerType({"fgt", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::GT);
+                       });
+        f.registerType({"fle", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::LE);
+                       });
+        f.registerType({"fge", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatCmp>(n, _gi(p, "precision", 32), dsc::FloatCmpOp::GE);
                        });
         f.registerType({"fconst", {{"precision", "32", {"32", "64"}}, {"value", "0.0"}}, {}, {"out"}},
                        [&](const std::string &n, const Params &p) -> C {
@@ -282,6 +379,26 @@ struct InitAllComponents {
                            if (it != p.end())
                                v = std::stod(it->second);
                            return std::make_unique<dsc::FloatConst>(n, _gi(p, "precision", 32), v);
+                       });
+
+        // ============================================================
+        // 浮点 ↔ 整型转换
+        // ============================================================
+        f.registerType({"f2i",
+                        {{"fp", "32", {"32", "64"}}, {"int_width", "8"}, {"signed", "0"}},
+                        {"in"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::FloatToInt>(n, _gi(p, "fp", 32), _gi(p, "int_width", 8),
+                                                                    _gi(p, "signed", 0) != 0);
+                       });
+        f.registerType({"i2f",
+                        {{"int_width", "8"}, {"fp", "32", {"32", "64"}}, {"signed", "0"}},
+                        {"in"},
+                        {"out"}},
+                       [&](const std::string &n, const Params &p) -> C {
+                           return std::make_unique<dsc::IntToFloat>(n, _gi(p, "int_width", 8), _gi(p, "fp", 32),
+                                                                    _gi(p, "signed", 0) != 0);
                        });
 
         // 有符号乘除 / 除法器
@@ -307,30 +424,15 @@ struct InitAllComponents {
                            int aw = _gi(p, "addr_width", 4);
                            int dw = _gi(p, "data_width", 8);
                            int rl = _gi(p, "read_latency", 0);
-                           std::string st;
-                           auto st_it = p.find("source_type");
-                           if (st_it != p.end())
-                               st = st_it->second;
-                           if (st.empty())
-                               st = "hex";
+                           std::string st = _gs(p, "source_type", "hex");
 
                            if (st == "file") {
-                               std::string fp;
-                               auto fp_it = p.find("filepath");
-                               if (fp_it != p.end())
-                                   fp = fp_it->second;
-                               bool mm = true;
-                               auto mm_it = p.find("use_mmap");
-                               if (mm_it != p.end())
-                                   mm = mm_it->second != "0";
+                               std::string fp = _gs(p, "filepath", "");
+                               bool mm = _gs(p, "use_mmap", "1") != "0";
                                return std::make_unique<dsc::ROM>(n, aw, dw, std::filesystem::path(fp), rl, mm);
                            }
                            else {
-                               // hex（默认，兼容旧版 JSON）
-                               std::string init;
-                               auto it = p.find("initial_data");
-                               if (it != p.end())
-                                   init = it->second;
+                               std::string init = _gs(p, "initial_data", "");
                                return std::make_unique<dsc::ROM>(n, aw, dw, init, rl);
                            }
                        });
@@ -369,19 +471,11 @@ struct InitAllComponents {
         // 复合元件
         // ============================================================
         f.registerType({"composite", {{"definition", ""}}, {}, {}}, [&](const std::string &n, const Params &p) -> C {
-            std::string def;
-            auto it = p.find("definition");
-            if (it != p.end())
-                def = it->second;
-            return std::make_unique<dsc::CompositeComponent>(n, def);
+            return std::make_unique<dsc::CompositeComponent>(n, _gs(p, "definition", ""));
         });
 
         f.registerType({"dll", {{"path", ""}}, {}, {}}, [&](const std::string &n, const Params &p) -> C {
-            std::string path;
-            auto it = p.find("path");
-            if (it != p.end())
-                path = it->second;
-            return std::make_unique<dsc::DllComponent>(n, path);
+            return std::make_unique<dsc::DllComponent>(n, _gs(p, "path", ""));
         });
     }
 };

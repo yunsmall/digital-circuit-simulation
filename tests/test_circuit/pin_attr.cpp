@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 
 TEST(PinAttrTest, CombPinProps) {
-    dsc::GateAND g("g", 2, 8);
+    dsc::LogicGate g("g", 2, 8, dsc::GateOp::AND);
     EXPECT_FALSE(g.outputs()[0]->isTriState());
     EXPECT_FALSE(g.outputs()[0]->isSequential());
 }

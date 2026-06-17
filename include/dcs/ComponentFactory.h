@@ -102,7 +102,7 @@ private:
 
 // ---- 注册宏 ----
 // 用法：在 .cpp 文件全局作用域中
-//   REGISTER_COMPONENT("and", "and", GateAND,
+//   REGISTER_COMPONENT("and", "and", LogicGate,
 //       {{"inputs", "2"}, {"bit_width", "8"}},
 //       {{"in0","in1"}, {"out"}})
 //

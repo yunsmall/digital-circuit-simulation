@@ -11,7 +11,7 @@
 inline void gateBitWidthTest(int bw) {
     dsc::Circuit c;
     auto *i0 = c.createNet("in0"), *i1 = c.createNet("in1"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateAND>("g", 2, bw));
+    auto *g = c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, bw, dsc::GateOp::AND));
     c.connect(g, "in0", i0);
     c.connect(g, "in1", i1);
     c.connect(g, "out", o);
@@ -43,7 +43,7 @@ inline void gateBitWidthTest(int bw) {
 inline void notBitWidthTest(int bw) {
     dsc::Circuit c;
     auto *i0 = c.createNet("in"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateNOT>("g", bw));
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", bw));
     c.connect(g, "in", i0);
     c.connect(g, "out", o);
     c.compile();

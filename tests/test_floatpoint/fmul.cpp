@@ -14,7 +14,7 @@ static uint64_t f32(double v) {
 TEST(FloatMulTest, BasicMul32) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatMul>("fm", 32));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fm", 32, dsc::FloatBinOpKind::MUL));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);
@@ -38,7 +38,7 @@ TEST(FloatMulTest, BasicMul32) {
 TEST(FloatMulTest, MulByZero32) {
     dsc::Circuit c;
     auto *a = c.createNet("a"), *b = c.createNet("b"), *o = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::FloatMul>("fm", 32));
+    auto *g = c.addComponent(std::make_unique<dsc::FloatBinOp>("fm", 32, dsc::FloatBinOpKind::MUL));
     c.connect(g, "a", a);
     c.connect(g, "b", b);
     c.connect(g, "out", o);

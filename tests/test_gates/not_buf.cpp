@@ -4,7 +4,7 @@
 TEST(GatesTest, NOT) {
     dsc::Circuit c;
     auto *in = c.createNet("in"), *out = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateNOT>("g", 8));
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 8, true));
     c.connect(g, "in", in);
     c.connect(g, "out", out);
     c.compile();
@@ -17,7 +17,7 @@ TEST(GatesTest, NOT) {
 TEST(GatesTest, BUF) {
     dsc::Circuit c;
     auto *in = c.createNet("in"), *out = c.createNet("out");
-    auto *g = c.addComponent(std::make_unique<dsc::GateBUF>("g", 8));
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 8, false));
     c.connect(g, "in", in);
     c.connect(g, "out", out);
     c.compile();
