@@ -189,7 +189,19 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, const std::fil
     setParam("filepath", filepath.string());
     setParam("use_mmap", use_mmap ? "1" : "0");
 
-    loadFile(filepath, use_mmap);
+    // 文件加载推迟到 prepare()
+}
+
+bool ROM::prepare(std::string &error) {
+    if (_filepath.empty())
+        return true; // hex / raw 模式，已在构造函数中加载
+    try {
+        loadFile(_filepath, _use_mmap);
+        return true;
+    } catch (const std::exception &e) {
+        error = e.what();
+        return false;
+    }
 }
 
 void ROM::loadFile(const std::filesystem::path &filepath, bool use_mmap) {

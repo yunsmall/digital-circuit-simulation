@@ -85,6 +85,9 @@ public:
     // 移除线网：断开所有连接到此线网的引脚，再从电路中移除并销毁
     void removeNet(Net *net);
 
+    // 移除所有线网（断开全部引脚，清空 _nets）
+    void removeAllNets();
+
     // ⚠️ Component 析构前，若其引脚仍连接在线网上，必须先调用 disconnect，
     // 否则 Net 中会残留悬空指针、_bus_nets 中留有脏数据
 

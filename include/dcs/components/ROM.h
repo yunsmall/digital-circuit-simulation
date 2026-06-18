@@ -36,6 +36,9 @@ public:
 
     ~ROM() override;
 
+    // 文件加载推迟到 prepare()（由 addComponent 调用），与 DLL 错误处理对齐
+    bool prepare(std::string &error) override;
+
     int depth() const {
         return _depth;
     }

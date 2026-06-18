@@ -257,6 +257,15 @@ void Circuit::removeNet(Net *net) {
     _compiled = false;
 }
 
+void Circuit::removeAllNets() {
+    // 断开所有元件的全部引脚
+    for (auto &c : _components)
+        disconnectAll(c.get());
+    _nets.clear();
+    _bus_nets.clear();
+    _compiled = false;
+}
+
 Net *Circuit::findNet(const std::string &name) const {
     for (auto &n: _nets)
         if (n->name() == name)
