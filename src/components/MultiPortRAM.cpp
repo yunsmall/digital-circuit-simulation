@@ -1,4 +1,4 @@
-// MultiPortRAM — 参数化多端口 RAM 实现
+// MultiPortRAM — 参数化多端口 RAM 实现（字节寻址）
 #include "dcs/components/MultiPortRAM.h"
 #include <format>
 #include <stdexcept>
@@ -10,16 +10,10 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
     SequentialComponent(name, "mpram"), _addr_width(addr_width), _data_width(data_width), _num_read(num_read_ports),
     _num_write(num_write_ports), _read_latency(read_latency), _rd_stages(read_latency), _depth(1 << addr_width) {
 
-    if (addr_width < 1 || addr_width > 12)
-        throw std::invalid_argument("地址位宽必须在1-12之间");
-    if (data_width < 1 || data_width > 64)
-        throw std::invalid_argument("数据位宽必须在1-64之间");
     if (num_read_ports < 1 || num_read_ports > 4)
         throw std::invalid_argument("读端口数必须在1-4之间");
     if (num_write_ports < 1 || num_write_ports > 2)
         throw std::invalid_argument("写端口数必须在1-2之间");
-    if (read_latency < 0 || read_latency > 15)
-        throw std::invalid_argument("读延迟必须在0-15之间");
 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));
@@ -27,7 +21,8 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
     setParam("num_write_ports", std::to_string(num_write_ports));
     setParam("read_latency", std::to_string(read_latency));
 
-    _mem.resize(_depth * 16, 0);
+    // 字节寻址：容量 = 2^addr_width 字节
+    _mem.resize(_depth, 0);
 
     // 时钟
     addInput("clk", 1);
@@ -103,11 +98,14 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         q_nid[i] = outputs()[i]->netId();
     int valid_nid = outputs()[_num_read]->netId();
 
+    std::string cap_s = std::to_string(_depth); // 容量（字节数）
+
     std::string code;
-    code += "// MultiPortRAM: " + std::to_string(_data_width) + "b x " + std::to_string(_depth) + ", " +
-            std::to_string(_num_read) + "R/" + std::to_string(_num_write) +
-            "W, rd_lat=" + std::to_string(_read_latency) + "\n";
+    code += "// MultiPortRAM: " + std::to_string(_data_width) + "b × " + cap_s + "B, " +
+            std::to_string(_num_read) + "R/" + std::to_string(_num_write) + "W, rd_lat=" +
+            std::to_string(_read_latency) + "\n";
     code += "static void " + funcName_seq() + "(void) {\n";
+    code += "    const int d_bytes = " + std::to_string(d_bytes) + ";\n";
 
     // ---- 第1步：读取所有输入 ----
     code += "    " + gen_read_wire(clk_nid, 1, 1, "_clk") + "\n";
@@ -126,24 +124,21 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         code += std::format("    _ra{} &= {};\n", i, addr_mask);
     }
 
-    // ---- 第2步：输出读数据和 valid 标志 ----
+    // ---- 第2步：输出读数据（字节寻址 + 边界检查）----
     for (int i = 0; i < _num_read; i++) {
         if (q_nid[i] < 0)
             continue;
-        if (_rd_stages > 0) {
-            int rlast = _rd_stages - 1;
-            code += std::format("    uint8_t* _rslot{} = _mpram_mem_{} + _mpram_rd_addr_{}[{}][{}] * 16;\n", i, sid,
-                                sid, rlast, i);
-        }
-        else {
-            code += std::format("    uint8_t* _rslot{} = _mpram_mem_{} + _ra{} * 16;\n", i, sid, i);
-        }
+        std::string ra = _rd_stages > 0
+            ? std::format("_mpram_rd_addr_{}[{}][{}]", sid, _rd_stages - 1, i)
+            : std::format("_ra{}", i);
         code += std::format("    {} _dout{} = 0;\n", c_int_type(_data_width), i);
-        code += std::format("    dcs_memcpy(&_dout{}, _rslot{}, {});\n", i, i, d_bytes);
+        code += "    if ((uint64_t)" + ra + " + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
+        code += std::format("        dcs_memcpy(&_dout{}, _mpram_mem_{} + {}, {});\n", i, sid, ra, d_bytes);
+        code += "    }\n";
         code += "    " + genOutputWrite(i, std::format("_dout{}", i), _data_width) + "\n";
     }
 
-    // rd_valid: read_latency==0 时始终为 1，否则等流水线填满（_mpram_tick >= read_latency）
+    // rd_valid
     if (valid_nid >= 0) {
         if (_rd_stages > 0)
             code += std::format("    uint8_t _rd_valid = (_mpram_tick_{0} > {1}) ? 1 : 0;\n", sid, _read_latency);
@@ -152,14 +147,14 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         code += "    " + genOutputWrite(_num_read, "_rd_valid", 1) + "\n";
     }
 
-    // ---- 第3步：写端口（时钟上升沿，we=1 时写入）----
+    // ---- 第3步：写端口（时钟上升沿，we=1 时写入，字节寻址 + 边界检查）----
     if (_num_write > 0) {
         code += std::format("    if (_clk && !_mpram_clk_{}) {{\n", sid);
         for (int i = 0; i < _num_write; i++) {
             code += std::format("        if (_we{}) {{\n", i);
-            code += std::format("            uint8_t* _wslot{} = _mpram_mem_{} + _wa{} * 16;\n", i, sid, i);
-            code += std::format("            dcs_memcpy(_wslot{}, &_wd{}, {});\n", i, i, d_bytes);
-            code += std::format("            dcs_memset(_wslot{} + {}, 0, 16 - {});\n", i, d_bytes, d_bytes);
+            code += "            if ((uint64_t)_wa" + std::to_string(i) + " + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
+            code += std::format("                dcs_memcpy(_mpram_mem_{} + _wa{}, &_wd{}, {});\n", sid, i, i, d_bytes);
+            code += "            }\n";
             code += "        }\n";
         }
         code += "    }\n";

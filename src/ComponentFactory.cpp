@@ -422,28 +422,21 @@ struct InitAllComponents {
                         {{"addr_width", "4"},
                          {"data_width", "8"},
                          {"read_latency", "0"},
-                         {"source_type", "hex", {"hex", "file"}},
-                         {"initial_data", ""},
-                         {"filepath", ""},
-                         {"use_mmap", "1", {"0", "1"}}},
+                         {"source_type", "mem", {"mem", "file"}},
+                         {"filepath", ""}},
                         {"addr", "clk"},
                         {"data_out"},
-                        dsc::ComponentCategory::Memory, "只读存储器，支持hex字符串/文件/mmap初始化"},
+                        dsc::ComponentCategory::Memory, "只读存储器，内存模式通过IStorage写入，文件模式从二进制文件加载"},
                        [&](const std::string &n, const Params &p) -> C {
                            int aw = _gi(p, "addr_width", 4);
                            int dw = _gi(p, "data_width", 8);
                            int rl = _gi(p, "read_latency", 0);
-                           std::string st = _gs(p, "source_type", "hex");
+                           std::string st = _gs(p, "source_type", "mem");
 
                            if (st == "file") {
-                               std::string fp = _gs(p, "filepath", "");
-                               bool mm = _gs(p, "use_mmap", "1") != "0";
-                               return std::make_unique<dsc::ROM>(n, aw, dw, std::filesystem::path(fp), rl, mm);
+                               return std::make_unique<dsc::ROM>(n, aw, dw, std::filesystem::path(_gs(p, "filepath", "")), rl);
                            }
-                           else {
-                               std::string init = _gs(p, "initial_data", "");
-                               return std::make_unique<dsc::ROM>(n, aw, dw, init, rl);
-                           }
+                           return std::make_unique<dsc::ROM>(n, aw, dw, rl);
                        });
 
         f.registerType({"memory",

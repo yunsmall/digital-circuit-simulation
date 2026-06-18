@@ -26,9 +26,10 @@ namespace dsc {
 
 class FIFO : public SequentialComponent, public IStorage {
 public:
-    // IStorage: 统一返回内存指针和大小
-    const uint8_t *memPtr() const override { return _mem.data(); }
-    size_t memSize() const override { return _mem.size(); }
+    // IStorage: 紧凑存储，始终可写
+    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
+    uint8_t *writableMemPtr() override { return _mem.data(); }
+    size_t memSize() const override { return _depth * ((_data_width + 7) / 8); }
 
     FIFO(const std::string &name, int data_width, int depth, bool has_rst = false);
 

@@ -19,17 +19,18 @@ namespace dsc {
 
 class Memory : public SequentialComponent, public IStorage {
 public:
-    // ...
-    const uint8_t *memPtr() const override { return _mem.data(); }
-    size_t memSize() const override { return _mem.size(); }
-    // addr_width: 地址位宽（1~12）
+    // IStorage: 字节寻址，始终可写
+    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
+    uint8_t *writableMemPtr() override { return _mem.data(); }
+    size_t memSize() const override { return (size_t)_depth; }
+    // addr_width: 地址总线位宽，容量 = 2^addr_width 字节
     // data_width: 数据位宽（1~64）
-    // read_latency: 读延迟（0~15，0=组合逻辑直出）
-    // write_latency: 写延迟（0~15，0=上升沿直写）
+    // read_latency: 读延迟（0=组合逻辑直出）
+    // write_latency: 写延迟（0=上升沿直写）
     Memory(const std::string &name, int addr_width, int data_width, int read_latency = 0, int write_latency = 0);
 
     int depth() const {
-        return _depth;
+        return _depth; // 容量（字节数）
     }
     int addrWidth() const {
         return _addr_width;

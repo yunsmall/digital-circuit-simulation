@@ -16,15 +16,16 @@ namespace dsc {
 
 class MultiPortRAM : public SequentialComponent, public IStorage {
 public:
-    // IStorage: 统一返回内存指针和大小
-    const uint8_t *memPtr() const override { return _mem.data(); }
-    size_t memSize() const override { return _mem.size(); }
+    // IStorage: 字节寻址，始终可写
+    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
+    uint8_t *writableMemPtr() override { return _mem.data(); }
+    size_t memSize() const override { return (size_t)_depth; }
 
-    // addr_width:  地址位宽（1~12），深度 = 1 << addr_width
+    // addr_width:  地址总线位宽，容量 = 2^addr_width 字节
     // data_width:  数据位宽（1~64）
     // num_read_ports:  读端口数（1~4）
     // num_write_ports: 写端口数（1~2）
-    // read_latency: 读延迟（0~15 tick），0=组合读，N=N拍后数据有效且 rd_valid 置 1
+    // read_latency: 读延迟 tick 数，0=组合读
     MultiPortRAM(const std::string &name, int addr_width, int data_width, int num_read_ports, int num_write_ports,
                  int read_latency = 0);
 
@@ -38,7 +39,7 @@ public:
 
 private:
     int _addr_width, _data_width, _num_read, _num_write, _read_latency, _rd_stages, _depth;
-    std::vector<uint8_t> _mem; // 实际存储（每槽 16 字节对齐）
+    std::vector<uint8_t> _mem; // 字节寻址存储（_depth 字节）
 };
 
 } // namespace dsc

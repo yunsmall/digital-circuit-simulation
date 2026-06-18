@@ -15,7 +15,7 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     if (depth < 2 || depth > 65536 || (depth & (depth - 1)) != 0)
         throw std::invalid_argument("FIFO 深度必须是2的幂（2~65536）");
 
-    _mem.resize(depth * 16, 0);
+    _mem.resize(depth * ((data_width + 7) / 8), 0);
 
     addInput("din", data_width);
     addInput("wr_en", 1);
@@ -65,6 +65,7 @@ std::string FIFO::genFuncDef_seq() const {
     std::string code;
     code += "// FIFO: " + std::to_string(_data_width) + "b x " + fd + "\n";
     code += "static void " + funcName_seq() + "(void) {\n";
+    code += "    const int d_bytes = " + std::to_string(d_bytes) + ";\n";
 
     // 读取输入
     code += "    " + gen_read_wire(d_nid, _data_width, d_nw, "_din") + "\n";
@@ -93,10 +94,8 @@ std::string FIFO::genFuncDef_seq() const {
     code += "        }\n";
     // 写操作
     code += "        if (_we && _fifo_count_" + fid + " < " + fd + ") {\n";
-    code += "            uint8_t* _wslot = _fifo_p_" + fid + " + _fifo_wr_ptr_" + fid + " * 16;\n";
+    code += "            uint8_t* _wslot = _fifo_p_" + fid + " + _fifo_wr_ptr_" + fid + " * d_bytes;\n";
     code += "            dcs_memcpy(_wslot, &_din, " + std::to_string(d_bytes) + ");\n";
-    code += "            dcs_memset(_wslot + " + std::to_string(d_bytes) + ", 0, 16 - " + std::to_string(d_bytes) +
-            ");\n";
     code += "            _fifo_wr_ptr_" + fid + " = (_fifo_wr_ptr_" + fid + " + 1) & " + fm + ";\n";
     code += "            _fifo_count_" + fid + "++;\n";
     code += "        }\n";
@@ -105,7 +104,7 @@ std::string FIFO::genFuncDef_seq() const {
 
     // 输出：在时钟操作之后计算，反映本周期结果
     if (q_nid >= 0) {
-        code += "    uint8_t* _rslot = _fifo_p_" + fid + " + _fifo_rd_ptr_" + fid + " * 16;\n";
+        code += "    uint8_t* _rslot = _fifo_p_" + fid + " + _fifo_rd_ptr_" + fid + " * d_bytes;\n";
         code += "    " + std::string(c_int_type(_data_width)) + " _dout = 0;\n";
         code += "    dcs_memcpy(&_dout, _rslot, " + std::to_string(d_bytes) + ");\n";
         code += "    " + genOutputWrite(0, "_dout", _data_width) + "\n";
