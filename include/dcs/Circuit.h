@@ -73,6 +73,21 @@ public:
     // 连接引脚到线网，自动检查多驱动冲突、更新线网位宽
     void connect(Component *comp, const std::string &pin_name, Net *net);
 
+    // 断开引脚与线网的连接（已断开时无操作）。输出引脚会自动清理 _bus_nets 三态驱动记录
+    void disconnect(Component *comp, const std::string &pin_name);
+
+    // 断开元件的全部引脚（先输出后输入，保证 _bus_nets 正确清理）
+    void disconnectAll(Component *comp);
+
+    // 移除元件：断开全部引脚并从电路中销毁。调用后原 Component* 失效
+    void removeComponent(Component *comp);
+
+    // 移除线网：断开所有连接到此线网的引脚，再从电路中移除并销毁
+    void removeNet(Net *net);
+
+    // ⚠️ Component 析构前，若其引脚仍连接在线网上，必须先调用 disconnect，
+    // 否则 Net 中会残留悬空指针、_bus_nets 中留有脏数据
+
     // --- 验证与编译 ---
     CircuitError check(); // 环路检测，失败返回错误
     CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）

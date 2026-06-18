@@ -182,6 +182,81 @@ allow_connect:
     net->updateBitWidth(pin->bit_width());
 }
 
+void Circuit::disconnect(Component *comp, const std::string &pin_name) {
+    Pin *pin = findPin(comp, pin_name);
+    if (!pin || !pin->net())
+        return; // 未连接，无需操作
+
+    int net_id = pin->net()->id();
+
+    // 输出引脚：从 _bus_nets 中移除对应的三态驱动记录
+    if (pin->isOutput()) {
+        auto it = _bus_nets.find(net_id);
+        if (it != _bus_nets.end()) {
+            // 找到该引脚在元件输出中的索引
+            int out_idx = -1;
+            for (int i = 0; i < (int) comp->outputs().size(); i++) {
+                if (comp->outputs()[i].get() == pin) {
+                    out_idx = i;
+                    break;
+                }
+            }
+            auto &drivers = it->second;
+            drivers.erase(std::remove_if(drivers.begin(), drivers.end(),
+                                         [comp, out_idx](const BusDriver &d) {
+                                             return d.comp == comp && d.out_idx == out_idx;
+                                         }),
+                          drivers.end());
+            if (drivers.empty())
+                _bus_nets.erase(it);
+        }
+    }
+
+    pin->setNet(nullptr);
+    _compiled = false;
+}
+
+void Circuit::disconnectAll(Component *comp) {
+    // 先断输出（清理 _bus_nets），再断输入
+    for (auto &p : comp->outputs())
+        disconnect(comp, p->name());
+    for (auto &p : comp->inputs())
+        disconnect(comp, p->name());
+}
+
+void Circuit::removeComponent(Component *comp) {
+    disconnectAll(comp);
+    auto it = std::find_if(_components.begin(), _components.end(),
+                           [comp](const auto &uptr) { return uptr.get() == comp; });
+    if (it != _components.end())
+        _components.erase(it);
+    _compiled = false;
+}
+
+void Circuit::removeNet(Net *net) {
+    // 断开所有连接到此线网的引脚
+    for (auto &c : _components) {
+        for (auto &p : c->outputs()) {
+            if (p->net() == net)
+                p->setNet(nullptr);
+        }
+        for (auto &p : c->inputs()) {
+            if (p->net() == net)
+                p->setNet(nullptr);
+        }
+    }
+    // 清理 _bus_nets
+    _bus_nets.erase(net->id());
+
+    // 从 _nets 中移除并销毁
+    auto it = std::find_if(_nets.begin(), _nets.end(),
+                           [net](const auto &uptr) { return uptr.get() == net; });
+    if (it != _nets.end())
+        _nets.erase(it);
+
+    _compiled = false;
+}
+
 Net *Circuit::findNet(const std::string &name) const {
     for (auto &n: _nets)
         if (n->name() == name)
