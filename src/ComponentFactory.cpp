@@ -420,7 +420,7 @@ struct InitAllComponents {
         // ============================================================
         f.registerType({"rom",
                         {{"addr_width", "4"},
-                         {"data_width", "8"},
+                         {"data_width", "8", {"8", "16", "32", "64"}},
                          {"read_latency", "0"},
                          {"source_type", "mem", {"mem", "file"}},
                          {"filepath", ""}},
@@ -440,7 +440,7 @@ struct InitAllComponents {
                        });
 
         f.registerType({"memory",
-                        {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "0"}, {"write_latency", "0"}},
+                        {{"addr_width", "4"}, {"data_width", "8", {"8", "16", "32", "64"}}, {"read_latency", "0"}, {"write_latency", "0"}},
                         {"addr", "data_in", "we", "clk"},
                         {"data_out", "busy"},
                         dsc::ComponentCategory::Memory, "可寻址RAM，支持独立配置读写延迟"},
@@ -450,7 +450,7 @@ struct InitAllComponents {
                        });
         f.registerType({"mpram",
                         {{"addr_width", "4"},
-                         {"data_width", "8"},
+                         {"data_width", "8", {"8", "16", "32", "64"}},
                          {"num_read_ports", "1"},
                          {"num_write_ports", "1"},
                          {"read_latency", "0"}},
@@ -463,7 +463,7 @@ struct InitAllComponents {
                                    _gi(p, "num_write_ports", 1), _gi(p, "read_latency", 0));
                        });
         f.registerType({"fifo",
-                        {{"data_width", "8"}, {"depth", "16"}, {"has_rst", "0"}},
+                        {{"data_width", "8", {"8", "16", "32", "64"}}, {"depth", "16"}, {"has_rst", "0"}},
                         {"din", "wr_en", "rd_en", "clk"},
                         {"dout", "full", "empty"},
                         dsc::ComponentCategory::Memory, "同步FIFO，先入先出队列，支持异步复位"},

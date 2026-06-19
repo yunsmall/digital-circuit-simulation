@@ -7,11 +7,11 @@ namespace dsc {
 
 FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     SequentialComponent(name, "fifo"), _data_width(data_width), _depth(depth), _has_rst(has_rst) {
+    if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
+        throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));
     setParam("data_width", std::to_string(data_width));
     setParam("depth", std::to_string(depth));
     setParam("has_rst", has_rst ? "1" : "0");
-    if (data_width < 1 || data_width > 64)
-        throw std::invalid_argument("数据位宽必须在1-64之间");
     if (depth < 2 || depth > 65536 || (depth & (depth - 1)) != 0)
         throw std::invalid_argument("FIFO 深度必须是2的幂（2~65536）");
 
