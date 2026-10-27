@@ -24,6 +24,7 @@
 #include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
+#include "dcs/components/PLIC.h"
 #include "dcs/components/RiscVCPU.h"
 #include "dcs/components/WishboneMemory.h"
 #include "dcs/components/WishboneROM.h"
@@ -510,6 +511,10 @@ struct InitAllComponents {
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"plic", {{"num_sources", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "irq_src"}, {"wb_dat_o", "wb_ack_o", "irq"}, dsc::ComponentCategory::CPU, "RISC-V PLIC 平台级中断控制器，单 context"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::PLIC>(n, _gi(p, "num_sources", 8));
         });
     }
 };

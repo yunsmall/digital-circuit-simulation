@@ -194,6 +194,7 @@ if(GTest_FOUND)
     add_dcs_test(test_mpram       tests/test_mpram/*.cpp)
     add_dcs_test(test_fifo        tests/test_fifo/*.cpp)
     add_dcs_test(test_riscv      tests/test_riscv/*.cpp)
+    add_dcs_test(test_plic       tests/test_plic/*.cpp)
     add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
 
     # 测试用 DLL 元件（8 位 AND 门）
