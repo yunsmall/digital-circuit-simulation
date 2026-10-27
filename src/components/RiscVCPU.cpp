@@ -1,3 +1,5 @@
+#include <cmath>
+#include <limits>
 #include <cstdio>
 // RiscVCPU — RISC-V 软核 (RV32IMA + S/U/M + Sv32 MMU)
 #include "dcs/components/RiscVCPU.h"
@@ -293,7 +295,8 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs)
                     case RV::F3_LBU: result=value&0xFF; break;
                     case RV::F3_LHU: result=value&0xFFFF; break;
                     }
-                    s.regs[s.bus_rd]=result;
+                    if (s.bus_fp) s.fregs[s.bus_rd]=value; // FLW：结果进 f 寄存器
+                    else s.regs[s.bus_rd]=result;
                     wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
                 }
             } else {
@@ -509,7 +512,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         }
         wb_adr=pa&~3u; wb_we=false; wb_sel=0x0F;
         wb_stb=wb_cyc=true; need_mem=true;
-        s.bus_adr=pa&~3u; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_sel=0x0F;
+        s.bus_adr=pa&~3u; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_sel=0x0F; s.bus_fp=0;
         s.acc_va=pa; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((p+n>4)?1:0);
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
@@ -561,6 +564,177 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         s.bus_amo_f5=(uint8_t)((inst>>27)&0x1F); // funct5
         s.bus_wdat=v2; // rs2 值用于 AMO 计算
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
+
+    // ---- 浮点访存（FLW / FSW，自然对齐；非对齐按规范触发异常）----
+    case RV::LOAD_FP: {
+        if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        uint32_t va=v1+(uint32_t)ii, pa;
+        if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
+        if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
+        wb_adr=pa; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
+        s.bus_adr=pa; s.bus_funct3=2; s.bus_rd=(uint8_t)rd; s.bus_fp=1; s.acc_stage=0;
+        } break;
+
+    case RV::STORE_FP: {
+        if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        uint32_t va=v1+(uint32_t)is, pa;
+        if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
+        if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
+        if (s.lr_valid && s.lr_addr == (pa & ~3u)) s.lr_valid = false;
+        wb_adr=pa; wb_we=true; wb_sel=0x0F; wb_dat=s.fregs[rs2]; wb_stb=wb_cyc=true; need_mem=true;
+        s.bus_adr=pa; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=0x0F; s.bus_fp=0; s.acc_stage=0;
+        } break;
+
+    // ---- 融合乘加：FMADD / FMSUB / FNMSUB / FNMADD ----
+    case 0x43: case 0x47: case 0x4B: case 0x4F: {
+        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
+        if (((inst >> 25) & 3) != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 只实现单精度
+        uint32_t rs3 = (inst >> 27) & 0x1F;
+        float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]), c = u2f(s.fregs[rs3]);
+        // 规范要求一次舍入，所以用 double 保存乘积再组合，最后才转 float
+        double prod = (double)a * (double)b;
+        double exact = (op == 0x43) ? prod + (double)c
+                     : (op == 0x47) ? prod - (double)c
+                     : (op == 0x4B) ? -prod + (double)c
+                                    : -prod - (double)c;
+        float r = (float)exact;
+        s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
+        if (std::isnan(r)) {
+            if (!std::isnan(a) && !std::isnan(b) && !std::isnan(c)) s.fcsr |= 0x10;
+        } else if (std::isfinite(exact) && (double)r != exact) {
+            s.fcsr |= 0x01;
+        }
+        s.mstatus |= (3u << 13);
+        break;
+    }
+
+    // ---- 单精度浮点运算（F 扩展），寄存器内容是 IEEE754 位模式 ----
+    case RV::OP_FP: {
+        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
+        float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]);
+        // qNaN 是静默的，只有 signaling NaN 才触发无效运算
+        auto is_snan = [](uint32_t u) {
+            return ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0 && !(u & 0x400000u);
+        };
+        bool snan_in = is_snan(s.fregs[rs1]) || is_snan(s.fregs[rs2]);
+        uint32_t rm = f3;
+        auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
+        // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
+        auto setf_flags = [&](double exact) {
+            float r = (float) exact;
+            if (std::isnan(r)) {
+                // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
+                s.fregs[rd] = 0x7FC00000u;
+                if (!std::isnan(a) && !std::isnan(b)) s.fcsr |= 0x10; // NV：非法运算产生 NaN
+                return;
+            }
+            setf(r);
+            if (!std::isfinite(exact)) return;
+            if ((double) r != exact) s.fcsr |= 0x01; // NX
+            if (std::isinf(r)) s.fcsr |= 0x04;       // OF
+            else if (r == 0.0f && exact != 0.0) s.fcsr |= 0x02; // UF
+        };
+
+        switch (f7) {
+        case RV::F7_FADD: setf_flags((double)a + (double)b); break;
+        case RV::F7_FSUB: setf_flags((double)a - (double)b); break;
+        case RV::F7_FMUL: setf_flags((double)a * (double)b); break;
+        case RV::F7_FDIV:
+            if (b == 0.0f && !std::isnan(a)) s.fcsr |= 0x08; // DZ
+            setf_flags((double)a / (double)b);
+            break;
+        case RV::F7_FSQRT:
+            if (a < 0.0f) { s.fcsr |= 0x10; setf(std::numeric_limits<float>::quiet_NaN()); }
+            else setf_flags(std::sqrt((double)a));
+            break;
+        case RV::F7_FSGNJ: {
+            uint32_t ua = s.fregs[rs1], ub = s.fregs[rs2], sign;
+            switch (f3) {
+            case 0: sign = ub & 0x80000000u; break;          // FSGNJ
+            case 1: sign = (~ub) & 0x80000000u; break;       // FSGNJN
+            default: sign = (ua ^ ub) & 0x80000000u; break;  // FSGNJX
+            }
+            s.fregs[rd] = (ua & 0x7FFFFFFFu) | sign;
+            break;
+        }
+        case RV::F7_FMINMAX:
+            // NaN 参与时返回另一个操作数并置 NV；两个都是 NaN 才返回 canonical NaN
+            if (snan_in) s.fcsr |= 0x10;
+            if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = 0x7FC00000u;
+            else if (std::isnan(a)) setf(b);
+            else if (std::isnan(b)) setf(a);
+            else if (f3 == 0) {
+                if (a == 0.0f && b == 0.0f) s.fregs[rd] = s.fregs[rs1] | s.fregs[rs2]; // -0 优先
+                else setf(a < b ? a : b);
+            } else {
+                if (a == 0.0f && b == 0.0f) s.fregs[rd] = s.fregs[rs1] & s.fregs[rs2]; // +0 优先
+                else setf(a > b ? a : b);
+            }
+            break;
+        case RV::F7_FCMP: {
+            uint32_t r = 0;
+            // FLT/FLE 遇任何 NaN 都产生无效运算；FEQ 只对 signaling NaN 报
+            if (std::isnan(a) || std::isnan(b)) {
+                if (f3 != 2 || snan_in) s.fcsr |= 0x10;
+            }
+            if (!std::isnan(a) && !std::isnan(b)) {
+                if (f3 == 2) r = (a == b) ? 1u : 0u;      // FEQ
+                else if (f3 == 1) r = (a < b) ? 1u : 0u;  // FLT
+                else r = (a <= b) ? 1u : 0u;              // FLE
+            }
+            s.regs[rd] = r;
+            break;
+        }
+        case RV::F7_FCVT_W_S: {
+            float r;
+            switch (rm) {
+            case 1: r = std::trunc(a); break;   // RTZ
+            case 2: r = std::floor(a); break;   // RDN
+            case 3: r = std::ceil(a); break;    // RUP
+            case 4: r = std::round(a); break;   // RMM
+            default: r = std::nearbyint(a); break; // RNE
+            }
+            if (std::isfinite(a) && std::isfinite(r) && r != a) s.fcsr |= 0x01; // 截掉小数部分即不精确
+            if (rs2 == 0) { // FCVT.W.S
+                if (std::isnan(r) || r >= 2147483648.0f) { s.regs[rd] = 0x7FFFFFFFu; s.fcsr |= 0x10; }
+                else if (r < -2147483648.0f) { s.regs[rd] = 0x80000000u; s.fcsr |= 0x10; }
+                else s.regs[rd] = (uint32_t)(int32_t)r;
+            } else { // FCVT.WU.S
+                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = 0xFFFFFFFFu; s.fcsr |= 0x10; }
+                else if (r <= -1.0f) { s.regs[rd] = 0u; s.fcsr |= 0x10; }
+                else s.regs[rd] = (uint32_t)r;
+            }
+            break;
+        }
+        case RV::F7_FCVT_S_W:
+            setf(rs2 == 0 ? (float)(int32_t)v1 : (float)v1);
+            break;
+        case RV::F7_FMV_X_W:
+            if (f3 == 0) { // FMV.X.W
+                s.regs[rd] = s.fregs[rs1];
+            } else {       // FCLASS.S
+                uint32_t u = s.fregs[rs1], cls = 0;
+                bool sign = (u >> 31) != 0;
+                uint32_t exp = (u >> 23) & 0xFF, frac = u & 0x7FFFFF;
+                if (exp == 0xFF && frac == 0) cls = sign ? (1u << 0) : (1u << 7); // -inf / +inf
+                else if (exp == 0xFF) cls = (frac & 0x400000u) ? (1u << 9) : (1u << 8); // quiet / signaling NaN
+                else if (exp == 0 && frac == 0) cls = sign ? (1u << 3) : (1u << 4); // -0 / +0
+                else if (exp == 0) cls = sign ? (1u << 2) : (1u << 5);              // 非规格化
+                else cls = sign ? (1u << 1) : (1u << 6);                            // 规格化
+                s.regs[rd] = cls;
+            }
+            break;
+        case RV::F7_FMV_W_X:
+            s.fregs[rd] = v1;
+            break;
+        default:
+            takeTrap(s, RV::EXC_II, inst); return;
+        }
+        s.mstatus |= (3u << 13); // FS = Dirty
+        break;
+    }
 
     case RV::MISC_MEM: break;
 
@@ -643,7 +817,7 @@ static bool csrImplemented(uint32_t addr) {
     if (addr >= 0x3A0 && addr <= 0x3AF) return true;
     if (addr >= 0x3B0 && addr <= 0x3EF) return true;
     switch (addr) {
-    case 0x003:  // fcsr
+    case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
     case 0x00F:  // vcsr
     case 0x306:  // mcounteren
     case 0x310:  // mstatush
@@ -664,8 +838,11 @@ static bool csrImplemented(uint32_t addr) {
 
 uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     switch (addr) {
+    case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
+    case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
+    case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
     case RV::CSR_MSTATUS: return s.mstatus;
-    case RV::CSR_MISA:    return 0x40141100u | (1u<<0); // RV32IMA
+    case RV::CSR_MISA:    return 0x40141100u | (1u<<0) | (1u<<5); // RV32IMAF
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;
     case RV::CSR_MIE:     return s.mie;
@@ -689,6 +866,9 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
 }
 void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     switch (addr) {
+    case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
+    case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
+    case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     case RV::CSR_MSTATUS: s.mstatus = val & 0x00FF79EAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
     case RV::CSR_MEDELEG: s.medeleg = val & 0xFFFF; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;

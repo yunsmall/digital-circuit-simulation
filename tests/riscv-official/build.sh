@@ -14,9 +14,10 @@ if [ ! -d "$SRC/env/p" ]; then
 fi
 
 ok=0; failed=0
-for suite in rv32ui rv32um rv32ua; do
+for suite in rv32ui rv32um rv32ua rv32uf; do
     case $suite in
         rv32ui) march=rv32i ;;
+        rv32uf) march=rv32imaf ;;
         *)      march=rv32im ;;
     esac
     for s in "$SRC/isa/$suite"/*.S; do

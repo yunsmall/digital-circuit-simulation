@@ -12,6 +12,16 @@ namespace RV {
     constexpr uint32_t OP_IMM = 0x13, LUI = 0x37, AUIPC = 0x17, OP = 0x33;
     constexpr uint32_t JAL = 0x6F, JALR = 0x67, BRANCH = 0x63, LOAD = 0x03;
     constexpr uint32_t STORE = 0x23, MISC_MEM = 0x0F, SYSTEM = 0x73, AMO = 0x2F;
+    constexpr uint32_t LOAD_FP = 0x07, STORE_FP = 0x27, OP_FP = 0x53;
+
+    // ---- OP-FP 的 funct7 ----
+    constexpr uint32_t F7_FADD=0x00, F7_FSUB=0x04, F7_FMUL=0x08, F7_FDIV=0x0C;
+    constexpr uint32_t F7_FSQRT=0x2C, F7_FSGNJ=0x10, F7_FMINMAX=0x14;
+    constexpr uint32_t F7_FCMP=0x50, F7_FCVT_W_S=0x60, F7_FCVT_S_W=0x68;
+    constexpr uint32_t F7_FMV_X_W=0x70, F7_FMV_W_X=0x78;
+
+    // ---- 浮点 CSR ----
+    constexpr uint32_t CSR_FFLAGS=0x001, CSR_FRM=0x002, CSR_FCSR=0x003;
 
     // ---- Funct3 ----
     constexpr uint32_t F3_ADDI=0, F3_SLLI=1, F3_SLTI=2, F3_SLTIU=3, F3_XORI=4, F3_SRLI=5, F3_ORI=6, F3_ANDI=7;
@@ -87,6 +97,8 @@ public:
     uint32_t reg(int idx) const;
     uint32_t pc() const;
     bool halted() const;
+    uint32_t freg(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
+    uint32_t fcsr() const { return _state.fcsr; }
     uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
     uint32_t mepc() const { return _state.mepc; }
     uint32_t mtval() const { return _state.mtval; }
@@ -111,6 +123,8 @@ private:
 
     struct CpuState {
         uint32_t regs[32], pc;
+        uint32_t fregs[32]; // 浮点寄存器按 IEEE754 位模式存放，避免来回转换
+        uint32_t fcsr;      // frm[7:5] | fflags[4:0]
         Phase phase;
         uint32_t inst;
         bool halted, prev_clk;
@@ -151,6 +165,7 @@ private:
         uint32_t bus_adr, bus_wdat;
         bool bus_we, bus_amo;
         uint8_t bus_sel, bus_funct3, bus_rd, bus_amo_f5;
+        uint8_t bus_fp; // 访存结果写浮点寄存器（FLW）而不是整数寄存器
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
 
