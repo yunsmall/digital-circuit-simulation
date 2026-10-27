@@ -1,6 +1,6 @@
 // ComponentFactory — 元件类型注册表
 //
-// 每个元件 .cpp 用 REGISTER_COMPONENT 宏注册元数据 + 创建函数。
+// 所有类型在 InitAllComponents 的构造函数里手写 registerType 注册（见 src/ComponentFactory.cpp）。
 // JSON 解析器通过 metas() 获取所有类型的参数列表，读写电路文件。
 //
 // 生命周期: Meyer's Singleton，首次调用 instance() 时构造，程序结束时析构。
@@ -24,6 +24,8 @@ enum class ComponentCategory {
     Float,      // 浮点运算
     Memory,     // 存储元件
     DataPath,   // 数据通路（Mux/Decoder/移位/合并拆分/符号扩展/延迟线等）
+    Bus,        // 总线/互连（Wishbone 等）
+    CPU,        // 处理器核
     Misc,       // 杂项（打印/复合/DLL 等）
 };
 
@@ -114,31 +116,6 @@ private:
     std::unordered_map<std::string, Meta> _metas;
 };
 
-// ---- 注册宏 ----
-// 用法：在 .cpp 文件全局作用域中
-//   REGISTER_COMPONENT("and", "and", LogicGate,
-//       {{"inputs", "2"}, {"bit_width", "8"}},
-//       {{"in0","in1"}, {"out"}})
-//
-// 参数: type_name, 元数据 params, in/out 引脚名, 类名, 构造参数...
-#define REGISTER_COMPONENT_META(type_name, class_name, meta_params, in_pins, out_pins, ...)                            \
-    namespace {                                                                                                        \
-        struct _Reg_##class_name {                                                                                     \
-            _Reg_##class_name() {                                                                                      \
-                dsc::ComponentFactory::Meta _m;                                                                        \
-                _m.type_name = type_name;                                                                              \
-                _m.params = meta_params;                                                                               \
-                _m.input_pins = in_pins;                                                                               \
-                _m.output_pins = out_pins;                                                                             \
-                dsc::ComponentFactory::instance().registerType(                                                        \
-                        std::move(_m),                                                                                 \
-                        [](const std::string &_n, const std::unordered_map<std::string, std::string> &_p) {            \
-                            return std::make_unique<class_name>(_n, ##__VA_ARGS__);                                    \
-                        });                                                                                            \
-            }                                                                                                          \
-        } _reg_##class_name;                                                                                           \
-    }
-
 // 分类名称（供 CLI / 外部工具展示）
 inline const char *categoryName(ComponentCategory c) {
     switch (c) {
@@ -149,6 +126,8 @@ inline const char *categoryName(ComponentCategory c) {
         case ComponentCategory::Float:      return "浮点运算";
         case ComponentCategory::Memory:     return "存储元件";
         case ComponentCategory::DataPath:   return "数据通路";
+        case ComponentCategory::Bus:        return "总线互连";
+        case ComponentCategory::CPU:        return "处理器核";
         case ComponentCategory::Misc:       return "杂项";
     }
     return "未知";

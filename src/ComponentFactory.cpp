@@ -23,6 +23,11 @@
 #include "dcs/components/Sequential.h"
 #include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
+#include "dcs/components/CLINT.h"
+#include "dcs/components/RiscVCPU.h"
+#include "dcs/components/WishboneMemory.h"
+#include "dcs/components/WishboneROM.h"
+#include "dcs/components/WishboneInterconnect.h"
 
 #include <filesystem>
 #include <memory>
@@ -481,6 +486,30 @@ struct InitAllComponents {
 
         f.registerType({"dll", {{"path", ""}}, {}, {}, dsc::ComponentCategory::Misc, "外部DLL元件，由动态库提供仿真逻辑"}, [&](const std::string &n, const Params &p) -> C {
             return std::make_unique<dsc::DllComponent>(n, _gs(p, "path", ""));
+        });
+
+        // ============================================================
+        // RISC-V CPU + Wishbone 总线
+        // ============================================================
+        f.registerType({"riscv_cpu", {}, {"clk", "rst", "wb_dat_i", "wb_ack_i", "irq", "mti", "msi"}, {"wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o", "halted"}, dsc::ComponentCategory::CPU, "RISC-V RV32IMA 软核处理器，Wishbone 总线主设备，支持外部/定时器/软件中断"}, [&](const std::string &n, const Params & /*p*/) -> C {
+            return std::make_unique<dsc::RiscVCPU>(n);
+        });
+
+        f.registerType({"wishbone_mem", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32", "64"}}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o"}, dsc::ComponentCategory::Memory, "Wishbone 从设备存储器，支持 IStorage 加载程序"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::WishboneMemory>(n, _gi(p, "addr_width", 16), _gi(p, "data_width", 32));
+        });
+
+        f.registerType({"wishbone_rom_adapter", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32", "64"}}, {"read_latency", "0"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk", "rom_data"}, {"wb_dat_o", "wb_ack_o", "rom_addr"}, dsc::ComponentCategory::Bus, "ROM 的 Wishbone 适配器，插在 ROM 与 Wishbone 总线之间。适配器 rom_addr→ROM.addr, ROM.data_out→适配器 rom_data，适配器须在 ROM 之后加入电路"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::WishboneROMAdapter>(n, _gi(p, "addr_width", 16), _gi(p, "data_width", 32),
+                                                             _gi(p, "read_latency", 0));
+        });
+
+        f.registerType({"wishbone_ic", {{"segments", "0:65536"}}, {"m_adr_i", "m_dat_i", "m_we_i", "m_sel_i", "m_stb_i", "m_cyc_i", "s0_dat_i", "s0_ack_i"}, {"m_dat_o", "m_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::WishboneInterconnect>(n, _gs(p, "segments", "0:65536"));
+        });
+
+        f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
+            return std::make_unique<dsc::CLINT>(n);
         });
     }
 };

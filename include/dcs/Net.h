@@ -31,6 +31,10 @@ public:
     int id() const {
         return _id;
     }
+    // 只由 Circuit 在删除线网后调用：生成的代码用 id 作 _w[] 下标，必须保持连续
+    void setId(int id) {
+        _id = id;
+    }
     int bit_width() const {
         return _bit_width;
     }

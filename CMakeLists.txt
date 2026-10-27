@@ -62,6 +62,40 @@ else()
         set(LLVM_DIR "${LLVM_ROOT}/lib/cmake/llvm")
         set(Clang_DIR "${LLVM_ROOT}/lib/cmake/clang")
     endif()
+    # 官方 CI 构建的 LLVM 包在 LLVMExports.cmake 里按 CI 机器的路径引用 DIA SDK 和
+    # zstd 的导入目标，本机路径不同时 generate 会直接失败。修改 LLVM 安装目录在升级
+    # LLVM 之后会被一并删掉，所以在这里按本机环境补出同名目标。
+    if(WIN32)
+        if(NOT TARGET DIASDK::Diaguids)
+            if(NOT MSVC_DIA_SDK_DIR)
+                if(DEFINED ENV{VSINSTALLDIR})
+                    set(MSVC_DIA_SDK_DIR "$ENV{VSINSTALLDIR}DIA SDK")
+                else()
+                    find_program(DCS_VSWHERE vswhere HINTS "$ENV{ProgramFiles(x86)}/Microsoft Visual Studio/Installer")
+                    if(DCS_VSWHERE)
+                        execute_process(COMMAND "${DCS_VSWHERE}" -latest -property installationPath
+                                        OUTPUT_VARIABLE DCS_VS_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+                        if(DCS_VS_DIR)
+                            set(MSVC_DIA_SDK_DIR "${DCS_VS_DIR}/DIA SDK")
+                        endif()
+                    endif()
+                endif()
+            endif()
+            if(MSVC_DIA_SDK_DIR AND EXISTS "${MSVC_DIA_SDK_DIR}/include/dia2.h")
+                add_library(DIASDK::Diaguids UNKNOWN IMPORTED)
+                set_target_properties(DIASDK::Diaguids PROPERTIES
+                    IMPORTED_LOCATION "${MSVC_DIA_SDK_DIR}/lib/amd64/diaguids.lib"
+                    INTERFACE_INCLUDE_DIRECTORIES "${MSVC_DIA_SDK_DIR}/include")
+            endif()
+        endif()
+        if(NOT TARGET zstd::libzstd_static)
+            find_library(DCS_ZSTD_LIB NAMES zstd libzstd)
+            if(DCS_ZSTD_LIB)
+                add_library(zstd::libzstd_static UNKNOWN IMPORTED)
+                set_target_properties(zstd::libzstd_static PROPERTIES IMPORTED_LOCATION "${DCS_ZSTD_LIB}")
+            endif()
+        endif()
+    endif()
     find_package(LLVM REQUIRED CONFIG)
     find_package(Clang REQUIRED CONFIG)
     message(STATUS "Using LLVM backend: ${LLVM_PACKAGE_VERSION}")
@@ -85,6 +119,8 @@ endif()
 
 # ---- 第三方库 ----
 find_package(nlohmann_json CONFIG REQUIRED)
+# ELF 映像解析用 header-only 的 elfio：不依赖仿真后端，TCC 配置下同样可用
+find_package(elfio CONFIG REQUIRED)
 
 # ---- 库（src/ 中所有 .cpp）----
 file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/components/*.cpp" "src/util/*.cpp")
@@ -93,7 +129,7 @@ target_include_directories(dcs_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${DCS_BACKEND_INCLUDES}
 )
-target_link_libraries(dcs_lib PUBLIC ${DCS_BACKEND_LIBS} nlohmann_json::nlohmann_json)
+target_link_libraries(dcs_lib PUBLIC ${DCS_BACKEND_LIBS} nlohmann_json::nlohmann_json elfio::elfio)
 if(DCS_USE_TCC)
     target_compile_definitions(dcs_lib PRIVATE DCS_USE_TCC)
 endif()
@@ -157,6 +193,8 @@ if(GTest_FOUND)
     add_dcs_test(test_prienc      tests/test_prienc/*.cpp)
     add_dcs_test(test_mpram       tests/test_mpram/*.cpp)
     add_dcs_test(test_fifo        tests/test_fifo/*.cpp)
+    add_dcs_test(test_riscv      tests/test_riscv/*.cpp)
+    add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
 
     # 测试用 DLL 元件（8 位 AND 门）
     add_library(dll_test_and SHARED tests/dll_test_and.c)

@@ -66,12 +66,12 @@ public:
 
     // ======== C 代码生成虚方法 ========
 
-    // 状态结构体定义（如 DFF: typedef struct { uint8_t q[16]; ... } _S_dff_xxx;）
+    // 状态结构体定义。符号名由元件在电路中的编号决定，例如 DFF: typedef struct { uint8_t q[16]; ... } _S_<id>;
     [[nodiscard]] virtual std::string genStructDef() const {
         return "";
     }
 
-    // 状态变量声明（如 static _S_dff_xxx _s_dff_xxx;）
+    // 状态变量声明（如 static _S_<id> _s_<id>;）
     [[nodiscard]] virtual std::string genStateDecl() const {
         return "";
     }

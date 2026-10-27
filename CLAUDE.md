@@ -133,11 +133,73 @@ project(digital_circuit_simulation VERSION X.Y.Z)
 
 ### C 代码生成辅助函数（定义于 Component.h）
 
-- `gen_read_wire(net_id, pin_w, net_w, var_name)` — 从线网读取值的 C 语句（变量自动 `= 0` 初始化）
-- `gen_write_wire(comp_id, out_idx, val_expr, pin_w)` — 写入线网的 C 语句
+- `gen_read_wire(net_id, pin_w, net_w, var_name)` — 从 `_w[]` 读取值的 C 语句，变量自动声明并 `= 0` 初始化。生成形如：
+  `uint64_t _adr = 0; dcs_memcpy(&_adr, _w[42], 1); _adr &= 0xFF;`
+- `genOutputWrite(out_idx, val_expr, pin_w)` — 写 `_c_out_<comp_id>_<out_idx>` 的 C 语句。生成形如：
+  `dcs_memcpy(_c_out_0_0, &_dout, 4); dcs_memset(_c_out_0_0 + 4, 0, 12);`
 - `c_int_type(width)` — 位宽→C 类型名（uint8_t/uint16_t/uint32_t/uint64_t）
 - `gen_mask(width)` — 位宽→掩码字面量（如 0xFFULL）
 - `byte_count(width)` — 位宽→字节数
+- `funcName_seq()` / `funcName_comb()` — 返回当前元件的 seq/comb 函数名
+
+### circuit_tick 执行顺序与 _c_out_ → _w[] 流水线
+
+每个 tick 内 `circuit_tick` 按以下顺序执行：
+
+```
+阶段1: 组合逻辑（按拓扑序，每个 comb 执行后立即将其 _c_out_ 传播到 _w[]）
+阶段2: 总线决议 + 时序输出传播（seq 的 _c_out_ → _w[]）
+阶段3: 所有时序逻辑函数（seq）
+```
+
+- **comb 输出同 tick 可见**：阶段1 内，每个组合元件执行后立即 `_c_out_` → `_w[]`，下游组合元件读到当前拍结果。组合链单拍穿透。
+- **seq 输出跨 tick 可见**：seq 在阶段3 写 `_c_out_`，下一 tick 的阶段2 才进 `_w[]`。跨时序元件的信号传播有 1 tick 延迟。
+
+**铁律：输出必须走 `genOutputWrite`（写 `_c_out_`），严禁直写 `_w[]`**。
+
+### JIT 代码生成的两种实现模式
+
+**模式 A：纯 JIT**（LogicGate, DFlipFlop, ROM, Memory, FIFO, Adder, BarrelShifter 等大多数元件）
+
+全部逻辑内联在生成的 C 代码中，无 C++ 回调。读 `_w[]` → 运算 → 写 `_c_out_`。参考 ROM 或 DFlipFlop：
+
+```cpp
+// genStateDecl: 声明 static 变量（状态）
+code += std::format("static uint64_t _rom_addr_{0}[{1}];\n", id, _rd_stages);
+// genInitCode: 初始化
+code += "    dcs_memset(_rom_addr_0, 0, sizeof(_rom_addr_0));\n";
+// genFuncDef_seq: 完整 C 逻辑
+code += std::format("static void {}() {{\n", funcName_seq());
+code += "    " + gen_read_wire(adr_net_id, 8, 8, "_adr") + "\n"; // 读输入
+code += "    ... // 内部计算\n";
+code += "    " + genOutputWrite(0, "_result", 32) + "\n";         // 写输出
+code += "}\n";
+```
+
+**模式 B：C++ 回调**（CLINT, WishboneMemory, WishboneInterconnect, Print）
+
+JIT 代码只做引脚搬运（读 `_w[]` → 打包 → 调 C++ 函数 → 解包 → `genOutputWrite`），实际逻辑在 C++ 回调中实现。需要：
+
+1. `extraJitSymbols()` 把 C++ 函数指针暴露给 JIT
+2. `genStateDecl()` 把 C++ 状态对象指针暴露给 JIT
+3. `genFuncDef_seq()` 生成打包/解包/回调代码
+
+参考 WishboneMemory.cpp 第 76-127 行或 CLINT.cpp 第 57-89 行。
+
+选择标准：逻辑简单用纯 JIT（少一层打包开销），复杂状态机/MMIO 用 C++ 回调（方便调试）。
+
+### 跨元件时序计算（适配器/桥接类元件的关键）
+
+comb 输出同 tick 可见，seq 输出有 1 tick `_c_out_`→`_w[]` 延迟。
+
+**seq ↔ seq 通信**（如 WishboneROMAdapter → ROM，两者都是 seq）：
+
+```
+总延迟 = 1（适配器 seq 输出→_w[]） + ROM内部延迟 + 1（ROM seq 输出→_w[]→适配器读）
+       = ROM内部延迟 + 2
+```
+
+例如 ROM 的 `read_latency=2`，适配器需要 `wait = 2 + 2 = 4` tick 从 stb 到 ack。
 
 ## 元件 JSON 序列化 / 反序列化注意事项
 

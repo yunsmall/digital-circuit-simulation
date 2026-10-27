@@ -137,6 +137,7 @@ Component *Circuit::addComponent(std::unique_ptr<Component> comp) {
     comp->setId((int) _components.size());
     Component *ptr = comp.get();
     _components.push_back(std::move(comp));
+    _compiled = false; // 元件集合变了，旧的 JIT 代码不再对应当前电路
     return ptr;
 }
 
@@ -180,6 +181,7 @@ void Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
 allow_connect:
     pin->setNet(net);
     net->updateBitWidth(pin->bit_width());
+    _compiled = false; // 连接关系变了，生成代码里的读写顺序需要重新生成
 }
 
 void Circuit::disconnect(Component *comp, const std::string &pin_name) {
@@ -253,6 +255,19 @@ void Circuit::removeNet(Net *net) {
                            [net](const auto &uptr) { return uptr.get() == net; });
     if (it != _nets.end())
         _nets.erase(it);
+
+    // 重编号：_w[] 的下标就是 net id，删掉中间一个后必须补平，否则后续生成的代码会越界
+    std::vector<int> old_ids(_nets.size());
+    for (size_t i = 0; i < _nets.size(); ++i)
+        old_ids[i] = _nets[i]->id();
+    std::map<int, std::vector<BusDriver>> old_bus;
+    old_bus.swap(_bus_nets);
+    for (size_t i = 0; i < _nets.size(); ++i) {
+        _nets[i]->setId((int) i);
+        auto bit = old_bus.find(old_ids[i]);
+        if (bit != old_bus.end())
+            _bus_nets[(int) i] = std::move(bit->second);
+    }
 
     _compiled = false;
 }
@@ -455,11 +470,27 @@ std::string Circuit::generateC() const {
 
     // === circuit_tick ===
     oss << "void circuit_tick(void) {\n";
-    oss << "    // 阶段1: 组合逻辑\n";
-    for (auto *c: sorted)
-        if (c->hasCombinational())
-            oss << "    " << c->funcName_comb() << "();\n";
-    oss << "    // 阶段2: 传播 + 总线决议\n";
+    oss << "    // 阶段1: 组合逻辑（每个元件执行后立即传播输出，保证同 tick 级联可见）\n";
+    for (auto *c: sorted) {
+        if (!c->hasCombinational())
+            continue;
+        oss << "    " << c->funcName_comb() << "();\n";
+        // 立即传播当前组合元件的输出到 _w[]（跳过总线网，总线在阶段2处理）
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            Net *n = c->outputs()[oi]->net();
+            if (!n)
+                continue;
+            int nid = n->id();
+            if (_bus_nets.count(nid))
+                continue; // 总线网留在阶段2做决议
+            int nb = byte_count(n->bit_width());
+            oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
+            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
+            oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
+            oss << "    }\n";
+        }
+    }
+    oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
 
     // 传播阶段：_c_out → _w（含总线决议）
     // 先收集哪些线网是总线，哪些普通线网已经被处理
