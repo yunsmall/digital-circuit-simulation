@@ -11,7 +11,9 @@
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
+#include <dcs/components/WishboneMemory.h>
 #include <dcs/dll_interface.h>
+#include <dcs/util/ElfLoader.h>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -157,7 +159,8 @@ int jsonToC(const std::string &path) {
 }
 
 // ---- simulate ----
-int simulate(const std::string &path, int ticks, int delay_ms, bool monitor) {
+int simulate(const std::string &path, int ticks, int delay_ms, bool monitor, const std::string &elf_path,
+              const std::string &vcd_path) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -181,8 +184,84 @@ int simulate(const std::string &path, int ticks, int delay_ms, bool monitor) {
     std::cout << "JIT 编译成功\n\n";
     circuit->init();
 
+    // 可选：把线网变化导出成 VCD，便于用 GTKWave 观察时序
+    std::ofstream vcd;
+    std::vector<std::vector<uint8_t>> vcd_prev;
+    if (!vcd_path.empty()) {
+        vcd.open(vcd_path);
+        if (!vcd) {
+            std::cerr << std::format("错误: 无法写入 '{}'\n", vcd_path);
+            return 1;
+        }
+        vcd << "$timescale 1ns $end\n$scope module dcs $end\n";
+        for (int i = 0; i < circuit->netCount(); i++) {
+            dsc::Net *n = circuit->nets()[i].get();
+            int w = n->bit_width() > 0 ? n->bit_width() : 1;
+            vcd << std::format("$var wire {} n{} {} $end\n", w, i, n->name());
+        }
+        vcd << "$upscope $end\n$enddefinitions $end\n";
+        vcd_prev.assign(circuit->netCount(), std::vector<uint8_t>(16, 0));
+    }
+
+    // 可选：把 ELF 映像灌进电路里的第一个 WishboneMemory，然后按 tohost 判定结果
+    dsc::WishboneMemory *mem = nullptr;
+    uint32_t tohost_addr = 0;
+    if (!elf_path.empty()) {
+        for (auto &c: circuit->components()) {
+            if (auto *m = dynamic_cast<dsc::WishboneMemory *>(c.get())) {
+                mem = m;
+                break;
+            }
+        }
+        if (!mem) {
+            std::cerr << "错误: 电路里没有 WishboneMemory，无法加载 ELF\n";
+            return 1;
+        }
+        auto img = dsc::loadElf32(elf_path);
+        if (!img.ok) {
+            std::cerr << std::format("ELF 错误: {}\n", img.error);
+            return 1;
+        }
+        const size_t cap = mem->memSize();
+        if (size_t(img.base) + img.data.size() > cap) {
+            std::cerr << std::format("错误: 映像 {} 字节超出存储器容量 {}\n", img.data.size(), cap);
+            return 1;
+        }
+        std::memcpy(mem->writableMemPtr() + img.base, img.data.data(), img.data.size());
+        tohost_addr = img.tohost;
+        std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
+                                 img.entry, img.tohost);
+    }
+
     for (int t = 0; t < ticks; t++) {
         circuit->tick();
+        if (vcd.is_open()) {
+            vcd << "#" << t << "\n";
+            for (int i = 0; i < circuit->netCount(); i++) {
+                auto val = circuit->getWire(i);
+                if (val == vcd_prev[i])
+                    continue;
+                vcd_prev[i] = val;
+                std::string bits;
+                for (int b = 15; b >= 0; --b)
+                    for (int k = 7; k >= 0; --k) {
+                        int bit = (val[b] >> k) & 1;
+                        if (!bits.empty() || bit)
+                            bits.push_back(char('0' + bit));
+                    }
+                if (bits.empty())
+                    bits = "0";
+                vcd << "b" << bits << " n" << i << "\n";
+            }
+        }
+        if (tohost_addr) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
+            uint32_t r = 0;
+            std::memcpy(&r, mem->writableMemPtr() + tohost_addr, 4);
+            if (r) {
+                std::cout << std::format("\n程序结束: {} (tohost={})\n", r == 1 ? "通过" : "失败", r);
+                return r == 1 ? 0 : 1;
+            }
+        }
         if (monitor) {
             std::cout << std::format("=== Tick {} ===\n", t);
             for (int i = 0; i < circuit->netCount(); i++) {
@@ -218,7 +297,10 @@ int main(int argc, char *argv[]) {
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
             "t,ticks", "仿真 tick 数（默认 10）", cxxopts::value<int>()->default_value("10"))(
             "d,delay", "每 tick 间隔毫秒（默认 1000）",
-            cxxopts::value<int>()->default_value("1000"))("m,monitor", "逐 tick 打印线网值");
+            cxxopts::value<int>()->default_value("1000"))("m,monitor", "逐 tick 打印线网值")(
+            "elf", "加载 ELF32（RISC-V）到电路中的 WishboneMemory，按 tohost 判定结果",
+            cxxopts::value<std::string>())(
+            "vcd", "把线网变化导出为 VCD 波形（可用 GTKWave 打开）", cxxopts::value<std::string>());
 
     // 工具选项
     opts.add_options("工具")("l,list-types", "列出所有已注册的元件类型")("j,json-to-c", "JSON 电路转为 C 代码输出",
@@ -270,7 +352,9 @@ int main(int argc, char *argv[]) {
     }
     if (result.count("circuit")) {
         return simulate(result["circuit"].as<std::string>(), result["ticks"].as<int>(), result["delay"].as<int>(),
-                        result.count("monitor") != 0);
+                        result.count("monitor") != 0,
+                        result.count("elf") ? result["elf"].as<std::string>() : std::string{},
+                        result.count("vcd") ? result["vcd"].as<std::string>() : std::string{});
     }
 
     std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
