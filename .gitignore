@@ -36,3 +36,6 @@ CTestTestfile.cmake
 Thumbs.db
 .claude/
 CLAUDE.local.md
+
+# 官方 riscv-tests 的编译产物，用 tests/riscv-official/build.sh 生成
+tests/riscv-official/out/
