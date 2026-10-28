@@ -4,10 +4,9 @@
 //   适配器 rom_addr 输出 → ROM addr 输入
 //   ROM data_out 输出   → 适配器 rom_data 输入
 //
-// 使用 genOutputWrite 写 _c_out_（标准路径），gen_read_wire 读 _w[]。
-// circuit_tick 每 tick 先复制 _c_out_ → _w[]，再执行 seq 函数。
-// 因此 rom_addr 在 tick N 写入 _c_out_，tick N+1 才出现在 _w[] 被 ROM 读取。
-// 共需 wait = read_latency + 2 拍后数据就绪。
+// 适配器写的 rom_addr 经 genOutputWrite 同拍进入 _w[]，但 seq 函数按元件顺序执行：
+// 若 ROM 排在适配器之前，这一拍写的地址要等下一 tick 才被 ROM 看到。
+// 为了让两种排列都正确，等待拍数取 read_latency + 2（多出的一拍就是给执行顺序的）。
 #include "dcs/components/WishboneROM.h"
 #include <cstring>
 #include <format>
