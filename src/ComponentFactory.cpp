@@ -24,6 +24,7 @@
 #include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
+#include "dcs/components/DMA.h"
 #include "dcs/components/I2C.h"
 #include "dcs/components/WishboneCache.h"
 #include "dcs/components/PLIC.h"
@@ -515,6 +516,10 @@ struct InitAllComponents {
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"dma", {}, {"cfg_adr_i", "cfg_dat_i", "cfg_we_i", "cfg_sel_i", "cfg_stb_i", "cfg_cyc_i", "m_dat_i", "m_ack_i"}, {"cfg_dat_o", "cfg_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"}, dsc::ComponentCategory::Bus, "存储器到存储器块搬运的 DMA 控制器"}, [&](const std::string &n, const Params &) -> C {
+            return std::make_unique<dsc::DMA>(n);
         });
 
         f.registerType({"wb_cache", {{"lines", "16"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "wb_dat_o_i", "wb_ack_o_i"}, {"wb_dat_o", "wb_ack_o", "wb_adr_o", "wb_dat_i_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Memory, "直接映射数据缓存，串在 CPU 与存储器之间"}, [&](const std::string &n, const Params &p) -> C {
