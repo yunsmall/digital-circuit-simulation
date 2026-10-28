@@ -9,7 +9,7 @@
 #include <format>
 
 #ifdef DCS_USE_TCC
-#include <tcc.h>
+#include <libtcc.h>
 #else
 #include <clang/CodeGen/CodeGenAction.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -31,7 +31,7 @@ namespace dsc {
 
 namespace {
 #ifdef DCS_USE_TCC
-struct TCCState;
+// TCCState 已由 libtcc.h 在全局作用域声明；这里再加一个会让 dsc 内的名字遮蔽它
 #else
 void initCompilerEnv() {
     static bool done = false;
