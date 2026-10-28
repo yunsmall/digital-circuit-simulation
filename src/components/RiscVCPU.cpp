@@ -95,7 +95,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
     if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
     // WFI 期间只要有中断挂起就唤醒：不看 mstatus.MIE，也不要求 mie 已使能
-    if (s.wfi_halted && s.mip) {
+    // 与 WFI 的停机条件保持一致：只有本地使能的挂起中断才唤醒，
+    // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动
+    if (s.wfi_halted && (s.mip & s.mie)) {
         s.wfi_halted = false;
         s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
     }
@@ -123,7 +125,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         case Phase::WAIT_MMU_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_WALK_L1: adr=s.mmu_l1_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_WALK_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
-        case Phase::MMU_AD_WRITE: adr=s.mmu_l2_addr; wdat=s.mmu_pte; we=true; sel=0x0F; stb=cyc=true; break;
+        case Phase::MMU_AD_WRITE: adr=s.mmu_pte_addr; wdat=s.mmu_pte; we=true; sel=0x0F; stb=cyc=true; break;
         default: break;
         }
         packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
@@ -204,6 +206,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         bool need_mem=false;
         execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
         if (s.halted) [[unlikely]] { s.phase=Phase::HALTED; ho=true; wb_stb=wb_cyc=false; }
+        else if (s.phase == Phase::HALTED) { /* WFI 停在这里，halted 输出保持不变 */ }
         else if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
             // mmuTranslate 设置了 MMU 遍历阶段，输出第一次总线读请求并立即转为等待状态
             uint32_t mmu_adr = (s.phase == Phase::MMU_WALK_L1) ? s.mmu_l1_addr : s.mmu_l2_addr;
@@ -365,6 +368,19 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                     s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
                     break;
                 }
+                // 大页的 A/D 同样要落到内存页表上，否则与 4KB 页路径行为不一致
+                {
+                    uint32_t upd = l1e;
+                    if (!(l1e & RV::PTE_A)) upd |= RV::PTE_A;
+                    if (s.mmu_is_write && !(l1e & RV::PTE_D)) upd |= RV::PTE_D;
+                    if (upd != l1e) {
+                        s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l1_addr; s.mmu_pte_is_l1 = true;
+                        s.phase = Phase::MMU_AD_WRITE;
+                        wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
+                        wb_stb = wb_cyc = true;
+                        break;
+                    }
+                }
                 int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
                 auto &e = s.tlb[idx];
                 e.vpn = s.mmu_vaddr >> 12; e.ppn = ((l1e >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF);
@@ -402,9 +418,11 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 if (!(l2e & RV::PTE_A)) upd |= RV::PTE_A;
                 if (s.mmu_is_write && !(l2e & RV::PTE_D)) upd |= RV::PTE_D;
                 if (upd != l2e) {
-                    s.mmu_pte = upd;
+                    // 注意：这里沿用同一笔事务把 we 从 0 翻到 1（stb 不拉低），
+                    // 与 AMO 的写回路径一致，依赖从设备按 we 上升沿识别写操作
+                    s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l2_addr; s.mmu_pte_is_l1 = false;
                     s.phase = Phase::MMU_AD_WRITE;
-                    wb_adr = s.mmu_l2_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
+                    wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
                     wb_stb = wb_cyc = true;
                     break;
                 }
@@ -425,12 +443,15 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         break;
 
     case Phase::MMU_AD_WRITE:
-        wb_adr = s.mmu_l2_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+        wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
         if (in.ack) {
             // 页表已更新，按更新后的 PTE 装填 TLB
             int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
             auto &e = s.tlb[idx];
-            e.vpn = s.mmu_vaddr >> 12; e.ppn = (s.mmu_pte >> 10) & 0x3FFFFF;
+            e.vpn = s.mmu_vaddr >> 12;
+            e.ppn = s.mmu_pte_is_l1
+                        ? (((s.mmu_pte >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF))
+                        : ((s.mmu_pte >> 10) & 0x3FFFFF);
             e.asid = (uint8_t)((s.satp >> 22) & 0xFF); e.flags = (uint8_t)(s.mmu_pte & 0xFF);
             e.valid = true; e.global = (s.mmu_pte >> 5) & 1;
             s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
@@ -893,7 +914,8 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
-    case RV::CSR_MSTATUS: return s.mstatus;
+    // SD 是只读汇总位：FS 或 XS 非 0 时必须为 1，软件靠它判断是否需要保存浮点上下文
+    case RV::CSR_MSTATUS: return s.mstatus | ((((s.mstatus >> 13) & 3u) != 0) ? (1u << 31) : 0u);
     case RV::CSR_MISA:    return 0x40141100u | (1u<<0) | (1u<<5); // RV32IMAF
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;
@@ -904,7 +926,8 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_MCAUSE:  return s.mcause;
     case RV::CSR_MTVAL:   return s.mtval;
     case RV::CSR_MIP:     return s.mip;
-    case RV::CSR_SSTATUS: return (s.mstatus & 0x800DE122u); // SIE/SPIE/SPP/FS/XS/SUM/MXR/SD，不含 M 级字段
+    // SIE/SPIE/SPP/FS/XS/SUM/MXR 可读，SD 由 FS/XS 汇总而来，不含 M 级字段
+    case RV::CSR_SSTATUS: return (s.mstatus & 0x000DE122u) | ((((s.mstatus >> 13) & 3u) != 0) ? (1u << 31) : 0u);
     case RV::CSR_SIE:     return s.mie & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI);
     case RV::CSR_STVEC:   return s.stvec;
     case RV::CSR_SSCRATCH:return s.sscratch;

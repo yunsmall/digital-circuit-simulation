@@ -169,7 +169,9 @@ private:
         bool wfi_halted; // 已执行 WFI，等待中断唤醒
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
-        uint32_t mmu_pte;  // 需要写回页表的 PTE（补 A/D 位）
+        uint32_t mmu_pte;      // 需要写回页表的 PTE（补 A/D 位）
+        uint32_t mmu_pte_addr; // 该 PTE 的物理地址
+        bool mmu_pte_is_l1;    // 写回的是 L1（大页）还是 L2 PTE
         // 指令缓存：直接映射，每行一条指令。循环体是最常见的取指热点，
         // 缓存下来可以完全跳过总线事务。
         struct ICacheLine { uint32_t tag; uint32_t inst; bool valid; };

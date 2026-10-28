@@ -101,8 +101,7 @@ TEST(WfiTest, HaltsAndWakesOnInterrupt) {
     f.load({
             0x10000293u, // addi x5, x0, 0x100（mtvec 指向内存内的地址）
             0x30529073u, // csrw mtvec, x5
-            0x7FF00313u, // addi x6, x0, 0x7FF
-            0x00130313u, // addi x6, x6, 1       -> x6 = 0x800（mie.MTIE）
+            0x08000313u, // addi x6, x0, 0x80（mie.MTIE 是 bit7）
             0x30431073u, // csrw mie, x6
             0x10500073u, // wfi
             0x00A00293u, // addi x5, x0, 10（唤醒后应执行到这里）
