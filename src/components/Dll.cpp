@@ -211,6 +211,10 @@ std::string DllComponent::genTickFunc(const char *phase) const {
         out_decls += std::format("    {} {}; dcs_memset(&{}, 0, {});\n", c_int_type(bw), tmp, tmp, bytes);
         copys_out += std::format("    dcs_memcpy(&{}, _dll_out[{}], {});\n", tmp, i, bytes);
         writes += "    " + genOutputWrite(i, tmp, bw) + "\n";
+        // DLL 接口没有动态控制三态使能的手段，所以输出一律视为常驱动；
+        // 不写这一行的话，声明为三态的输出 _c_oe 会一直是初始的 false，
+        // 生成的总线决议会把它当高阻，下游永远读不到值
+        writes += std::format("    _c_oe_{}_{} = true;\n", id, i);
     }
 
     int in_count = ni > 0 ? ni : 1;

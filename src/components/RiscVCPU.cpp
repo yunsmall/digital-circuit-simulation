@@ -104,9 +104,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
     if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
     if (in.seip) s.mip|=RV::IRQ_SEI; else s.mip&=~RV::IRQ_SEI;
-    // WFI 期间只要有中断挂起就唤醒：不看 mstatus.MIE，也不要求 mie 已使能
-    // 与 WFI 的停机条件保持一致：只有本地使能的挂起中断才唤醒，
-    // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动
+    // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
+    // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动。
+    // 这里刻意不看 mstatus.MIE：全局关闭时也要退出 WFI，由后续中断判定决定去留
     if (s.wfi_halted && (s.mip & s.mie)) {
         s.wfi_halted = false;
         s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
@@ -746,8 +746,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if (fma_snan || (!std::isnan(a) && !std::isnan(b) && !std::isnan(c))) s.fcsr |= 0x10;
         } else if (std::isfinite(exact)) {
             if ((double)r != exact) s.fcsr |= 0x01;          // NX
-            if (std::isinf(r)) s.fcsr |= 0x04;                // OF：有限结果舍入成 inf
-            else if (r == 0.0f && exact != 0.0) s.fcsr |= 0x02; // UF
+            // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
+            // 或直接舍入成 0 而精确结果非 0
+            if (std::isinf(r)) s.fcsr |= 0x04;
+            else if (r == 0.0f ? exact != 0.0
+                               : std::fabs((double)r) < (double)std::numeric_limits<float>::min())
+                s.fcsr |= 0x02;
         }
         s.mstatus |= (3u << 13);
         break;
@@ -779,8 +783,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             setf(r);
             if (!std::isfinite(exact)) return;
             if ((double) r != exact) s.fcsr |= 0x01; // NX
-            if (std::isinf(r)) s.fcsr |= 0x04;       // OF
-            else if (r == 0.0f && exact != 0.0) s.fcsr |= 0x02; // UF
+            // OF：舍入成 inf；UF：结果是非规格化数，或舍入成 0 而精确值非 0
+            if (std::isinf(r)) s.fcsr |= 0x04;
+            else if (r == 0.0f ? exact != 0.0
+                               : std::fabs((double)r) < (double)std::numeric_limits<float>::min())
+                s.fcsr |= 0x02;
         };
 
         // 这五条的 funct3 是舍入模式：5/6 保留、7 取 fcsr.frm。
@@ -903,7 +910,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         default:
             takeTrap(s, RV::EXC_II, inst); return;
         }
-        s.mstatus |= (3u << 13); // FS = Dirty
+        // FS=Dirty 只在浮点状态确实被修改时设置：FMV.X.W/FCLASS 只读 freg，
+        // FCMP 只有在置了 NV 时才算修改，否则上下文切换会白白多保存一次 FPU 状态
+        if (f7 != RV::F7_FMV_X_W && (f7 != RV::F7_FCMP || (s.fcsr & 0x10)))
+            s.mstatus |= (3u << 13);
         break;
     }
 
@@ -1168,7 +1178,8 @@ bool RiscVCPU::takeTrap(CpuState &s, uint32_t cause, uint32_t tval) {
         s.mcause = cause; s.mepc = s.pc; s.mtval = tval;
         uint8_t mie = (s.mstatus & RV::MSTATUS_MIE) ? 1 : 0;
         s.mstatus = (s.mstatus & ~RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_MIE);
+        // 规范 3.1.6.3：trap 进入 M 态时 MPRV 必须清零
+        s.mstatus = (s.mstatus & ~RV::MSTATUS_MIE & ~RV::MSTATUS_MPRV);
         s.mstatus = (s.mstatus & ~RV::MSTATUS_MPP) | ((uint32_t)s.priv << 11);
         s.priv = RV::PRIV_M;
         s.pc = (is_irq && (s.mtvec & 3) == 1) ? (s.mtvec & ~3u) + 4u * (cause & 0x1F) : (s.mtvec & ~3u);
