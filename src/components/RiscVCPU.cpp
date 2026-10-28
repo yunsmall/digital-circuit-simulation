@@ -762,7 +762,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         if (((inst >> 25) & 3) != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 只实现单精度
         uint32_t rs3 = (inst >> 27) & 0x1F;
         float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]), c = u2f(s.fregs[rs3]);
-        // 规范要求一次舍入，所以用 double 保存乘积再组合，最后才转 float
+        // double 中转不会引入双重舍入偏差：中间精度 p2 >= 2*p1+2 时两次舍入等价于一次，
+        // 这里 53 >= 2*24+2 = 50 满足，且 float 乘 float 的 48 位尾数在 double 里是精确的
         double prod = (double)a * (double)b;
         double exact = (op == 0x43) ? prod + (double)c
                      : (op == 0x47) ? prod - (double)c
