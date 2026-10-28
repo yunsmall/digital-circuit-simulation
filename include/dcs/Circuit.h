@@ -58,6 +58,13 @@ namespace dsc {
 // 不许引入虚基类或多态接口——tick/setWire/getWire 在每 tick 的热路径上，
 // 后端选择继续用 #ifdef 编译期决定，不能变成运行期分发。
 // ============================================================
+// 一条总线上的一个三态驱动源：哪个元件的第几个输出。
+// 放在命名空间级是因为 CodeGen 需要以只读方式遍历它。
+struct BusDriver {
+    Component *comp;
+    int out_idx;
+};
+
 class Circuit {
 public:
     Circuit();
@@ -155,10 +162,6 @@ private:
     std::vector<std::unique_ptr<Component>> _components;
 
     // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
-    struct BusDriver {
-        Component *comp;
-        int out_idx;
-    };
     std::map<int, std::vector<BusDriver>> _bus_nets;
 
     bool _compiled = false;

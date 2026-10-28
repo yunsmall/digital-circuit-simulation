@@ -916,6 +916,8 @@ static bool csrImplemented(uint32_t addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
     case 0x00F:  // vcsr
     case 0x306:  // mcounteren
+    // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
+    // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为
     case 0x310:  // mstatush
     case 0xC00: case 0xC01: case 0xC02: // cycle / time / instret
     case 0xC80: case 0xC81: case 0xC82: // cycleh / timeh / instreth
