@@ -685,7 +685,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         default: [[unlikely]] takeTrap(s, RV::EXC_II, inst); return;
         }
         // AMO/LR/SC 属于 store/AMO 类，misaligned 的 cause 是 6 不是 4
-        if (v1 & 3) [[unlikely]] { takeTrap(s, RV::EXC_SAM, v1); return; }
+        // LR 是 load 类（cause 4），SC 和其余 AMO 才是 store/AMO 类（cause 6）
+        bool amo_is_load = (((inst >> 27) & 0x1F) == RV::F5_LR);
+        if (v1 & 3) [[unlikely]] { takeTrap(s, amo_is_load ? RV::EXC_LAM : RV::EXC_SAM, v1); return; }
         uint32_t va=v1, pa;
         // LR 只读，只要求页有 R；SC 与其余 AMO 要写，要求 W
         bool amo_write = (((inst >> 27) & 0x1F) != RV::F5_LR);

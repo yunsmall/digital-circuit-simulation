@@ -308,6 +308,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
             oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+            // 三态使能也要回到初值：否则运行中被置真的三态输出复位后会以 0 驱动总线，
+            // 多条三态线挂同一总线时第一拍就可能报假冲突
+            oss << std::format("    _c_oe_{}_{} = {};\n", c->id(), oi,
+                               c->outputs()[oi]->isTriState() ? "false" : "true");
         }
     }
     for (auto &c: components) {
@@ -333,6 +337,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
             oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+            // 三态使能也要回到初值：否则运行中被置真的三态输出复位后会以 0 驱动总线，
+            // 多条三态线挂同一总线时第一拍就可能报假冲突
+            oss << std::format("    _c_oe_{}_{} = {};\n", c->id(), oi,
+                               c->outputs()[oi]->isTriState() ? "false" : "true");
         }
     }
     for (auto &c: components) {
