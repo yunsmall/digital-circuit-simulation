@@ -470,30 +470,71 @@ std::string Circuit::generateC() const {
 
     // === circuit_tick ===
     oss << "void circuit_tick(void) {\n";
-    oss << "    // 阶段1: 组合逻辑（每个元件执行后立即传播输出，保证同 tick 级联可见）\n";
-    for (auto *c: sorted) {
-        if (!c->hasCombinational())
-            continue;
-        oss << "    " << c->funcName_comb() << "();\n";
-        // 立即传播当前组合元件的输出到 _w[]（跳过总线网，总线在阶段2处理）
-        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
-            Net *n = c->outputs()[oi]->net();
-            if (!n)
+    // 先算出哪些组合元件要重跑：输入直接或间接挂在总线网上的那些。
+    // 没有总线网的电路集合为空，阶段2b 就是零开销。
+    std::set<Component *> bus_affected;
+    {
+        std::map<const Net *, Component *> net_driver;
+        for (auto &c: _components)
+            for (auto &op: c->outputs())
+                if (op->net())
+                    net_driver[op->net()] = c.get();
+
+        std::vector<Component *> queue;
+        for (auto *c: sorted) {
+            if (!c->hasCombinational())
                 continue;
-            int nid = n->id();
-            if (_bus_nets.count(nid))
-                continue; // 总线网留在阶段2做决议
-            int nb = byte_count(n->bit_width());
-            oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
-            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
-            oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
-            oss << "    }\n";
+            for (auto &pin: c->inputs())
+                if (pin->net() && _bus_nets.count(pin->net()->id())) {
+                    if (bus_affected.insert(c).second)
+                        queue.push_back(c);
+                    break;
+                }
+        }
+        for (size_t qi = 0; qi < queue.size(); ++qi) {
+            for (auto &op: queue[qi]->outputs()) {
+                if (!op->net())
+                    continue;
+                for (auto *down: sorted) {
+                    if (!down->hasCombinational() || bus_affected.count(down))
+                        continue;
+                    for (auto &pin: down->inputs())
+                        if (pin->net() == op->net()) {
+                            bus_affected.insert(down);
+                            queue.push_back(down);
+                            break;
+                        }
+                }
+            }
         }
     }
-    oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
 
-    // 传播阶段：_c_out → _w（含总线决议）
-    // 先收集哪些线网是总线，哪些普通线网已经被处理
+    // 组合阶段生成器：执行所有组合元件，并把非总线输出立即传播到 _w
+    auto emitCombStage = [&](const std::set<Component *> *only) {
+        for (auto *c: sorted) {
+            if (only && !only->count(c))
+                continue;
+            if (!c->hasCombinational())
+                continue;
+            oss << "    " << c->funcName_comb() << "();\n";
+            for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+                Net *n = c->outputs()[oi]->net();
+                if (!n)
+                    continue;
+                int nid = n->id();
+                if (_bus_nets.count(nid))
+                    continue; // 总线网留给决议阶段
+                int nb = byte_count(n->bit_width());
+                oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
+                oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
+                oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
+                oss << "    }\n";
+            }
+        }
+    };
+
+    // 传播阶段生成器：总线决议 + 所有输出的 _c_out → _w
+    auto emitPropagation = [&](int round) {
     std::set<int> bus_nets_handled;
 
     // 总线决议
@@ -510,10 +551,10 @@ std::string Circuit::generateC() const {
             else
                 oss << std::format(
                         "        if (_c_oe_{}_{}) {{\n"
-                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); goto _bus_done_{}; }}\n"
+                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); goto _bus_done_{}_{}; }}\n"
                         "            _active = {};\n"
                         "        }}\n",
-                        cid, oi, net_id, net_id, di);
+                        cid, oi, net_id, net_id, round, di);
         }
         oss << "        if (_active >= 0) {\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
@@ -526,7 +567,7 @@ std::string Circuit::generateC() const {
         oss << "        } else {\n";
         oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
         oss << "        }\n";
-        oss << std::format("    _bus_done_{}: ;\n", net_id);
+        oss << std::format("    _bus_done_{}_{}: ;\n", net_id, round);
         oss << "    }\n";
         bus_nets_handled.insert(net_id);
     }
@@ -548,6 +589,18 @@ std::string Circuit::generateC() const {
             oss << std::format("        dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", nid);
             oss << "    }\n";
         }
+    }
+    }; // emitPropagation
+
+    oss << "    // 阶段1: 组合逻辑\n";
+    emitCombStage(nullptr);
+    oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
+    emitPropagation(0);
+    // 只有直接/间接受总线驱动的组合元件需要重跑，其余保持不变
+    if (!bus_affected.empty()) {
+        oss << "    // 阶段2b: 重跑受总线影响的组合元件，使其看到本拍决议结果\n";
+        emitCombStage(&bus_affected);
+        emitPropagation(1);
     }
 
     oss << "    // 阶段3: 时序逻辑\n";
