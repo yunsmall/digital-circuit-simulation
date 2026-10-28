@@ -25,6 +25,7 @@
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
 #include "dcs/components/PLIC.h"
+#include "dcs/components/SPI.h"
 #include "dcs/components/UART.h"
 #include "dcs/components/RiscVCPU.h"
 #include "dcs/components/WishboneMemory.h"
@@ -512,6 +513,10 @@ struct InitAllComponents {
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"spi", {{"clkdiv", "4"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "miso"}, {"wb_dat_o", "wb_ack_o", "sclk", "mosi", "cs"}, dsc::ComponentCategory::Misc, "SPI 主机（模式 0），按 clkdiv 分频收发 8 位"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::SPI>(n, _gi(p, "clkdiv", 4));
         });
 
         f.registerType({"uart", {{"baud_div", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx"}, dsc::ComponentCategory::Misc, "UART 8N1 串口，按 baud_div 个 tick 一位"}, [&](const std::string &n, const Params &p) -> C {
