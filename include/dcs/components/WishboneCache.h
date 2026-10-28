@@ -5,7 +5,7 @@
 // 同时更新命中的行，避免后续读到脏数据。
 //
 // 参数:
-//   lines: 缓存行数（必须是 2 的幂）
+//   lines: 缓存行数（按 lines 取模索引，不要求是 2 的幂）
 #pragma once
 #include <cstdint>
 #include <string>
@@ -56,7 +56,6 @@ private:
         // 下游事务
         uint32_t dn_adr, dn_dat;
         bool dn_we, dn_stb, dn_cyc;
-        bool prev_dn_stb;
         // 填充状态
         int fill_state;           // 0=空闲, 1=发读, 2=等 ack, 3=收数据
         uint32_t fill_addr;

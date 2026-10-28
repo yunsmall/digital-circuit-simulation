@@ -28,7 +28,7 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    enum class St : uint8_t { IDLE, WRITE_GO, WRITE_WAIT, WRITE_RESP, READ_GO, READ_WAIT, READ_RESP };
+    enum class St : uint8_t { IDLE, WRITE_WAIT, WRITE_RESP, READ_WAIT, READ_RESP };
 
     struct BridgeState {
         St st;

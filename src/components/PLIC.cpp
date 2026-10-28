@@ -174,29 +174,6 @@ void PLIC::plicTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *cons
                     s.in_service &= ~(1u << wdat);
             }
             ack = true;
-        } else if (off == OFF_CLAIM + 4) {
-            // 标准 PLIC 的 claim/complete 在 0x200004，这里保持兼容
-            if (!we) {
-                uint32_t best = 0, best_prio = s.threshold;
-                uint32_t cand = s.pending & s.enable;
-                for (uint32_t id = 1; id <= s.num_sources; ++id) {
-                    if (!(cand & (1u << id)))
-                        continue;
-                    uint32_t pr = s.priority[id];
-                    if (pr > best_prio) { // 标准 PLIC 要求严格大于 threshold
-                        best_prio = pr;
-                        best = (uint32_t) id;
-                    }
-                }
-                if (best) {
-                    s.pending &= ~(1u << best);
-                    s.in_service |= (1u << best);
-                }
-                dout = best;
-            } else if (wdat <= s.num_sources) {
-                s.in_service &= ~(1u << wdat);
-            }
-            ack = true;
         } else {
             ack = true; // 未实现的偏移按 0 读、写忽略，但不挂死总线
         }

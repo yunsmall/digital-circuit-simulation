@@ -66,6 +66,7 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
 
     int adr_in   = inputs()[0]->netId();  // wb_adr_i
     int stb_in   = inputs()[4]->netId();  // wb_stb_i
+    int cyc_in   = inputs()[5]->netId();  // wb_cyc_i
     int rdat_in  = inputs()[7]->netId();  // rom_data
 
     int adr_nw = adr_in >= 0 ? inputs()[0]->net()->bit_width() : 0;
@@ -83,7 +84,12 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
     } else {
         code += "    uint64_t _adr = 0;\n";
     }
-    if (stb_in >= 0) {
+    // 与其它 Wishbone 从设备一致：stb 必须与 cyc 同时有效才算一次事务
+    if (stb_in >= 0 && cyc_in >= 0) {
+        code += std::format("    bool _stb = false, _cyc = false;\n"
+                            "    dcs_memcpy(&_stb, _w[{}], 1); dcs_memcpy(&_cyc, _w[{}], 1);\n"
+                            "    _stb = _stb && _cyc;\n", stb_in, cyc_in);
+    } else if (stb_in >= 0) {
         code += std::format("    bool _stb = false; dcs_memcpy(&_stb, _w[{}], 1);\n", stb_in);
     } else {
         code += "    bool _stb = false;\n";

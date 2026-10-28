@@ -127,7 +127,7 @@ private:
         uint32_t fcsr;      // frm[7:5] | fflags[4:0]
         Phase phase;
         uint32_t inst;
-        bool halted, prev_clk;
+        bool prev_clk;
 
         // 特权级
         uint8_t priv; // 当前特权级 (0=U, 1=S, 3=M)

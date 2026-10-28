@@ -67,7 +67,10 @@ std::string RiscVCPU::genFuncDef_seq() const {
     return code;
 }
 std::unique_ptr<Component> RiscVCPU::clone(const std::string &n) const {
-    return std::make_unique<RiscVCPU>(n);
+    // 与其余元件一致：连运行状态一起复制，复制出来的核可以直接接着跑
+    auto p = std::make_unique<RiscVCPU>(n);
+    p->_state = _state;
+    return p;
 }
 
 // ============================================================
@@ -139,7 +142,6 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         return;
     }
 
-    if (s.halted && s.phase != Phase::HALTED) s.phase = Phase::HALTED;
 
     uint32_t wb_adr=0,wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0; bool ho=false;
 
@@ -212,8 +214,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         }
         bool need_mem=false;
         execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
-        if (s.halted) [[unlikely]] { s.phase=Phase::HALTED; ho=true; wb_stb=wb_cyc=false; }
-        else if (s.phase == Phase::HALTED) {
+        if (s.phase == Phase::HALTED) {
             // WFI 停机这一拍不能再拉高 stb：那会向从设备发一次虚假取指，
             // 有状态的从设备（如缓存填充）可能就此卡在半完成
             wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
@@ -837,7 +838,6 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 if (s.priv == RV::PRIV_U) takeTrap(s, RV::EXC_ECALL_U, 0);
                 else if (s.priv == RV::PRIV_S) takeTrap(s, RV::EXC_ECALL_S, 0);
                 else takeTrap(s, RV::EXC_ECALL_M, 0);
-                if (s.halted) return;
                 npc = s.pc; // takeTrap 可能已修改 PC，不要再改
                 break;
             case RV::F12_EBREAK: takeTrap(s, RV::EXC_BP, 0); npc = s.pc; break;
@@ -900,7 +900,6 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     }
 
     // ---- PC 更新 ----
-    if (s.halted) [[unlikely]] return;
     s.regs[0]=0; s.pc=npc;
     if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
 }

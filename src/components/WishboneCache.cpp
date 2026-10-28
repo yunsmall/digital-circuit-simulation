@@ -13,7 +13,7 @@ enum UpIdx { U_ADR = 0, U_DAT, U_WE, U_SEL, U_STB, U_CYC, U_COUNT };
 enum DnIdx { D_DAT_I = 0, D_ACK_I, D_COUNT };
 enum OutIdx { O_DAT = 0, O_ACK, O_DADR, O_DDAT, O_DWE, O_DSEL, O_DSTB, O_DCYC, O_COUNT };
 
-enum Fill { F_IDLE = 0, F_REQ, F_WAIT, F_DONE };
+enum Fill { F_IDLE = 0, F_REQ, F_WAIT };
 } // namespace
 
 WishboneCache::WishboneCache(const std::string &name, int lines)
@@ -74,18 +74,23 @@ std::string WishboneCache::genFuncDef_seq() const {
     code += "extern void _dcs_cache_reset(void *, int);\n\n";
     code += std::format("static void {}(void) {{\n", funcName_seq());
     code += std::format("    uint8_t _in[{}][{}];\n", (int) U_COUNT + (int) D_COUNT, SLOT);
+    code += "    dcs_memset(_in, 0, sizeof(_in));\n"; // 悬空引脚与位宽不足 4 字节时的高位都保持零
     int idx = 0;
     for (int i = 0; i < U_COUNT; i++, idx++) {
         int w = (i == U_ADR || i == U_DAT) ? 32 : (i == U_SEL ? 4 : 1);
+        int nid = inputs()[i]->netId();
+        if (nid < 0) continue; // 未连接的引脚保持零，不能展开成 _w[-1]
         code += std::format("    {{ uint64_t _v=0; dcs_memcpy(&_v,_w[{}],{}); uint8_t _b[8]; dcs_memcpy(_b,&_v,8); "
                             "dcs_memcpy(_in[{}],_b,{}); }}\n",
-                            inputs()[i]->netId(), byte_count(w), idx, byte_count(w));
+                            nid, byte_count(w), idx, byte_count(w));
     }
     for (int i = 0; i < D_COUNT; i++, idx++) {
         int w = (i == D_DAT_I) ? 32 : 1;
+        int nid = inputs()[U_COUNT + i]->netId();
+        if (nid < 0) continue;
         code += std::format("    {{ uint64_t _v=0; dcs_memcpy(&_v,_w[{}],{}); uint8_t _b[8]; dcs_memcpy(_b,&_v,8); "
                             "dcs_memcpy(_in[{}],_b,{}); }}\n",
-                            inputs()[U_COUNT + i]->netId(), byte_count(w), idx, byte_count(w));
+                            nid, byte_count(w), idx, byte_count(w));
     }
     code += std::format("    uint8_t _out[{}][{}];\n", (int) O_COUNT, SLOT);
     code += std::format("    _dcs_cache_tick(_cache_state_{0}, (const uint8_t*)_in, (uint8_t*)_out);\n", _id);
