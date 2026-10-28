@@ -103,6 +103,8 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
         code += "    bool _we = false;\n";
     }
 
+    code += "    (void) _we; // ROM 只读：写使能只为了让这笔操作可见，不改内容\n";
+
     // 先递减（在 rise 检测之前，避免同一 tick 刚设就减）
     code += std::format("    if (_bra_wait_{0} > 0) _bra_wait_{0}--;\n", id);
 

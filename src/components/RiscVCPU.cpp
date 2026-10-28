@@ -701,6 +701,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     // ---- AMO ----
     case RV::AMO: {
         s.acc_stage = 0; // AMO 是单次对齐事务，不能继承上一次非对齐访存的拆分级数
+        s.bus_fp = 0;    // 清掉可能残留的浮点访存标志，否则读响应会写进 fregs
         if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 仅支持 .W
         switch ((inst >> 27) & 0x1F) { // 未实现的 AMO 编码必须报非法指令，不能静默完成
         case RV::F5_LR: case RV::F5_SC: case RV::F5_AMOSWAP: case RV::F5_AMOADD:
