@@ -27,7 +27,7 @@ RiscVCPU::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
 RiscVCPU::~RiscVCPU() = default;
 uint32_t RiscVCPU::reg(int idx) const { return (idx>=0&&idx<=31)?_state.regs[idx]:0; }
 uint32_t RiscVCPU::pc() const { return _state.pc; }
-bool RiscVCPU::halted() const { return _state.halted; }
+bool RiscVCPU::halted() const { return _state.wfi_halted; }
 bool RiscVCPU::prepare(std::string &) { _prepared = true; return true; }
 std::vector<Component::JitSymbol> RiscVCPU::extraJitSymbols() const {
     return {{"_dcs_cpu_tick",reinterpret_cast<void*>(&cpuTick)},
@@ -103,6 +103,16 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs)
     auto &s = *static_cast<CpuState*>(state_ptr);
     CpuIn in(inputs);
     if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
+    // 外部中断线要每 tick 反映到 mip，否则停机期间收不到中断
+    if (in.irq) s.mip|=RV::IRQ_MEI; else s.mip&=~RV::IRQ_MEI;
+    if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
+    if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
+    // WFI 期间只要有中断挂起就唤醒：不看 mstatus.MIE，也不要求 mie 已使能
+    if (s.wfi_halted && s.mip) {
+        s.wfi_halted = false;
+        s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
+    }
+
     bool rising = !s.prev_clk && in.clk; s.prev_clk = in.clk;
 
     if (!rising) {
@@ -128,7 +138,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs)
         case Phase::MMU_WALK_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
         default: break;
         }
-        packOut(outputs,adr,wdat,we,sel,stb,cyc,s.halted);
+        packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
         return;
     }
 
@@ -178,9 +188,6 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs)
         break;
 
     case Phase::EXECUTE: {
-        if (in.irq) s.mip|=RV::IRQ_MEI; else s.mip&=~RV::IRQ_MEI;
-        if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
-        if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
         uint32_t trap_cause=0;
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
             takeTrap(s, trap_cause, 0);
@@ -402,7 +409,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs)
     case Phase::HALTED: ho=true; break;
     }
     s.regs[0]=0;
-    packOut(outputs, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, ho);
+    packOut(outputs, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);
 }
 
 void RiscVCPU::cpuReset(void *state_ptr) {
@@ -768,7 +775,14 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 npc = s.sepc;
                 break;
             }
-            case RV::F12_WFI: break;
+            case RV::F12_WFI:
+                // 有中断挂起就继续执行；否则停在这里，PC 不前进
+                if (!(s.mip & s.mie)) {
+                    s.wfi_halted = true;
+                    s.phase = Phase::HALTED; // 停止取指，等中断唤醒
+                    npc = s.pc;
+                }
+                break;
             default:
                 // SFENCE.VMA: funct7=0x09, 刷新全部 TLB
                 if (f7 == 0x09) {

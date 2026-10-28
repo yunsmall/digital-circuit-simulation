@@ -93,7 +93,7 @@ public:
     explicit RiscVCPU(const std::string &name);
     ~RiscVCPU() override;
 
-    // halted：预留的停机输出，当前实现不产生停机（WFI 视为 nop），恒为 false
+    // halted：执行 WFI 期间为高，有中断待处理时自动唤醒
     uint32_t reg(int idx) const;
     uint32_t pc() const;
     bool halted() const;
@@ -166,6 +166,7 @@ private:
         bool bus_we, bus_amo;
         uint8_t bus_sel, bus_funct3, bus_rd, bus_amo_f5;
         uint8_t bus_fp; // 访存结果写浮点寄存器（FLW）而不是整数寄存器
+        bool wfi_halted; // 已执行 WFI，等待中断唤醒
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
 
