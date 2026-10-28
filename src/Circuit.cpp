@@ -27,24 +27,7 @@ const std::string &dsc::Circuit::jitIncludeDir() {
     return _jit_include_dir;
 }
 
-#ifdef DCS_USE_TCC
-// ---- TinyCC 后端 ----
-#include <libtcc.h>
-#else
-// ---- LLVM/Clang 后端 ----
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/MemoryBuffer.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/TargetParser/Host.h>
-
-#include <clang/CodeGen/CodeGenAction.h>
-#include <clang/Frontend/CompilerInstance.h>
-#include <clang/Frontend/CompilerInvocation.h>
-#include <clang/Frontend/FrontendActions.h>
-#include <clang/Lex/PreprocessorOptions.h>
-#endif
+// 编译器后端（LLVM/TCC）相关的东西都在 JitBackend.cpp，这里不需要任何后端头
 
 // 总线冲突回调（JIT 注入，通过 _circuit_ptr 回调到 Circuit 对象）
 extern "C" void dcs_bus_conflict(void *circuit, int net_id) {
@@ -58,21 +41,6 @@ void dcsBusConflictThunk(void *circuit_ptr, int net_id) {
 } // namespace dsc
 
 namespace dsc {
-
-// 编译器环境初始化（内部调用，只执行一次）
-static void init_compiler_env() {
-#ifndef DCS_USE_TCC
-    static bool done = false;
-    if (done)
-        return;
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmParser();
-    LLVMInitializeX86AsmPrinter();
-    done = true;
-#endif
-}
 
 // ============================================================
 // Circuit 构造/析构
