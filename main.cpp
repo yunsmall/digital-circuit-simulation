@@ -281,8 +281,8 @@ int simulate(const std::string &path, int ticks, int delay_ms, bool monitor, con
             }
             std::cout << std::flush;
         }
-        if (t < ticks - 1)
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        if (delay_ms > 0 && t < ticks - 1)
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms)); // 0 也要睡的话就是每 tick 一次系统调用
     }
     circuit->deinit();
     return 0;

@@ -5,6 +5,7 @@
 #include "dcs/util/ExePath.h"
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <nlohmann/json.hpp>
@@ -798,6 +799,19 @@ CircuitError Circuit::compile() {
     // 统一入口：编译前注入所有元件的额外 JIT 符号（DLL 函数指针、内存地址等）
     tcc_add_symbol(s, "dcs_bus_conflict",
                    reinterpret_cast<void *>(reinterpret_cast<void (*)(void *, int)>(&dcs_bus_conflict)));
+    // -nostdlib 下 TCC 处理大块初始化/结构体赋值时会自行发出 memset/memcpy 调用，
+    // 这几个符号必须由宿主提供，否则链接期报未解析引用
+    {
+        using memset_fn = void *(*)(void *, int, unsigned long long);
+        using memcpy_fn = void *(*)(void *, const void *, unsigned long long);
+        using memmove_fn = void *(*)(void *, const void *, unsigned long long);
+        static memset_fn s_memset = [](void *d, int c, unsigned long long n) { return std::memset(d, c, (size_t) n); };
+        static memcpy_fn s_memcpy = [](void *d, const void *s2, unsigned long long n) { return std::memcpy(d, s2, (size_t) n); };
+        static memmove_fn s_memmove = [](void *d, const void *s2, unsigned long long n) { return std::memmove(d, s2, (size_t) n); };
+        tcc_add_symbol(s, "memset", reinterpret_cast<void *>(s_memset));
+        tcc_add_symbol(s, "memcpy", reinterpret_cast<void *>(s_memcpy));
+        tcc_add_symbol(s, "memmove", reinterpret_cast<void *>(s_memmove));
+    }
     for (auto &comp: _components)
         for (auto &[name, ptr]: comp->extraJitSymbols())
             tcc_add_symbol(s, name.c_str(), ptr);
