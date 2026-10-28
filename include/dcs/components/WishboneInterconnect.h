@@ -27,7 +27,8 @@ namespace dsc {
 class WishboneInterconnect : public Component {
 public:
     // segments: 地址段描述字符串，格式 "base:size,base:size,..."
-    WishboneInterconnect(const std::string &name, const std::string &segments = "0:65536");
+    // num_masters: 主设备数量，主侧引脚依次为 m0_*, m1_*, ...，多个主设备按轮询仲裁。
+    WishboneInterconnect(const std::string &name, const std::string &segments = "0:65536", int num_masters = 1);
     ~WishboneInterconnect() override;
 
     struct Segment {
@@ -36,6 +37,7 @@ public:
     };
     const std::vector<Segment> &segments() const { return _segments; }
     int numSlaves() const { return (int) _segments.size(); }
+    int numMasters() const { return _masters; }
 
     // ---- Component 接口 ----
     bool hasCombinational() const override { return false; }
@@ -54,11 +56,14 @@ public:
 
 private:
     std::vector<Segment> _segments;
+    int _masters = 1;
     bool _prepared = false;
 
     // 路由状态（嵌入 JIT C 代码）
     struct RouteState {
         int num_slaves;
+        int num_masters;
+        int last_grant; // 轮询仲裁的起点，保证公平
         // 地址段信息（固定，嵌入指针）
         const Segment *segments;
         int seg_count;

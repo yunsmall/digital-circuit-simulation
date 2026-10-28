@@ -184,12 +184,12 @@ TEST(ClintTest, TimerInterrupt) {
     circuit->connect(cpu, "halted", halt);
 
     // 互连主口 ↔ CPU (回传)
-    circuit->connect(ic, "m_adr_i", m_adr); circuit->connect(ic, "m_dat_i", m_do);
-    circuit->connect(ic, "m_we_i", m_we); circuit->connect(ic, "m_sel_i", m_sel);
-    circuit->connect(ic, "m_stb_i", m_stb); circuit->connect(ic, "m_cyc_i", m_cyc);
+    circuit->connect(ic, "m0_adr_i", m_adr); circuit->connect(ic, "m0_dat_i", m_do);
+    circuit->connect(ic, "m0_we_i", m_we); circuit->connect(ic, "m0_sel_i", m_sel);
+    circuit->connect(ic, "m0_stb_i", m_stb); circuit->connect(ic, "m0_cyc_i", m_cyc);
     circuit->connect(ic, "s0_dat_i", s0_do); circuit->connect(ic, "s0_ack_i", s0_ack);
     circuit->connect(ic, "s1_dat_i", s1_do); circuit->connect(ic, "s1_ack_i", s1_ack);
-    circuit->connect(ic, "m_dat_o", m_di); circuit->connect(ic, "m_ack_o", m_ack);
+    circuit->connect(ic, "m0_dat_o", m_di); circuit->connect(ic, "m0_ack_o", m_ack);
     circuit->connect(ic, "s0_adr_o", s0_adr); circuit->connect(ic, "s0_dat_o", s0_wdat);
     circuit->connect(ic, "s0_we_o", s0_we); circuit->connect(ic, "s0_sel_o", s0_sel);
     circuit->connect(ic, "s0_stb_o", s0_stb); circuit->connect(ic, "s0_cyc_o", s0_cyc);

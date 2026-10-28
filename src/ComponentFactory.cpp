@@ -25,6 +25,7 @@
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
 #include "dcs/components/I2C.h"
+#include "dcs/components/WishboneCache.h"
 #include "dcs/components/PLIC.h"
 #include "dcs/components/SPI.h"
 #include "dcs/components/UART.h"
@@ -508,12 +509,16 @@ struct InitAllComponents {
                                                              _gi(p, "read_latency", 0));
         });
 
-        f.registerType({"wishbone_ic", {{"segments", "0:65536"}}, {"m_adr_i", "m_dat_i", "m_we_i", "m_sel_i", "m_stb_i", "m_cyc_i", "s0_dat_i", "s0_ack_i"}, {"m_dat_o", "m_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"}, [&](const std::string &n, const Params &p) -> C {
-            return std::make_unique<dsc::WishboneInterconnect>(n, _gs(p, "segments", "0:65536"));
+        f.registerType({"wishbone_ic", {{"segments", "0:65536"}, {"num_masters", "1"}}, {"m0_adr_i", "m0_dat_i", "m0_we_i", "m0_sel_i", "m0_stb_i", "m0_cyc_i", "s0_dat_i", "s0_ack_i"}, {"m0_dat_o", "m0_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::WishboneInterconnect>(n, _gs(p, "segments", "0:65536"), _gi(p, "num_masters", 1));
         });
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"wb_cache", {{"lines", "16"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "wb_dat_o_i", "wb_ack_o_i"}, {"wb_dat_o", "wb_ack_o", "wb_adr_o", "wb_dat_i_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Memory, "直接映射数据缓存，串在 CPU 与存储器之间"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::WishboneCache>(n, _gi(p, "lines", 16));
         });
 
         f.registerType({"i2c", {{"clkdiv", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务"}, [&](const std::string &n, const Params &p) -> C {
