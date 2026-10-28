@@ -181,7 +181,7 @@ private:
     CpuState _state;
     bool _prepared = false;
 
-    static void cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void cpuReset(void *state_ptr);
     static void execute(CpuState &s, uint32_t inst,
                         uint32_t &wb_adr, uint32_t &wb_dat, bool &wb_we,

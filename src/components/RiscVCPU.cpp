@@ -46,33 +46,20 @@ std::string RiscVCPU::genFuncDef_seq() const {
     int id = _id;
     std::string code;
     code += std::format("// RISC-V CPU: {}\n", name());
-    code += "extern void _dcs_cpu_tick(void *, const uint8_t *, uint8_t *);\n";
+    code += "extern void _dcs_cpu_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_cpu_reset(void *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
+    // 直接把线网指针交给回调，省掉每 tick 的打包与解包拷贝
+    code += std::format("    const uint8_t *_in[{}] = {{", I_COUNT);
     for (int i = 0; i < I_COUNT; i++)
-        code += "    " + gen_read_wire(inputs()[i]->netId(),
-                i == I_DAT ? 32 : 1,
-                i == I_DAT ? 32 : 1,
-                std::format("_in{}", i)) + "\n";
-    // 每个槽位都会被下面完整写入、回调也只读写入的那几个字节，故不做整块 memset
-    code += std::format("    uint8_t _ibuf[{}][{}];\n", I_COUNT, SLOT);
-    code += "    dcs_memcpy(_ibuf[0],&_in0,1); dcs_memcpy(_ibuf[1],&_in1,1);\n";
-    code += "    dcs_memcpy(_ibuf[2],&_in2,4); dcs_memcpy(_ibuf[3],&_in3,1);\n";
-    code += "    dcs_memcpy(_ibuf[4],&_in4,1);\n";
-    code += "    dcs_memcpy(_ibuf[5],&_in5,1); dcs_memcpy(_ibuf[6],&_in6,1);\n";
-    code += std::format("    uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
-    code += std::format("    _dcs_cpu_tick(_cpu_state_{0},(const uint8_t*)_ibuf,(uint8_t*)_obuf);\n", id);
-    code += "    { uint32_t _adr=0,_wdat=0; uint8_t _we=0,_sel=0,_stb=0,_cyc=0,_halt=0;\n";
-    code += "      dcs_memcpy(&_adr,_obuf[0],4); dcs_memcpy(&_wdat,_obuf[1],4);\n";
-    code += "      dcs_memcpy(&_we,_obuf[2],1); dcs_memcpy(&_sel,_obuf[3],1);\n";
-    code += "      dcs_memcpy(&_stb,_obuf[4],1); dcs_memcpy(&_cyc,_obuf[5],1);\n";
-    code += "      dcs_memcpy(&_halt,_obuf[6],1);\n";
-    for (int i = 0; i < O_COUNT; i++) {
-        const char *vars[] = {"_adr","_wdat","_we","_sel","_stb","_cyc","_halt"};
-        int wids[] = {32,32,1,4,1,1,1};
-        code += "      " + genOutputWrite(i, vars[i], wids[i]) + "\n";
-    }
-    code += "    }\n}\n";
+        code += std::format("{}{}", i ? "," : "", std::string("_w[") + std::to_string(inputs()[i]->netId()) + "]");
+    code += "};\n";
+    code += std::format("    uint8_t *_out[{}] = {{", O_COUNT);
+    for (int i = 0; i < O_COUNT; i++)
+        code += std::format("{}{}", i ? "," : "", std::string("_c_out_") + std::to_string(id) + "_" + std::to_string(i));
+    code += "};\n";
+    code += std::format("    _dcs_cpu_tick(_cpu_state_{0},(const uint8_t**) _in,(uint8_t**) _out);\n", id);
+    code += "}\n";
     return code;
 }
 std::unique_ptr<Component> RiscVCPU::clone(const std::string &n) const {
@@ -83,23 +70,23 @@ std::unique_ptr<Component> RiscVCPU::clone(const std::string &n) const {
 namespace {
 struct CpuIn {
     bool clk, rst, ack, irq, mti, msi; uint32_t dat;
-    CpuIn(const uint8_t *in) {
-        clk=(in[I_CLK*SLOT]&1)!=0; rst=(in[I_RST*SLOT]&1)!=0;
-        std::memcpy(&dat,in+I_DAT*SLOT,4); ack=(in[I_ACK*SLOT]&1)!=0;
-        irq=(in[I_IRQ*SLOT]&1)!=0; mti=(in[I_MTI*SLOT]&1)!=0; msi=(in[I_MSI*SLOT]&1)!=0;
+    explicit CpuIn(const uint8_t *const *in) {
+        clk=(in[I_CLK][0]&1)!=0; rst=(in[I_RST][0]&1)!=0;
+        std::memcpy(&dat,in[I_DAT],4); ack=(in[I_ACK][0]&1)!=0;
+        irq=(in[I_IRQ][0]&1)!=0; mti=(in[I_MTI][0]&1)!=0; msi=(in[I_MSI][0]&1)!=0;
     }
 };
-void packOut(uint8_t *out, uint32_t adr, uint32_t wdat, bool we, uint8_t sel,
+void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, uint8_t sel,
              bool stb, bool cyc, bool halted) {
-    std::memcpy(out+O_ADR*SLOT,&adr,4); std::memcpy(out+O_WDAT*SLOT,&wdat,4);
-    out[O_WE*SLOT]=we?1:0; out[O_SEL*SLOT]=sel;
-    out[O_STB*SLOT]=stb?1:0; out[O_CYC*SLOT]=cyc?1:0;
-    out[O_HALT*SLOT]=halted?1:0;
+    std::memcpy(out[O_ADR],&adr,4); std::memcpy(out[O_WDAT],&wdat,4);
+    out[O_WE][0]=we?1:0; out[O_SEL][0]=sel;
+    out[O_STB][0]=stb?1:0; out[O_CYC][0]=cyc?1:0;
+    out[O_HALT][0]=halted?1:0;
 }
 }
 
 // ============================================================
-void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<CpuState*>(state_ptr);
     CpuIn in(inputs);
     if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
