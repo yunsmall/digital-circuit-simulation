@@ -948,7 +948,9 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
-    case RV::CSR_MSTATUS: s.mstatus = val & 0x00FF79EAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
+    // bit16(XS[1]) 原本可写而 bit15(XS[0]) 不可写，软件写 XS=3 会变成 2；
+    // 本核没有任何额外扩展状态，XS 恒为 0，直接从可写掩码里去掉
+    case RV::CSR_MSTATUS: s.mstatus = val & 0x00FE79EAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
     case RV::CSR_MEDELEG: s.medeleg = val & 0xFFFF; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
@@ -957,7 +959,7 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_MEPC:    s.mepc = val & ~3u; break; // IALIGN=32，低两位恒为 0
     case RV::CSR_MCAUSE:  s.mcause = val; break;
     case RV::CSR_MTVAL:   s.mtval = val; break;
-    case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~0x000DE122u) | (val & 0x000DE122u); break; // SD(bit31) 只读，写掩码不含它
+    case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~0x000C6122u) | (val & 0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
     case RV::CSR_SIE:     s.mie = (s.mie & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
     case RV::CSR_MIP:     s.mip = (s.mip & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
     case RV::CSR_SIP:     s.mip = (s.mip & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
