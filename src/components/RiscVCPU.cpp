@@ -50,16 +50,19 @@ std::string RiscVCPU::genFuncDef_seq() const {
     code += "extern void _dcs_cpu_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_cpu_reset(void *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
-    // 直接把线网指针交给回调，省掉每 tick 的打包与解包拷贝
-    code += std::format("    const uint8_t *_in[{}] = {{", I_COUNT);
-    for (int i = 0; i < I_COUNT; i++)
-        code += std::format("{}{}", i ? "," : "", std::string("_w[") + std::to_string(inputs()[i]->netId()) + "]");
+    code += genInputPtrArray("_in");
+    // 输出与组合元件一样经 genOutputWrite：它同时写 _c_out 与 _w，
+    // 避免本元件比别处多出一拍传播延迟
+    code += std::format("    uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
+    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += std::format("    uint8_t *_op[{}] = {{", O_COUNT);
+    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    uint8_t *_out[{}] = {{", O_COUNT);
+    code += std::format("    _dcs_cpu_tick(_cpu_state_{0}, _in, _op);\n", id);
+    const int ow[O_COUNT] = {32, 32, 1, 4, 1, 1, 1};
     for (int i = 0; i < O_COUNT; i++)
-        code += std::format("{}{}", i ? "," : "", std::string("_c_out_") + std::to_string(id) + "_" + std::to_string(i));
-    code += "};\n";
-    code += std::format("    _dcs_cpu_tick(_cpu_state_{0},(const uint8_t**) _in,(uint8_t**) _out);\n", id);
+        code += std::format("    {{ uint32_t _v=0; dcs_memcpy(&_v,_obuf[{}],4); {} }}\n", i,
+                            genOutputWrite(i, "_v", ow[i]));
     code += "}\n";
     return code;
 }

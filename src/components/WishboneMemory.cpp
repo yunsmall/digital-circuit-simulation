@@ -79,7 +79,12 @@ std::string WishboneMemory::genStateDecl() const {
 }
 
 std::string WishboneMemory::genInitCode() const {
-    return "";
+    // 握手状态位必须复位：circuit_reset 后若还留着上一轮的 prev_stb / ack_pending，
+    // 首个事务会被误判成"事务进行中"
+    return std::format(
+        "    {{ auto *_s=(MemState*)0x{:X}ULL; _s->prev_stb=false; _s->prev_we=false;"
+        " _s->ack_pending=false; _s->latched_dout=0; _s->latched_addr=0; }}\n",
+        reinterpret_cast<uintptr_t>(&_mstate));
 }
 
 std::string WishboneMemory::genFuncDef_seq() const {
@@ -91,25 +96,19 @@ std::string WishboneMemory::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
 
     // 读取所有输入线网（按 I_* 顺序）
-    code += "    " + gen_read_wire(inputs()[I_ADR]->netId(), 32, 32, "_adr") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_WDAT]->netId(), 32, 32, "_wdat") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_WE]->netId(), 1, 1, "_we") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_SEL]->netId(), 4, 4, "_sel") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_CLK]->netId(), 1, 1, "_clk") + "\n";
 
-    // 直接把线网指针交给回调，省掉每 tick 的打包与解包拷贝
-    code += std::format("    const uint8_t *_in[{}] = {{", I_COUNT);
-    for (int i = 0; i < I_COUNT; i++)
-        code += std::format("{}{}", i ? "," : "", std::string("_w[") + std::to_string(inputs()[i]->netId()) + "]");
+
+    code += genInputPtrArray("_in");
+    code += std::format("    uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
+    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += std::format("    uint8_t *_op[{}] = {{", O_COUNT);
+    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    uint8_t *_out[{}] = {{", O_COUNT);
+    code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, _in, _op);\n", id);
+    const int ow[O_COUNT] = {32, 1};
     for (int i = 0; i < O_COUNT; i++)
-        code += std::format("{}{}", i ? "," : "",
-                            std::string("_c_out_") + std::to_string(id) + "_" + std::to_string(i));
-    code += "};\n";
-    code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, (const uint8_t **)_in, (uint8_t **)_out);\n", id);
+        code += std::format("    {{ uint32_t _v=0; dcs_memcpy(&_v,_obuf[{}],4); {} }}\n", i,
+                            genOutputWrite(i, "_v", ow[i]));
     code += "}\n";
     return code;
 }

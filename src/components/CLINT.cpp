@@ -60,15 +60,7 @@ std::string CLINT::genFuncDef_seq() const {
     code += std::format("// CLINT\n");
     code += "extern void _dcs_clint_tick(void *, const uint8_t *const *, uint8_t *const *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
-    // 读取 Wishbone 输入
-    code += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + std::to_string(inputs()[I_ADR]->netId()) + "], 4);\n";
-    code += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + std::to_string(inputs()[I_WDAT]->netId()) + "], 4);\n";
-    code += "    uint8_t _we = 0; dcs_memcpy(&_we, _w[" + std::to_string(inputs()[I_WE]->netId()) + "], 1);\n";
-    code += "    uint8_t _sel = 0; dcs_memcpy(&_sel, _w[" + std::to_string(inputs()[I_SEL]->netId()) + "], 1);\n";
-    code += "    uint8_t _stb = 0; dcs_memcpy(&_stb, _w[" + std::to_string(inputs()[I_STB]->netId()) + "], 1);\n";
-    code += "    uint8_t _cyc = 0; dcs_memcpy(&_cyc, _w[" + std::to_string(inputs()[I_CYC]->netId()) + "], 1);\n";
-    code += "    uint8_t _clk = 0; dcs_memcpy(&_clk, _w[" + std::to_string(inputs()[I_CLK]->netId()) + "], 1);\n";
-    // 直接把线网指针交给回调，省掉打包与解包；输出仍走 genOutputWrite 保证下游可见
+    // 输入直接给指针数组，回调按虚实地址视图读，不再逐引脚打包
     code += genInputPtrArray("_in");
     code += "    uint8_t _obuf[4][16]; dcs_memset(_obuf, 0, sizeof(_obuf));\n";
     code += "    uint8_t *_op[4] = {_obuf[0],_obuf[1],_obuf[2],_obuf[3]};\n";
@@ -163,24 +155,22 @@ void CLINT::clintTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *co
             if (sel & 0x08) { s.msip = (s.msip & 0x00FFFFFFu) | (wdat & 0xFF000000u); }
             break;
         case OFF_MTIMECMP: {
-            // 写 mtimecmp 低 32 位
-            uint64_t hi = s.mtimecmp & 0xFFFFFFFF00000000ULL;
-            uint64_t lo = wdat;
-            if (sel & 0x01) lo = (lo & 0xFFFFFF00ULL) | (wdat & 0xFFULL);
-            if (sel & 0x02) lo = (lo & 0xFFFF00FFULL) | ((wdat >> 8) & 0xFFULL) << 8;
-            if (sel & 0x04) lo = (lo & 0xFF00FFFFULL) | ((wdat >> 16) & 0xFFULL) << 16;
-            if (sel & 0x08) lo = (lo & 0x00FFFFFFULL) | ((wdat >> 24) & 0xFFULL) << 24;
-            s.mtimecmp = hi | lo;
+            // 起点必须是寄存器原值：从 wdat 起算会让未被选中的字节也被写进去
+            uint64_t lo = s.mtimecmp & 0xFFFFFFFFULL;
+            if (sel & 0x01) lo = (lo & ~0xFFULL) | (wdat & 0xFFULL);
+            if (sel & 0x02) lo = (lo & ~0xFF00ULL) | ((wdat >> 8) & 0xFFULL) << 8;
+            if (sel & 0x04) lo = (lo & ~0xFF0000ULL) | ((wdat >> 16) & 0xFFULL) << 16;
+            if (sel & 0x08) lo = (lo & ~0xFF000000ULL) | ((wdat >> 24) & 0xFFULL) << 24;
+            s.mtimecmp = (s.mtimecmp & 0xFFFFFFFF00000000ULL) | (lo & 0xFFFFFFFFULL);
             break;
         }
         case OFF_MTIMECMP + 4: {
-            uint64_t lo = s.mtimecmp & 0xFFFFFFFFULL;
-            uint64_t hi = (uint64_t)wdat << 32;
-            if (sel & 0x01) hi = (hi & 0xFFFFFF00FFFFFFFFULL) | ((uint64_t)(wdat & 0xFFULL) << 32);
-            if (sel & 0x02) hi = (hi & 0xFFFF00FFFFFFFFFFULL) | ((uint64_t)((wdat >> 8) & 0xFFULL) << 40);
-            if (sel & 0x04) hi = (hi & 0xFF00FFFFFFFFFFFFULL) | ((uint64_t)((wdat >> 16) & 0xFFULL) << 48);
-            if (sel & 0x08) hi = (hi & 0x00FFFFFFFFFFFFFFULL) | ((uint64_t)((wdat >> 24) & 0xFFULL) << 56);
-            s.mtimecmp = hi | lo;
+            uint64_t hi = s.mtimecmp & 0xFFFFFFFF00000000ULL;
+            if (sel & 0x01) hi = (hi & ~(0xFFULL << 32)) | ((wdat & 0xFFULL) << 32);
+            if (sel & 0x02) hi = (hi & ~(0xFFULL << 40)) | (((wdat >> 8) & 0xFFULL) << 40);
+            if (sel & 0x04) hi = (hi & ~(0xFFULL << 48)) | (((wdat >> 16) & 0xFFULL) << 48);
+            if (sel & 0x08) hi = (hi & ~(0xFFULL << 56)) | (((wdat >> 24) & 0xFFULL) << 56);
+            s.mtimecmp = hi | (s.mtimecmp & 0xFFFFFFFFULL);
             break;
         }
         default:
