@@ -24,6 +24,7 @@
 #include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
+#include "dcs/components/AxiLiteBridge.h"
 #include "dcs/components/DMA.h"
 #include "dcs/components/I2C.h"
 #include "dcs/components/WishboneCache.h"
@@ -516,6 +517,10 @@ struct InitAllComponents {
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"axi_lite_bridge", {}, {"s_axi_awaddr", "s_axi_awvalid", "s_axi_wdata", "s_axi_wstrb", "s_axi_wvalid", "s_axi_bready", "s_axi_araddr", "s_axi_arvalid", "s_axi_rready", "wb_dat_i", "wb_ack_i"}, {"s_axi_awready", "s_axi_wready", "s_axi_bresp", "s_axi_bvalid", "s_axi_arready", "s_axi_rdata", "s_axi_rresp", "s_axi_rvalid", "wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Bus, "AXI4-Lite 从设备到 Wishbone 主设备的桥"}, [&](const std::string &n, const Params &) -> C {
+            return std::make_unique<dsc::AxiLiteBridge>(n);
         });
 
         f.registerType({"dma", {}, {"cfg_adr_i", "cfg_dat_i", "cfg_we_i", "cfg_sel_i", "cfg_stb_i", "cfg_cyc_i", "m_dat_i", "m_ack_i"}, {"cfg_dat_o", "cfg_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"}, dsc::ComponentCategory::Bus, "存储器到存储器块搬运的 DMA 控制器"}, [&](const std::string &n, const Params &) -> C {
