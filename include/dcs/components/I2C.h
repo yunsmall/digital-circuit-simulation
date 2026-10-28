@@ -49,7 +49,6 @@ private:
         bool nack;
         bool done;
         bool sda_low;         // 主机是否把 SDA 拉低（开漏）
-        bool prev_sda_in;
         uint32_t control;
         uint32_t latched_dout;
         bool prev_stb;

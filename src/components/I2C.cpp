@@ -225,7 +225,6 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const 
     }
     if (!active)
         s.latched_dout = 0;
-    s.prev_sda_in = sda_in;
 
     std::memset(outputs[O_DAT], 0, SLOT);
     std::memcpy(outputs[O_DAT], &dout, 4);

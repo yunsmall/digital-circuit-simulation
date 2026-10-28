@@ -30,8 +30,9 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
     SequentialComponent(name, "wishbone_mem"),
     _addr_width(addr_width), _data_width(data_width), _depth(1 << addr_width) {
 
-    if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
-        throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));
+    // 数据引脚与内部暂存都是 32 位，64 位数据会被截断并在移位时产生未定义行为
+    if (data_width != 8 && data_width != 16 && data_width != 32)
+        throw std::invalid_argument(std::format("数据位宽必须为 8/16/32，给定{}", data_width));
 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));

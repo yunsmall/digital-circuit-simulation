@@ -535,7 +535,9 @@ std::string Circuit::generateC() const {
     };
 
     // 传播阶段生成器：总线决议 + 所有输出的 _c_out → _w
-    auto emitPropagation = [&](int round) {
+    // track_change 为真时，每写一条总线都比对旧值，把"有没有变化"记到 _bus_changed，
+    // 阶段 2b 靠它判断级联是否已经到达不动点
+    auto emitPropagation = [&](int round, bool track_change) {
     std::set<int> bus_nets_handled;
 
     // 总线决议
@@ -557,6 +559,8 @@ std::string Circuit::generateC() const {
                         "        }}\n",
                         cid, oi, net_id, net_id, round, di);
         }
+        if (track_change)
+            oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, _w[{}], 16);\n", net_id, net_id, net_id);
         oss << "        if (_active >= 0) {\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
@@ -569,6 +573,10 @@ std::string Circuit::generateC() const {
         oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
         oss << "        }\n";
         oss << std::format("    _bus_done_{}_{}: ;\n", net_id, round);
+        if (track_change)
+            oss << std::format(
+                    "    for (int _i=0;_i<16;_i++) if (_old_{}[_i] != _w[{}][_i]) {{ _bus_changed=1; break; }}\n",
+                    net_id, net_id);
         oss << "    }\n";
         bus_nets_handled.insert(net_id);
     }
@@ -595,13 +603,21 @@ std::string Circuit::generateC() const {
 
     oss << "    // 阶段1: 组合逻辑\n";
     emitCombStage(nullptr);
+    oss << "    int _bus_changed = 0;\n";
     oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
-    emitPropagation(0);
-    // 只有直接/间接受总线驱动的组合元件需要重跑，其余保持不变
+    emitPropagation(0, false);
+    // 读总线的组合元件在阶段1 看到的是决议前的值，必须补跑。补跑会改动总线，
+    // 又可能影响下一级读总线的元件，所以不能只补一轮——一直迭代到总线不再变化。
+    // 上限取元件数，防止电路里出现自激振荡时死循环。
     if (!bus_affected.empty()) {
-        oss << "    // 阶段2b: 重跑受总线影响的组合元件，使其看到本拍决议结果\n";
+        oss << "    // 阶段2b: 反复重跑受总线影响的组合元件，直到总线稳定\n";
+        oss << std::format("    for (int _bus_round = 0; _bus_round < {}; _bus_round++) {{\n",
+                           (int) _components.size() + 1);
+        oss << "        _bus_changed = 0;\n";
         emitCombStage(&bus_affected);
-        emitPropagation(1);
+        emitPropagation(2, true);
+        oss << "        if (!_bus_changed) break;\n";
+        oss << "    }\n";
     }
 
     oss << "    // 阶段3: 时序逻辑\n";
