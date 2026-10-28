@@ -53,8 +53,9 @@ std::string BarrelShifter::genFuncDef_comb() const {
     if (_dir) {{
         // 右移
         if (_arith && (_in >> {})) {{
-            // 算术右移: 高位补符号位
-            _out = (_in >> _amt) | (({} << ({} - _amt)) & {});
+            // 算术右移: 高位补符号位。_amt 为 0 时 (掩码 << 位宽) 是移位 UB，
+            // 而那种情况下补位部分本来就该是 0
+            _out = _amt ? ((_in >> _amt) | (({} << ({} - _amt)) & {})) : _in;
         }} else {{
             _out = _in >> _amt;
         }}

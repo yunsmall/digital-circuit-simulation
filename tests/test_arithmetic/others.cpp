@@ -186,3 +186,82 @@ TEST(ArithmeticTest, Multiplier) {
     EXPECT_EQ(c.getWire(lo->id())[0], 0x01);
     EXPECT_EQ(c.getWire(hi->id())[0], 0xFE);
 }
+
+// ---- Multiplier（有符号）----
+// 旧实现直接 (int64_t)_a，而 _a 是无符号类型，得到的是零扩展，
+// 负数会被当成大正数、符号位判断失效。这里专门覆盖负数输入。
+TEST(ArithmeticTest, MultiplierSignedNegative) {
+    dsc::Circuit c;
+    auto *a = c.createNet("a");
+    auto *b = c.createNet("b");
+    auto *lo = c.createNet("lo");
+    auto *hi = c.createNet("hi");
+    auto *mul = c.addComponent(std::make_unique<dsc::Multiplier>("mul", 8, true));
+    c.connect(mul, "a", a);
+    c.connect(mul, "b", b);
+    c.connect(mul, "prod_lo", lo);
+    c.connect(mul, "prod_hi", hi);
+    c.compile();
+    c.init();
+
+    auto lo_v = [&] { return (uint32_t) c.getWire(lo->id())[0]; };
+    auto hi_v = [&] { return (uint32_t) c.getWire(hi->id())[0]; };
+
+    // (-2) × 3 = -6 = 0xFFFA
+    c.setWire(a->id(), {0xFE, 0});
+    c.setWire(b->id(), {3, 0});
+    c.tick();
+    EXPECT_EQ(lo_v(), 0xFAu) << "-2 * 3 的低字节";
+    EXPECT_EQ(hi_v(), 0xFFu) << "-2 * 3 的高字节应为负数符号";
+
+    // (-2) × (-3) = 6
+    c.setWire(a->id(), {0xFE, 0});
+    c.setWire(b->id(), {0xFD, 0});
+    c.tick();
+    EXPECT_EQ(lo_v(), 6u) << "负负得正";
+    EXPECT_EQ(hi_v(), 0u);
+
+    // (-128) × 1 = -128 = 0xFF80（最负的输入）
+    c.setWire(a->id(), {0x80, 0});
+    c.setWire(b->id(), {1, 0});
+    c.tick();
+    EXPECT_EQ(lo_v(), 0x80u);
+    EXPECT_EQ(hi_v(), 0xFFu);
+}
+
+
+// ---- Comparator（有符号）----
+// 旧实现直接把无符号窄类型转 int64_t，-1 会被当成 255
+TEST(ArithmeticTest, ComparatorSignedNegative) {
+    dsc::Circuit c;
+    auto *a = c.createNet("a");
+    auto *b = c.createNet("b");
+    auto *o = c.createNet("o");
+    auto *cmp = c.addComponent(std::make_unique<dsc::Comparator>("cmp", 8, dsc::CmpOp::LT, true));
+    c.connect(cmp, "a", a);
+    c.connect(cmp, "b", b);
+    c.connect(cmp, "out", o);
+    c.compile();
+    c.init();
+
+    auto ov = [&] { return (uint32_t) c.getWire(o->id())[0]; };
+
+    // (-1) < 1 应成立
+    c.setWire(a->id(), {0xFF, 0});
+    c.setWire(b->id(), {1, 0});
+    c.tick();
+    EXPECT_EQ(ov(), 1u) << "-1 应小于 1";
+
+    // (-128) < (-1) 应成立
+    c.setWire(a->id(), {0x80, 0});
+    c.setWire(b->id(), {0xFF, 0});
+    c.tick();
+    EXPECT_EQ(ov(), 1u) << "-128 应小于 -1";
+
+    // 127 < (-128) 不应成立
+    c.setWire(a->id(), {127, 0});
+    c.setWire(b->id(), {0x80, 0});
+    c.tick();
+    EXPECT_EQ(ov(), 0u) << "127 不应小于 -128";
+}
+

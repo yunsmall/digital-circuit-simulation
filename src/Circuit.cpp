@@ -2,7 +2,6 @@
 #include "dcs/CodeGen.h"
 #include "dcs/CircuitSerializer.h"
 #include "dcs/CircuitLibrary.h"
-#include "dcs/ComponentFactory.h"
 #include "dcs/components/Composite.h"
 #include "dcs/util/ExePath.h"
 

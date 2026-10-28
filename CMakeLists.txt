@@ -71,7 +71,9 @@ else()
                 if(DEFINED ENV{VSINSTALLDIR})
                     set(MSVC_DIA_SDK_DIR "$ENV{VSINSTALLDIR}DIA SDK")
                 else()
-                    find_program(DCS_VSWHERE vswhere HINTS "$ENV{ProgramFiles(x86)}/Microsoft Visual Studio/Installer")
+                    # 环境变量名里的括号必须转义，否则 CMake 解析到 ")" 就报语法错误
+                    set(DCS_PF86 "$ENV{ProgramFiles\(x86\)}")
+                    find_program(DCS_VSWHERE vswhere HINTS "${DCS_PF86}/Microsoft Visual Studio/Installer")
                     if(DCS_VSWHERE)
                         execute_process(COMMAND "${DCS_VSWHERE}" -latest -property installationPath
                                         OUTPUT_VARIABLE DCS_VS_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)

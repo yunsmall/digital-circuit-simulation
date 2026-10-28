@@ -29,7 +29,6 @@ Mux::Mux(const std::string &name, int n_selects, int bit_width) :
 
 std::string Mux::genFuncDef_comb() const {
     const char *ct = c_int_type(_bit_width);
-    int bytes = byte_count(_bit_width);
     int n = 1 << _n_selects;
     int out_nid = outputs()[0]->netId();
 
@@ -103,7 +102,6 @@ Adder::Adder(const std::string &name, int bit_width, bool is_signed) :
 
 std::string Adder::genFuncDef_comb() const {
     const char *ct = c_int_type(_bit_width);
-    int bytes = byte_count(_bit_width);
 
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
@@ -125,6 +123,19 @@ std::string Adder::genFuncDef_comb() const {
                                  "    _c_oe_{}_1 = true;\n",
                                  genOutputWrite(1, "_cout8", 1), _id);
 
+    // 有符号模式下 cout 报的是溢出（同号相加得到异号），而不是无符号进位
+    // 无符号报最高位进位，有符号报溢出（同号相加得到异号）
+    std::string cout_expr;
+    if (_signed) {
+        int msb = _bit_width - 1;
+        cout_expr = std::format("    bool _cout = ((_a >> {}) & 1) == ((_b >> {}) & 1) && ((_sum >> {}) & 1) != ((_a >> {}) & 1);",
+                                msb, msb, msb, msb);
+    } else if (_bit_width < 64) {
+        cout_expr = std::format("    bool _cout = (_full >> {}) != 0;", _bit_width);
+    } else {
+        cout_expr = "    bool _cout = (_full < _a) || (_cin && _full == _a);";
+    }
+
     // 进位检测：用 uint64_t 扩展精度
     if (_bit_width < 64) {
         return std::format(R"(static void {0}(void) {{
@@ -133,13 +144,13 @@ std::string Adder::genFuncDef_comb() const {
     {3}
     uint64_t _full = (uint64_t)_a + (uint64_t)_b + (_cin ? 1ULL : 0ULL);
     {4} _sum = ({4})(_full & {5});
-    bool _cout = (_full >> {6}) != 0;
+    {6}
     {7}
     {8}
 }})",
                            funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                            gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cin_read, c_int_type(_bit_width), mask,
-                           _bit_width, genOutputWrite(0, "_sum", _bit_width), cout_write);
+                           cout_expr, genOutputWrite(0, "_sum", _bit_width), cout_write);
     }
     else {
         // 64 位：不能使用 >> 64（UB），用溢出检测
@@ -149,12 +160,12 @@ std::string Adder::genFuncDef_comb() const {
     {3}
     uint64_t _full = (uint64_t)_a + (uint64_t)_b + (_cin ? 1ULL : 0ULL);
     uint64_t _sum = _full;
-    bool _cout = (_full < _a) || (_cin && _full == _a);
     {4}
     {5}
+    {6}
 }})",
                            funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cin_read,
+                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cin_read, cout_expr,
                            genOutputWrite(0, "_sum", _bit_width), cout_write);
     }
 }
@@ -219,17 +230,31 @@ std::string Comparator::genFuncDef_comb() const {
     int b_nw = b_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
     int out_nid = outputs()[0]->netId();
 
-    // 有符号：int64_t 转型比较；无符号：uint64_t 转型比较
-    const char *cast = _signed ? "int64_t" : "uint64_t";
+    // 有符号比较必须先把窄类型符号扩展：_a/_b 是无符号类型，
+    // 直接转 int64_t 是零扩展，-1 会变成 255
+    std::string cmp_expr;
+    if (_signed && _bit_width < 64) {
+        std::string mask = gen_mask(_bit_width);
+        cmp_expr = std::format(
+                "    uint64_t _ua = _a, _ub = _b;\n"
+                "    if (_ua & (1ULL << {})) _ua |= ~{};\n"
+                "    if (_ub & (1ULL << {})) _ub |= ~{};\n"
+                "    uint8_t _out = ((int64_t)_ua {} (int64_t)_ub) ? 1 : 0;",
+                _bit_width - 1, mask, _bit_width - 1, mask, cmpOpCOp(_op));
+    } else {
+        const char *cast = _signed ? "int64_t" : "uint64_t";
+        cmp_expr = std::format("    uint8_t _out = (({})({})_a {} ({})({})_b) ? 1 : 0;", cast,
+                               c_int_type(_bit_width), cmpOpCOp(_op), cast, c_int_type(_bit_width));
+    }
     return std::format(R"(static void {}() {{
     {}
     {}
-    uint8_t _out = (({})({})_a {} ({})({})_b) ? 1 : 0;
+    {}
     {}
 }})",
                        funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-                       gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cast, c_int_type(_bit_width), cmpOpCOp(_op), cast,
-                       c_int_type(_bit_width), genOutputWrite(0, "_out", 1));
+                       gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cmp_expr,
+                       genOutputWrite(0, "_out", 1));
 }
 
 // ============================================================
@@ -456,8 +481,9 @@ std::string Multiplier::genFuncDef_comb() const {
     std::string mask = gen_mask(_bit_width);
 
     // 公共：乘法本体 → _lo, _hi（128 位）
+    // 只做 128 位乘法，_ua/_ub 由调用方准备：
+    // 无符号版是零扩展的原值，有符号版是取过绝对值的，不能在这里重新定义
     auto mul_body = R"(
-    uint64_t _ua = (uint64_t)_a, _ub = (uint64_t)_b;
     uint64_t _ah = _ua >> 32, _al = _ua & 0xFFFFFFFFULL;
     uint64_t _bh = _ub >> 32, _bl = _ub & 0xFFFFFFFFULL;
     uint64_t _p0 = _al * _bl, _p1 = _ah * _bl, _p2 = _al * _bh, _p3 = _ah * _bh;
@@ -489,16 +515,25 @@ std::string Multiplier::genFuncDef_comb() const {
                            "    {6}\n"
                            "}}}}",
                            funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
-                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"), mul_body, extract_lo, extract_hi,
+                           gen_read_wire(b_nid, _bit_width, b_nw, "_b"),
+                           "    uint64_t _ua = (uint64_t)_a, _ub = (uint64_t)_b;\n" + std::string(mul_body),
+                           extract_lo, extract_hi,
                            genOutputWrite(0, "_prod_lo", _bit_width) + "\n    " +
                                    genOutputWrite(1, "_prod_hi", _bit_width));
     }
 
-    // 有符号版
+    // 有符号版：_a/_b 是无符号类型，直接转 int64_t 是零扩展，
+    // 必须先按位宽做符号扩展，否则负数会被当成大正数，符号位判断和绝对值全错
+    std::string sext = _bit_width < 64
+                               ? std::format("    {{ uint64_t _u = _a; if (_u & (1ULL << {})) _u |= ~{}; _sa = (int64_t)_u; }}\n"
+                                             "    {{ uint64_t _u = _b; if (_u & (1ULL << {})) _u |= ~{}; _sb = (int64_t)_u; }}\n",
+                                             _bit_width - 1, gen_mask(_bit_width), _bit_width - 1, gen_mask(_bit_width))
+                               : std::string("    _sa = (int64_t)_a; _sb = (int64_t)_b;\n");
     return std::format("static void {0}() {{{{\n"
                        "    {1}\n"
                        "    {2}\n"
-                       "    int64_t _sa = (int64_t)_a, _sb = (int64_t)_b;\n"
+                       "    int64_t _sa, _sb;\n"
+                       "{7}\n"
                        "    int _sign = ((_sa < 0) != (_sb < 0));\n"
                        "    uint64_t _ua = _sa < 0 ? (uint64_t)(-(_sa + 1)) + 1 : (uint64_t)_sa;\n"
                        "    uint64_t _ub = _sb < 0 ? (uint64_t)(-(_sb + 1)) + 1 : (uint64_t)_sb;\n"
@@ -511,7 +546,8 @@ std::string Multiplier::genFuncDef_comb() const {
                        funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                        gen_read_wire(b_nid, _bit_width, b_nw, "_b"), mul_body, extract_lo, extract_hi,
                        genOutputWrite(0, "_prod_lo", _bit_width) + "\n    " +
-                               genOutputWrite(1, "_prod_hi", _bit_width));
+                               genOutputWrite(1, "_prod_hi", _bit_width),
+                       sext);
 }
 
 std::unique_ptr<Component> Multiplier::clone(const std::string &n) const {
@@ -544,21 +580,35 @@ std::string Divider::genFuncDef_comb() const {
     int r_nid = outputs()[1]->netId();
 
     const char *cast = _signed ? "int64_t" : "uint64_t";
+    // 有符号除法同样要先做符号扩展，否则 -128/1 会变成 128/1。
+    // 用 _ua/_ub 承接（无符号时就是零扩展的原值），后面统一从它算。
+    std::string prep = _signed && _bit_width < 64
+                               ? std::format("    uint64_t _ua = _a, _ub = _b;\n"
+                                             "    if (_ua & (1ULL << {})) _ua |= ~{};\n"
+                                             "    if (_ub & (1ULL << {})) _ub |= ~{};\n",
+                                             _bit_width - 1, gen_mask(_bit_width), _bit_width - 1, gen_mask(_bit_width))
+                               : std::string("    uint64_t _ua = _a, _ub = _b;\n");
     // 全部用编号占位符，避免 std::format 混用限制
     return std::format(R"(static void {0}() {{
     {1}
     {2}
+    {6}
     {3} _quot = 0, _rem = 0;
-    if (({3})_b != 0) {{
-        _quot = ({3})_a / ({3})_b;
-        _rem  = ({3})_a % ({3})_b;
+    if (({3})_ub != 0) {{
+        // 先按无符号取绝对值再定符号，避开 INT64_MIN / -1 的 UB
+        uint64_t _neg = ({3})_ua < 0 ? 1 : 0, _neb = ({3})_ub < 0 ? 1 : 0;
+        uint64_t _qa = _neg ? (uint64_t)(-(({3})_ua + 1)) + 1 : ({3})_ua;
+        uint64_t _qb = _neb ? (uint64_t)(-(({3})_ub + 1)) + 1 : ({3})_ub;
+        uint64_t _q = _qa / _qb, _r = _qa % _qb;
+        _quot = (_neg != _neb) ? ({3})(-_q) : ({3})_q;
+        _rem  = _neg ? ({3})(-_r) : ({3})_r;
     }}
     {4}
     {5}
 }})",
                        funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                        gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cast, genOutputWrite(0, "_quot", _bit_width),
-                       genOutputWrite(1, "_rem", _bit_width));
+                       genOutputWrite(1, "_rem", _bit_width), prep);
 }
 
 std::unique_ptr<Component> Divider::clone(const std::string &n) const {
@@ -603,7 +653,8 @@ MinMax::MinMax(const std::string &name, int bit_width, bool is_max, bool is_sign
     CombinationalComponent(name, is_max ? "max" : "min"),
     _bit_width(bit_width), _is_max(is_max), _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
-    setParam("mode", is_max ? "max" : "min");
+    // 不导出 mode：min/max 是两个类型（工厂各自硬编码 is_max），
+    // 再导出一个 mode 只会在和 type 冲突时被静默忽略
     setParam("signed", std::to_string(is_signed));
     addInput("a", bit_width);
     addInput("b", bit_width);

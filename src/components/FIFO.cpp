@@ -69,9 +69,14 @@ std::string FIFO::genFuncDef_seq() const {
 
     // 读取输入
     code += "    " + gen_read_wire(d_nid, _data_width, d_nw, "_din") + "\n";
-    code += "    bool _we = false; dcs_memcpy(&_we, _w[" + std::to_string(we_nid >= 0 ? we_nid : 0) + "], 1);\n";
-    code += "    bool _re = false; dcs_memcpy(&_re, _w[" + std::to_string(re_nid >= 0 ? re_nid : 0) + "], 1);\n";
-    code += "    bool _clk = false; dcs_memcpy(&_clk, _w[" + std::to_string(clk_nid >= 0 ? clk_nid : 0) + "], 1);\n";
+    // 悬空引脚必须读常量 0：退回 _w[0] 会读到别的元件的驱动值，把"没接"当成"接了 1"
+    auto read_bit = [](const char *name, int nid) {
+        return nid >= 0 ? std::format("    bool {} = false; dcs_memcpy(&{}, _w[{}], 1);\n", name, name, nid)
+                        : std::format("    bool {} = false;\n", name);
+    };
+    code += read_bit("_we", we_nid);
+    code += read_bit("_re", re_nid);
+    code += read_bit("_clk", clk_nid);
     if (_has_rst)
         code += "    bool _rst = false; dcs_memcpy(&_rst, _w[" + std::to_string(rst_nid >= 0 ? rst_nid : 0) +
                 "], 1);\n";

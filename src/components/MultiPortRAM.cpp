@@ -116,8 +116,11 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         int wd_nw = wd_nid[i] >= 0 ? inputs()[1 + i * 3 + 1]->net()->bit_width() : 0;
         code += "    " + gen_read_wire(wa_nid[i], _addr_width, wa_nw, std::format("_wa{}", i)) + "\n";
         code += "    " + gen_read_wire(wd_nid[i], _data_width, wd_nw, std::format("_wd{}", i)) + "\n";
-        code += std::format("    bool _we{} = false; dcs_memcpy(&_we{}, _w[{}], 1);\n", i, i,
-                            we_nid[i] >= 0 ? we_nid[i] : 0);
+        // 悬空 we 必须读常量 0，退回 _w[0] 会读到别的元件的驱动值
+        if (we_nid[i] >= 0)
+            code += std::format("    bool _we{} = false; dcs_memcpy(&_we{}, _w[{}], 1);\n", i, i, we_nid[i]);
+        else
+            code += std::format("    bool _we{} = false;\n", i);
         code += std::format("    _wa{} &= {};\n", i, addr_mask);
     }
     for (int i = 0; i < _num_read; i++) {

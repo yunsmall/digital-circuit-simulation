@@ -27,7 +27,7 @@ std::string SignExt::genFuncDef_comb() const {
     uint64_t dst_m = (_dst == 64) ? ~0ULL : (1ULL << _dst) - 1;
     uint64_t src_m = (_src == 64) ? ~0ULL : (1ULL << _src) - 1;
     uint64_t hi_m = dst_m & ~src_m;
-    std::string hi_hex = (_dst == 64 && _src <= 32) ? std::format("0x{:X}ULL", hi_m) : std::format("0x{:X}ULL", hi_m);
+    std::string hi_hex = std::format("0x{:X}ULL", hi_m);
 
     std::string code;
     code += "static void " + funcName_comb() + "(void) {\n";

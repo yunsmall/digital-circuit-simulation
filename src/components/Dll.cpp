@@ -186,7 +186,7 @@ std::vector<Component::JitSymbol> DllComponent::extraJitSymbols() const {
 // C 代码生成
 // ============================================================
 
-std::string DllComponent::genTickFunc(const char *phase, int fn_id_offset) const {
+std::string DllComponent::genTickFunc(const char *phase) const {
     int id = _id;
     int ni = (int) inputs().size();
     int no = (int) outputs().size();
@@ -242,13 +242,13 @@ std::string DllComponent::genTickFunc(const char *phase, int fn_id_offset) const
 std::string DllComponent::genFuncDef_comb() const {
     if (!_tick_comb_fn)
         return "";
-    return genTickFunc("comb", 0);
+    return genTickFunc("comb");
 }
 
 std::string DllComponent::genFuncDef_seq() const {
     if (!_tick_seq_fn)
         return "";
-    return genTickFunc("seq", 0);
+    return genTickFunc("seq");
 }
 
 std::string DllComponent::genInitCode() const {

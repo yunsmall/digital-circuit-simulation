@@ -397,9 +397,7 @@ std::string Counter::genFuncDef_seq() const {
         read_opt += std::format("\n    {}\n    {}", load_decl, gen_read_wire(din_nid, _bit_width, din_nw, "_din"));
         load_decl = "";
     }
-    else {
-        load_decl = "bool _load = false;";
-    }
+    // 没有 load 引脚时不要声明 _load：update 分支里根本不会读它，只会产生未使用变量警告
 
     if (_has_en && en_nid >= 0)
         read_opt += std::format("\n    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid);

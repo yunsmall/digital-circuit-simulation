@@ -397,7 +397,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
                 auto &e = s.tlb[idx];
                 e.vpn = s.mmu_vaddr >> 12; e.ppn = ((l1e >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF);
-                e.asid = (uint8_t)((s.satp >> 22) & 0xFF); e.flags = (uint8_t)(l1e & 0xFF); // satp[30:22] 是 ASID
+                e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(l1e & 0xFF); // satp[30:22] 是 ASID
                 e.valid = true; e.global = (l1e >> 5) & 1;
                 s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
                 wb_stb = wb_cyc = false;
@@ -443,7 +443,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
                 auto &e = s.tlb[idx];
                 e.vpn = s.mmu_vaddr >> 12; e.ppn = (l2e >> 10) & 0x3FFFFF;
-                e.asid = (uint8_t)((s.satp >> 22) & 0xFF); e.flags = (uint8_t)(l2e & 0xFF);
+                e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(l2e & 0xFF);
                 e.valid = true; e.global = (l2e >> 5) & 1;
                 // TLB 已装填：取指翻译回 FETCH，数据访问回 EXECUTE 重试原指令
                 s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
@@ -465,7 +465,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
             e.ppn = s.mmu_pte_is_l1
                         ? (((s.mmu_pte >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF))
                         : ((s.mmu_pte >> 10) & 0x3FFFFF);
-            e.asid = (uint8_t)((s.satp >> 22) & 0xFF); e.flags = (uint8_t)(s.mmu_pte & 0xFF);
+            e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(s.mmu_pte & 0xFF);
             e.valid = true; e.global = (s.mmu_pte >> 5) & 1;
             s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
             wb_stb = wb_cyc = false;
@@ -840,7 +840,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 else takeTrap(s, RV::EXC_ECALL_M, 0);
                 npc = s.pc; // takeTrap 可能已修改 PC，不要再改
                 break;
-            case RV::F12_EBREAK: takeTrap(s, RV::EXC_BP, 0); npc = s.pc; break;
+            case RV::F12_EBREAK: takeTrap(s, RV::EXC_BP, s.pc); npc = s.pc; break;
             case RV::F12_MRET: {
                 if (s.priv != RV::PRIV_M) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 uint8_t mpp=(s.mstatus>>11)&3;
@@ -941,7 +941,8 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
     // SD 是只读汇总位：FS 或 XS 非 0 时必须为 1，软件靠它判断是否需要保存浮点上下文
     case RV::CSR_MSTATUS: return s.mstatus | ((((s.mstatus >> 13) & 3u) != 0) ? (1u << 31) : 0u);
-    case RV::CSR_MISA:    return 0x40141100u | (1u<<0) | (1u<<5); // RV32IMAF
+    // MXL=1(RV32) | I(8) | M(12) | A(0) | F(5) | S(18) | U(20) —— 与实现的指令集和特权级一一对应
+    case RV::CSR_MISA:    return 0x40141100u | (1u<<0) | (1u<<5);
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;
     case RV::CSR_MIE:     return s.mie;
@@ -971,7 +972,7 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
-    case RV::CSR_MSTATUS: s.mstatus = val & 0x007E79AAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
+    case RV::CSR_MSTATUS: s.mstatus = val & 0x007E79AAu; break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
     case RV::CSR_MEDELEG: s.medeleg = val & 0xFFFF; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
@@ -1101,15 +1102,15 @@ bool RiscVCPU::mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
     // TLB 查找
     for (int i = 0; i < RV::TLB_SIZE; i++) {
         auto &e = s.tlb[i];
-        if (e.valid && e.vpn == vpn && (e.global || e.asid == ((s.satp >> 22) & 0xFF))) [[likely]] {
+        if (e.valid && e.vpn == vpn && (e.global || e.asid == ((s.satp >> 22) & 0x1FF))) [[likely]] {
             if (uint32_t cause = checkPerms(e.flags, is_write, is_exec, priv, s.mstatus))
             { takeTrap(s, cause, vaddr); return false; }
+            // 软件会清 A/D 做页老化，所以命中时不能假定它已经置位：
+            // 缺位就走慢路径重新遍历页表，由 MMU_AD_WRITE 把 A/D 写回内存。
+            // 已置位的常规情况只多两次位测试。
+            if (!(e.flags & 0x40) || (is_write && !(e.flags & 0x80)))
+                break;
             paddr = (e.ppn << 12) | (vaddr & 0xFFF);
-            // 已知取舍：A/D 只在本核的 TLB 副本里置位，不回写内存页表。
-            // 规范允许两种做法（写回 PTE，或 A=0 时触发页错误交给软件），
-            // 这里两者都没做，因此依赖 A/D 做页老化的软件会看到过期值。
-            e.flags |= 0x40; // set A
-            if (is_write) e.flags |= 0x80; // set D
             return true;
         }
     }

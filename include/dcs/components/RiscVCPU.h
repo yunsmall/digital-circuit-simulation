@@ -140,7 +140,8 @@ private:
         uint32_t sstatus, stvec, sepc, scause, stval, sie, sip, sscratch, satp;
 
         // Sv32 TLB
-        struct TlbEntry { uint32_t vpn, ppn; uint8_t asid, flags; bool valid, global; };
+        // ASID 在 RV32 是 satp[30:22] 共 9 位，用 uint8_t 会截断高位，导致 TLB 命中错误页表项
+        struct TlbEntry { uint32_t vpn, ppn; uint16_t asid; uint8_t flags; bool valid, global; };
         TlbEntry tlb[RV::TLB_SIZE];
         uint32_t tlb_cycle; // 用于 LRU 替换
 

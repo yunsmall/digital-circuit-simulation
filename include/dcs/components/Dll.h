@@ -57,7 +57,7 @@ private:
     dcs_dll_reset_t _reset_fn = nullptr;
 
     // 生成一个阶段的 tick 函数体（comb 或 seq 公用）
-    std::string genTickFunc(const char *phase_suffix, int fn_id_offset) const;
+    std::string genTickFunc(const char *phase_suffix) const;
 };
 
 } // namespace dsc

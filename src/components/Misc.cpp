@@ -58,13 +58,17 @@ std::string Switch::genFuncDef_comb() const {
     std::string write;
     if (o0 >= 0)
         write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
+    // 悬空 en 必须读常量 0，退回 _w[0] 会读到别的元件的驱动值
+    std::string read_en = en >= 0
+                                 ? std::format("    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en)
+                                 : std::string("    bool _en = false;");
     return std::format(R"(static void {}() {{
     {}
-    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);
+    {}
     {} _out = _en ? _in : ({})0;
 {}
 }})",
-                       funcName_comb(), gen_read_wire(i0, _bit_width, i0nw, "_in"), en >= 0 ? en : 0,
+                       funcName_comb(), gen_read_wire(i0, _bit_width, i0nw, "_in"), read_en,
                        c_int_type(_bit_width), c_int_type(_bit_width), write);
 }
 

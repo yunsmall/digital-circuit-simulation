@@ -112,7 +112,7 @@ public:
         return genInitCode();
     }
 
-    // 状态变量名: _s_<type>_<name>    状态类型名: _S_<type>_<name>
+    // 状态变量名: _s_<id>    状态类型名: _S_<id>（只用元件在电路中的数字编号）
     [[nodiscard]] std::string stateVarName() const;
     [[nodiscard]] std::string stateTypeName() const;
 
@@ -161,14 +161,13 @@ public:
         return _params;
     }
 
-    // 生成写输出槽 _c_out_<comp_id>_<out_idx> 的 C 代码
-    // （包含 _c_oe = true，三态门可在其后覆盖 oe）
+    // 写输出引脚：非三态时同时写 _c_out_<id>_<i> 和它所连的 _w[]（组合逻辑同拍可见），
+    // 三态时只写 _c_out_ 并把 _c_oe_<id>_<i> 置真，由总线决议决定 _w[] 的最终值
     [[nodiscard]] std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
 
     // 模式 B 回调直接接收线网指针数组：省掉每 tick 把引脚打包进 16 字节槽、
     // 再把输出解包出来的拷贝。依赖的不变式是 _w[] 高位恒 0、_c_out_* 在 init 时清零。
     [[nodiscard]] std::string genInputPtrArray(std::string_view arr) const;
-    [[nodiscard]] std::string genOutputPtrArray(std::string_view arr) const;
 
 protected:
     void setParam(const std::string &key, const std::string &value) {
