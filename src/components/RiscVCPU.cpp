@@ -552,10 +552,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                                    : -std::numeric_limits<float>::infinity(); // RDN
                 case 3: return pos ? std::numeric_limits<float>::infinity()
                                    : -std::numeric_limits<float>::max(); // RUP
-                // RNE 和 RMM 都是"nearest"：只有超过最大有限值与 inf 的中点 2^128 才进 inf
+                // RNE 和 RMM 都是"nearest"：中点是 Fmax 与 2^128 的中点。
+                // Fmax = 2^128 - 2^104，所以中点是 2^128 - 2^103，不是 2^128
                 case 4: // RMM
                 default: // RNE
-                    return std::fabs(exact) >= 0x1p128 ? (pos ? std::numeric_limits<float>::infinity()
+                    return std::fabs(exact) >= 0x1p128 - 0x1p103 ? (pos ? std::numeric_limits<float>::infinity()
                                                               : -std::numeric_limits<float>::infinity())
                                                        : (pos ? std::numeric_limits<float>::max()
                                                               : -std::numeric_limits<float>::max());
@@ -802,7 +803,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
             // 或直接舍入成 0 而精确结果非 0
             // UF 的定义是"tiny 且不精确"：精确的次正规数结果不能置 UF
-            if (std::isinf(r)) s.fcsr |= 0x04;
+            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到，
+            // 但按 IEEE 754 只要无界指数下的结果超出 Fmax 就要报 OF
+            if (std::isinf(r) || std::fabs(exact) >= 0x1p128) s.fcsr |= 0x04;
             else if ((r == 0.0f ? exact != 0.0
                                 : std::fabs((double) r) < (double) std::numeric_limits<float>::min())
                      && (double) r != exact)
@@ -822,7 +825,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         auto is_snan = [](uint32_t u) {
             return ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0 && !(u & 0x400000u);
         };
-        bool snan_in = is_snan(s.fregs[rs1]) || is_snan(s.fregs[rs2]);
+        // FSQRT 的 rs2 固定为 0，f0 不是它的输入，拿来判 sNaN 会误报 NV
+        bool snan_in = is_snan(s.fregs[rs1]) || (f7 != RV::F7_FSQRT && is_snan(s.fregs[rs2]));
         uint32_t rm = f3;
         auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
@@ -839,9 +843,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if (!std::isfinite(exact)) return;
             if ((double) r != exact) s.fcsr |= 0x01; // NX
             // OF：舍入成 inf；UF：结果是非规格化数，或舍入成 0 而精确值非 0
-            if (std::isinf(r)) s.fcsr |= 0x04;
-            else if (r == 0.0f ? exact != 0.0
-                               : std::fabs((double)r) < (double)std::numeric_limits<float>::min())
+            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到，
+            // 但按 IEEE 754 只要无界指数下的结果超出 Fmax 就要报 OF
+            if (std::isinf(r) || std::fabs(exact) >= 0x1p128) s.fcsr |= 0x04;
+            else if ((r == 0.0f ? exact != 0.0
+                                : std::fabs((double) r) < (double) std::numeric_limits<float>::min())
+                     && (double) r != exact)
                 s.fcsr |= 0x02;
         };
 
