@@ -184,7 +184,6 @@ private:
     void jitCleanup();
     void expandComposites();
     bool dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color, std::vector<int> &path);
-    std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) const;
 };
 
 } // namespace dsc
