@@ -555,7 +555,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             case 4: { // RMM：就近，中点向外
                 float away = std::nextafterf(r, exact > 0 ? std::numeric_limits<float>::infinity()
                                                           : -std::numeric_limits<float>::infinity());
-                return std::fabs((double) away - exact) < std::fabs(back - exact) ? away : r;
+                // 中点时两边距离相等，RMM 要取向外的那个，所以必须用 <=
+                return std::fabs((double) away - exact) <= std::fabs(back - exact) ? away : r;
             }
             default: return r; // RNE
             }
