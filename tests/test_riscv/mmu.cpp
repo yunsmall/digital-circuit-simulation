@@ -198,6 +198,12 @@ TEST(MmuTest, Sv32BasicDataLoad) {
     // S-mode 中 lw x3,0(x5) 加载 VA 0x2000 → MMU 翻译 → PA 0x6000 → x3=0xAB
     EXPECT_EQ(f.cpu->reg(3), 0xABu) << "MMU 页表遍历后 x3 应为 0xAB";
     EXPECT_FALSE(f.cpu->halted()) << "CPU 不应停机";
+
+    // 叶子 PTE 原本没有 A/D 位，遍历时必须把 A 写回内存页表
+    uint32_t l2pte = (uint32_t) mp[0xB008] | ((uint32_t) mp[0xB009] << 8) |
+                     ((uint32_t) mp[0xB00A] << 16) | ((uint32_t) mp[0xB00B] << 24);
+    EXPECT_NE(l2pte & 0x40u, 0u) << "访问过的叶子 PTE 应被置上 A 位";
+    EXPECT_NE(l2pte & 0x1800u, 0u) << "PPN 字段不应被破坏";
 }
 
 // ============================================================

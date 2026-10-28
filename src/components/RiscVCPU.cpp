@@ -123,6 +123,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         case Phase::WAIT_MMU_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_WALK_L1: adr=s.mmu_l1_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_WALK_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
+        case Phase::MMU_AD_WRITE: adr=s.mmu_l2_addr; wdat=s.mmu_pte; we=true; sel=0x0F; stb=cyc=true; break;
         default: break;
         }
         packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
@@ -377,6 +378,17 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 if (uint32_t cause = checkPerms(l2e, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus))
                 { takeTrap(s, cause, s.mmu_vaddr);
                   s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false; break; }
+                // A/D 位必须落到内存页表上，否则软件做页老化会看到过期值
+                uint32_t upd = l2e;
+                if (!(l2e & RV::PTE_A)) upd |= RV::PTE_A;
+                if (s.mmu_is_write && !(l2e & RV::PTE_D)) upd |= RV::PTE_D;
+                if (upd != l2e) {
+                    s.mmu_pte = upd;
+                    s.phase = Phase::MMU_AD_WRITE;
+                    wb_adr = s.mmu_l2_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
+                    wb_stb = wb_cyc = true;
+                    break;
+                }
                 // 装填 TLB
                 int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
                 auto &e = s.tlb[idx];
@@ -390,6 +402,20 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
                 s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
             }
+        }
+        break;
+
+    case Phase::MMU_AD_WRITE:
+        wb_adr = s.mmu_l2_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+        if (in.ack) {
+            // 页表已更新，按更新后的 PTE 装填 TLB
+            int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
+            auto &e = s.tlb[idx];
+            e.vpn = s.mmu_vaddr >> 12; e.ppn = (s.mmu_pte >> 10) & 0x3FFFFF;
+            e.asid = (uint8_t)((s.satp >> 22) & 0xFF); e.flags = (uint8_t)(s.mmu_pte & 0xFF);
+            e.valid = true; e.global = (s.mmu_pte >> 5) & 1;
+            s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
+            wb_stb = wb_cyc = false;
         }
         break;
 

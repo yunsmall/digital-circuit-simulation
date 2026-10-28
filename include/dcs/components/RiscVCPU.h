@@ -118,7 +118,7 @@ public:
 private:
     enum class Phase : uint8_t {
         FETCH, WAIT_FETCH, EXECUTE, WAIT_MEM, HALTED,
-        MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2
+        MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_WRITE
     };
 
     struct CpuState {
@@ -169,6 +169,7 @@ private:
         bool wfi_halted; // 已执行 WFI，等待中断唤醒
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
+        uint32_t mmu_pte;  // 需要写回页表的 PTE（补 A/D 位）
 
         // 非对齐访存拆成两次对齐事务时的中间状态。真实从设备只接受字对齐地址 +
         // 字节使能，跨字访问必须由主设备自己拆开，不能改总线语义去迁就 CPU。
