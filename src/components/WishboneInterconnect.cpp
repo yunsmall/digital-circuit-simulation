@@ -223,11 +223,15 @@ void WishboneInterconnect::routeTick(void *state_ptr, const uint8_t *inputs, uin
         mr[i].stb = (p[64] & 1) != 0;
         mr[i].cyc = (p[80] & 1) != 0;
     }
+    int prev_grant = rs.last_grant;
     int grant = -1;
     for (int k = 0; k < M; k++) {
         int i = (rs.last_grant + k) % M;
         if (mr[i].stb && mr[i].cyc) { grant = i; break; }
     }
+    // 从一个主设备直接切到另一个时，从设备看不到 stb 下降沿，会把上一个主的应答
+    // 当成新主的；这里强制插入一拍 stb=0 让它重新识别新事务
+    bool insert_gap = (prev_grant >= 0 && grant >= 0 && grant != prev_grant);
     if (grant >= 0)
         rs.last_grant = grant;
     MReq cur{};
@@ -264,7 +268,7 @@ void WishboneInterconnect::routeTick(void *state_ptr, const uint8_t *inputs, uin
     for (int i = 0; i < M; i++) {
         uint32_t dat = 0;
         uint8_t ack = 0;
-        if (grant == i) {
+        if (grant == i && !insert_gap) {
             dat = s_dat[selected];          // 只有被授权的主设备看到从设备数据
             ack = s_ack[selected] ? 1 : 0;  // 应答也只回给它
         }
@@ -280,8 +284,8 @@ void WishboneInterconnect::routeTick(void *state_ptr, const uint8_t *inputs, uin
             std::memcpy(outputs + base + 16, &m_dat, 4); // dat
             outputs[base + 32] = m_we ? 1 : 0;           // we
             outputs[base + 48] = m_sel;                  // sel
-            outputs[base + 64] = m_stb ? 1 : 0;          // stb
-            outputs[base + 80] = m_cyc ? 1 : 0;          // cyc
+            outputs[base + 64] = (m_stb && !insert_gap) ? 1 : 0; // stb
+            outputs[base + 80] = (m_cyc && !insert_gap) ? 1 : 0; // cyc
         }
         // 未选中的从设备: 所有输出保持 0（stb=cyc=0 表示无事务）
     }
