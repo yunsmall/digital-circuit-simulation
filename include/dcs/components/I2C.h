@@ -49,6 +49,8 @@ private:
         bool nack;
         bool done;
         bool sda_low;         // 主机是否把 SDA 拉低（开漏）
+        bool ack_sampled;     // 本个 ACK 位是否已在 SCL 高电平期间采样
+        bool ack_value;       // 采样到的值：true = 从机没拉低（NACK）
         uint32_t control;
         uint32_t latched_dout;
         bool prev_stb;

@@ -108,6 +108,15 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const 
     bool stb_rise = active && !s.prev_stb;
     s.prev_stb = active;
 
+    // ACK 位要在 SCL 高电平期间采样。在下降沿才读的话，纯组合的从机会在同一拍
+    // 看到 SCL 变低就释放 SDA，主机读到的是上拉的高电平，把 ACK 误判成 NACK。
+    // 采样点取 SCL 高电平的中间一拍。
+    if (s.scl && !s.ack_sampled && (s.phase == Phase::ADDR_ACK || s.phase == Phase::DATA_ACK)
+        && s.div_cnt >= s.clkdiv / 2) {
+        s.ack_value = sda_in;
+        s.ack_sampled = true;
+    }
+
     // ---- 事务推进：每 clkdiv 个 tick 走一个 SCL 半周期 ----
     if (s.phase != Phase::IDLE && s.phase != Phase::DONE) {
         if (++s.div_cnt >= s.clkdiv) {
@@ -120,7 +129,8 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const 
                     s.phase = Phase::DONE;
                     s.done = true;
                 } else if (s.phase == Phase::ADDR_ACK || s.phase == Phase::DATA_ACK) {
-                    s.sda_low = false; // 主机释放 SDA，从机此时才能拉低表示 ACK
+                    s.sda_low = false;       // 主机释放 SDA，从机此时才能拉低表示 ACK
+                    s.ack_sampled = false;   // 这个 ACK 位还没采样
                 }
             } else {
                 // SCL 下降沿推进一位
@@ -144,7 +154,7 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const 
                         s.phase = Phase::ADDR_ACK;
                     break;
                 case Phase::ADDR_ACK:
-                    if (sda_in) { // 从机没拉低 = NACK
+                    if (s.ack_value) { // 从机没拉低 = NACK（取 SCL 高期间的采样值）
                         s.nack = true;
                         s.sda_low = true; // SCL 低时先把 SDA 拉低，下一半周期释放才构成 STOP
                         s.phase = Phase::STOP;
@@ -164,7 +174,7 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const 
                         s.phase = Phase::DATA_ACK; // 同上，最后一位由 SCL 高电平相位释放
                     break;
                 case Phase::DATA_ACK:
-                    if (sda_in)
+                    if (s.ack_value) // 取 SCL 高期间的采样值
                         s.nack = true;
                     // 此刻 SCL 是低电平，先把 SDA 拉低，下一半周期抬高 SCL 后才释放 SDA
                     s.sda_low = true;
