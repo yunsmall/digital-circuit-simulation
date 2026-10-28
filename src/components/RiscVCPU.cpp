@@ -71,20 +71,15 @@ namespace {
 struct CpuIn {
     bool clk, rst, ack, irq, mti, msi; uint32_t dat;
     explicit CpuIn(const uint8_t *const *in) {
-        // 用移位拼装而不是 memcpy：memcpy 会阻止内联，实测这一项单独占 2% 以上
+        // 固定 4 字节的 memcpy 会被编成单条 mov，比手写字节拼接更快，别改成移位
         clk=(in[I_CLK][0]&1)!=0; rst=(in[I_RST][0]&1)!=0;
-        const uint8_t *d = in[I_DAT];
-        dat = (uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
-        ack=(in[I_ACK][0]&1)!=0;
+        std::memcpy(&dat,in[I_DAT],4); ack=(in[I_ACK][0]&1)!=0;
         irq=(in[I_IRQ][0]&1)!=0; mti=(in[I_MTI][0]&1)!=0; msi=(in[I_MSI][0]&1)!=0;
     }
 };
 void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, uint8_t sel,
              bool stb, bool cyc, bool halted) {
-    out[O_ADR][0]=(uint8_t)adr; out[O_ADR][1]=(uint8_t)(adr>>8);
-    out[O_ADR][2]=(uint8_t)(adr>>16); out[O_ADR][3]=(uint8_t)(adr>>24);
-    out[O_WDAT][0]=(uint8_t)wdat; out[O_WDAT][1]=(uint8_t)(wdat>>8);
-    out[O_WDAT][2]=(uint8_t)(wdat>>16); out[O_WDAT][3]=(uint8_t)(wdat>>24);
+    std::memcpy(out[O_ADR],&adr,4); std::memcpy(out[O_WDAT],&wdat,4);
     out[O_WE][0]=we?1:0; out[O_SEL][0]=sel;
     out[O_STB][0]=stb?1:0; out[O_CYC][0]=cyc?1:0;
     out[O_HALT][0]=halted?1:0;
