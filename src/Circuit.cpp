@@ -475,12 +475,6 @@ std::string Circuit::generateC() const {
     // 没有总线网的电路集合为空，阶段2b 就是零开销。
     std::set<Component *> bus_affected;
     {
-        std::map<const Net *, Component *> net_driver;
-        for (auto &c: _components)
-            for (auto &op: c->outputs())
-                if (op->net())
-                    net_driver[op->net()] = c.get();
-
         std::vector<Component *> queue;
         for (auto *c: sorted) {
             if (!c->hasCombinational())
@@ -545,6 +539,10 @@ std::string Circuit::generateC() const {
         int nb = byte_count(_nets[net_id]->bit_width());
         oss << "\n    // 总线 " << net_id << "（" << drivers.size() << " 个三态驱动）\n";
         oss << "    {\n";
+        // 旧值必须在冲突检测之前取：冲突时下面的 goto 会跳过初���化，
+        // 让它之后的比对读到未初始化的栈内存
+        if (track_change)
+            oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, _w[{}], 16);\n", net_id, net_id, net_id);
         oss << "        int _active = -1;\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
@@ -559,8 +557,6 @@ std::string Circuit::generateC() const {
                         "        }}\n",
                         cid, oi, net_id, net_id, round, di);
         }
-        if (track_change)
-            oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, _w[{}], 16);\n", net_id, net_id, net_id);
         oss << "        if (_active >= 0) {\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
@@ -603,7 +599,7 @@ std::string Circuit::generateC() const {
 
     oss << "    // 阶段1: 组合逻辑\n";
     emitCombStage(nullptr);
-    oss << "    int _bus_changed = 0;\n";
+    if (!bus_affected.empty()) oss << "    int _bus_changed = 0;\n";
     oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
     emitPropagation(0, false);
     // 读总线的组合元件在阶段1 看到的是决议前的值，必须补跑。补跑会改动总线，
