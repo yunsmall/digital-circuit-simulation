@@ -65,19 +65,8 @@ bool WishboneMemory::prepare(std::string & /*error*/) {
     return true;
 }
 
-// 复位只清握手状态，存储内容由调用方决定是否保留
-void WishboneMemory::memReset(void *state_ptr) {
-    auto &ms = *static_cast<MemState *>(state_ptr);
-    ms.prev_stb = false;
-    ms.prev_we = false;
-    ms.ack_pending = false;
-    ms.latched_dout = 0;
-    ms.latched_addr = 0;
-}
-
 std::vector<Component::JitSymbol> WishboneMemory::extraJitSymbols() const {
-    return {{"_dcs_wbm_tick", reinterpret_cast<void *>(&WishboneMemory::memTick)},
-            {"_dcs_wbm_reset", reinterpret_cast<void *>(&WishboneMemory::memReset)}};
+    return {{"_dcs_wbm_tick", reinterpret_cast<void *>(&WishboneMemory::memTick)}};
 }
 
 // ============================================================
@@ -91,8 +80,9 @@ std::string WishboneMemory::genStateDecl() const {
 
 std::string WishboneMemory::genInitCode() const {
     // 握手状态位必须复位：circuit_reset 后若还留着上一轮的 prev_stb / ack_pending，
-    // 首个事务会被误判成"事务进行中"
-    return std::format("    _dcs_wbm_reset(_wbm_state_{});\n", _id);
+    // 首个事务会被误判成"事务进行中"。用偏移量整段清零，不额外注入 JIT 符号。
+    return std::format("    dcs_memset((uint8_t*)_wbm_state_{} + {}, 0, {});\n",
+                       _id, rtOffset(), rtSize());
 }
 
 std::string WishboneMemory::genFuncDef_seq() const {
@@ -100,8 +90,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
 
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
-    code += "extern void _dcs_wbm_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
-    code += "extern void _dcs_wbm_reset(void *);\n\n";
+    code += "extern void _dcs_wbm_tick(void *, const uint8_t *const *, uint8_t *const *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
 
     code += genInputPtrArray("_in");

@@ -12,6 +12,7 @@
 //
 // IStorage: 外部可直接读写内存（加载程序、检查结果）
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -52,6 +53,9 @@ private:
 
     // 访存状态（C 侧 JIT 代码会嵌入指针）
     struct MemState {
+        // mem/mem_size/data_bytes 是构造时确定的，复位不能动它们；
+        // 运行状态从 rt_offset 开始，复位时整段清零。用偏移量清零而不是回调，
+        // 是为了不引入额外的 JIT 符号——实测那会让每个电路多出一倍的编译开销。
         uint8_t *mem;
         size_t mem_size;
         int data_bytes;
@@ -61,11 +65,13 @@ private:
         uint32_t latched_dout;  // 已锁存的读数据（ack 期间保持）
         uint32_t latched_addr;  // 已锁存的地址（用于 AMO 写阶段）
     };
+    // 运行状态从这里的偏移开始，复位时整段清零（mem/mem_size/data_bytes 是构造时常量，不能清）
+    static constexpr size_t rtOffset() { return offsetof(MemState, prev_stb); }
+    static constexpr size_t rtSize() { return sizeof(MemState) - offsetof(MemState, prev_stb); }
     MemState _mstate;
 
     // ---- C++ 回调（注册为 JIT 符号） ----
     static void memTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
-    static void memReset(void *state_ptr);
 };
 
 } // namespace dsc
