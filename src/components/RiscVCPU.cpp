@@ -538,7 +538,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     uint32_t npc=s.pc+4;
 
     switch (op) {
-    case RV::OP_IMM: switch(f3){
+    case RV::OP_IMM:
+        // 移位立即数的 funct7 只有 0（SLLI）和 0x20（SRAI）合法，其余是保留编码
+        if (f3 == RV::F3_SLLI && f7 != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        if (f3 == RV::F3_SRLI && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
+        switch(f3){
         case RV::F3_ADDI:s.regs[rd]=v1+(uint32_t)ii; break;
         case RV::F3_SLLI:s.regs[rd]=v1<<(rs2&0x1F); break;
         case RV::F3_SLTI:s.regs[rd]=(s1<ii)?1:0; break;
@@ -551,6 +556,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     case RV::LUI: s.regs[rd]=(uint32_t)iu; break;
     case RV::AUIPC: s.regs[rd]=s.pc+(uint32_t)iu; break;
     case RV::OP: {
+    // 同理：SLL/SRL/SRA 的 funct7 只有 0 和 0x20 合法
+    // SLL/SRL/SRA 共用 funct3（SRL 与 SRA 都是 5，靠 funct7 区分）
+    if ((f3 == RV::F3_SLL || f3 == RV::F3_SRL) && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
+    { takeTrap(s, RV::EXC_II, inst); return; }
     // M 扩展：funct7=0x01 时 funct3 选择乘除法，与普通运算共用同一 opcode
     if (f7 == 0x01) {
         switch (f3) {
@@ -775,6 +784,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             setf_flags((double)a / (double)b);
             break;
         case RV::F7_FSQRT:
+            if (rs2 != 0) { takeTrap(s, RV::EXC_II, inst); return; } // FSQRT 的 rs2 固定为 0
             if (a < 0.0f) { s.fcsr |= 0x10; setf(std::numeric_limits<float>::quiet_NaN()); }
             else setf_flags(std::sqrt((double)a));
             break;
@@ -882,7 +892,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     }
 
     case RV::MISC_MEM:
-        // FENCE.I 是软件告诉硬件"我改过指令内存了"，必须让指令缓存失效
+        // f3=0 是 FENCE（本核顺序执行，无需动作），f3=1 是 FENCE.I，其余是保留编码
+        if (f3 > 1) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         if (f3 == 1) {
             for (auto &l : s.icache) l.valid = false;
         }
@@ -910,6 +921,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F12_SRET: {
+                // TSR=1 时 S 态执行 SRET 是非法指令（M 态不受限）
+                if (s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TSR)) [[unlikely]]
+                { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 if (s.priv == RV::PRIV_U) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 s.priv = (s.mstatus & RV::MSTATUS_SPP) ? RV::PRIV_S : RV::PRIV_U;
                 s.mstatus = (s.mstatus & ~RV::MSTATUS_SIE) | ((s.mstatus & RV::MSTATUS_SPIE)>>4);
@@ -918,6 +932,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F12_WFI:
+                // TW=1 时 S 态执行 WFI 是非法指令
+                if (s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TW)) [[unlikely]]
+                { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 // 有中断挂起就继续执行；否则停在这里，PC 不前进
                 if (!(s.mip & s.mie)) {
                     s.wfi_halted = true;
@@ -928,6 +945,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             default:
                 // SFENCE.VMA: funct7=0x09, 刷新全部 TLB
                 if (f7 == 0x09) {
+                    // SFENCE.VMA 是 S 级指令，U 态执行属于非法指令；
+                    // TVM=1 时 S 态执行同样非法（只有 M 态可以）
+                    if (s.priv == RV::PRIV_U || (s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TVM)))
+                    { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                     for (auto &e : s.tlb) e.valid = false;
                     s.l1_cache_valid = false; // 页表可能被改过，L1 缓存同样失效
                 } else {
@@ -941,6 +962,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
             bool csr_write = (f3 != RV::F3_CSRRS && f3 != RV::F3_CSRRC) || rs1 != 0;
             if (!csrImplemented(csr_addr) || (((csr_addr >> 10) & 3) == 3 && csr_write)) [[unlikely]]
+            { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
+            // TVM=1 时 S 态读写 satp 是非法指令
+            if (csr_addr == RV::CSR_SATP && s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TVM)) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
             // FS=Off 时访问浮点 CSR 同样是非法指令（读也不行）
             if ((csr_addr == RV::CSR_FFLAGS || csr_addr == RV::CSR_FRM || csr_addr == RV::CSR_FCSR)
@@ -977,7 +1001,6 @@ static bool csrImplemented(uint32_t addr) {
     if (addr >= 0x3B0 && addr <= 0x3EF) return true;
     switch (addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
-    case 0x00F:  // vcsr
     case 0x306:  // mcounteren
     // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
     // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为

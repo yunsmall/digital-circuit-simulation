@@ -1,5 +1,6 @@
 // WishboneMemory — Wishbone 从设备存储器（访存逻辑在 C++ 回调中实现）
 #include "dcs/components/WishboneMemory.h"
+#include "dcs/util/MemoryDepth.h"
 
 #include <cstring>
 #include <format>
@@ -28,7 +29,7 @@ constexpr int O_COUNT = 2;
 
 WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data_width) :
     SequentialComponent(name, "wishbone_mem"),
-    _addr_width(addr_width), _data_width(data_width), _depth(1 << addr_width) {
+    _addr_width(addr_width), _data_width(data_width), _depth(depthFromAddrWidth(addr_width)) {
 
     // 数据引脚与内部暂存都是 32 位，64 位数据会被截断并在移位时产生未定义行为
     if (data_width != 8 && data_width != 16 && data_width != 32)

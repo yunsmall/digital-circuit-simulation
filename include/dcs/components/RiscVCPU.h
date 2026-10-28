@@ -24,6 +24,8 @@ namespace RV {
     constexpr uint32_t CSR_FFLAGS=0x001, CSR_FRM=0x002, CSR_FCSR=0x003;
 
     // ---- Funct3 ----
+    // mstatus 里限制 S 态行为的三个位（写进去就必须真正生效，否则等于骗软件）
+    constexpr uint32_t MSTATUS_TVM = 1u << 20, MSTATUS_TW = 1u << 21, MSTATUS_TSR = 1u << 22;
     constexpr uint32_t F3_ADDI=0, F3_SLLI=1, F3_SLTI=2, F3_SLTIU=3, F3_XORI=4, F3_SRLI=5, F3_ORI=6, F3_ANDI=7;
     constexpr uint32_t F3_ADD=0, F3_SLL=1, F3_SLT=2, F3_SLTU=3, F3_XOR=4, F3_SRL=5, F3_OR=6, F3_AND=7;
     constexpr uint32_t F3_BEQ=0, F3_BNE=1, F3_BLT=4, F3_BGE=5, F3_BLTU=6, F3_BGEU=7;

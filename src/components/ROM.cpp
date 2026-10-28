@@ -1,5 +1,6 @@
 // ROM — 只读存储器实现（内存 / 文件 双模式，字节寻址）
 #include "dcs/components/ROM.h"
+#include "dcs/util/MemoryDepth.h"
 #include <cstring>
 #include <format>
 #include <fstream>
@@ -112,7 +113,7 @@ void ROM::initCommon(const std::string &name, int addr_width, int data_width, in
 // 构造函数1：内存模式
 // ============================================================
 ROM::ROM(const std::string &name, int addr_width, int data_width, int read_latency) :
-    SequentialComponent(name, "rom"), _addr_width(addr_width), _data_width(data_width), _depth(1 << addr_width),
+    SequentialComponent(name, "rom"), _addr_width(addr_width), _data_width(data_width), _depth(depthFromAddrWidth(addr_width)),
     _read_latency(read_latency), _rd_stages(read_latency + 1) {
 
     initCommon(name, addr_width, data_width, read_latency);
@@ -129,7 +130,7 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, int read_laten
 // ============================================================
 ROM::ROM(const std::string &name, int addr_width, int data_width, const std::filesystem::path &filepath,
          int read_latency) :
-    SequentialComponent(name, "rom"), _addr_width(addr_width), _data_width(data_width), _depth(1 << addr_width),
+    SequentialComponent(name, "rom"), _addr_width(addr_width), _data_width(data_width), _depth(depthFromAddrWidth(addr_width)),
     _read_latency(read_latency), _rd_stages(read_latency + 1), _filepath(filepath) {
 
     initCommon(name, addr_width, data_width, read_latency);

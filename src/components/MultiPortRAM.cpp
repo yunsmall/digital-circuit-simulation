@@ -1,5 +1,6 @@
 // MultiPortRAM — 参数化多端口 RAM 实现（字节寻址）
 #include "dcs/components/MultiPortRAM.h"
+#include "dcs/util/MemoryDepth.h"
 #include <format>
 #include <stdexcept>
 
@@ -8,7 +9,7 @@ namespace dsc {
 MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_width, int num_read_ports,
                            int num_write_ports, int read_latency) :
     SequentialComponent(name, "mpram"), _addr_width(addr_width), _data_width(data_width), _num_read(num_read_ports),
-    _num_write(num_write_ports), _read_latency(read_latency), _rd_stages(read_latency), _depth(1 << addr_width) {
+    _num_write(num_write_ports), _read_latency(read_latency), _rd_stages(read_latency), _depth(depthFromAddrWidth(addr_width)) {
 
     if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
         throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));

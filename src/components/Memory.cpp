@@ -1,12 +1,13 @@
 // Memory — 带读写延迟的可寻址 RAM（字节寻址）
 #include "dcs/components/Memory.h"
+#include "dcs/util/MemoryDepth.h"
 #include <format>
 #include <stdexcept>
 
 namespace dsc {
 
 Memory::Memory(const std::string &name, int addr_width, int data_width, int read_latency, int write_latency) :
-    SequentialComponent(name, "memory"), _addr_width(addr_width), _data_width(data_width), _depth(1 << addr_width),
+    SequentialComponent(name, "memory"), _addr_width(addr_width), _data_width(data_width), _depth(depthFromAddrWidth(addr_width)),
     _read_latency(read_latency), _write_latency(write_latency), _rd_stages(read_latency + 1),
     _wr_stages(write_latency + 1) {
     if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
