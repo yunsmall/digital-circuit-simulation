@@ -24,6 +24,7 @@
 #include "dcs/components/Shifter.h"
 #include "dcs/components/SignExt.h"
 #include "dcs/components/CLINT.h"
+#include "dcs/components/I2C.h"
 #include "dcs/components/PLIC.h"
 #include "dcs/components/SPI.h"
 #include "dcs/components/UART.h"
@@ -513,6 +514,10 @@ struct InitAllComponents {
 
         f.registerType({"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::CLINT>(n);
+        });
+
+        f.registerType({"i2c", {{"clkdiv", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务"}, [&](const std::string &n, const Params &p) -> C {
+            return std::make_unique<dsc::I2C>(n, _gi(p, "clkdiv", 8));
         });
 
         f.registerType({"spi", {{"clkdiv", "4"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "miso"}, {"wb_dat_o", "wb_ack_o", "sclk", "mosi", "cs"}, dsc::ComponentCategory::Misc, "SPI 主机（模式 0），按 clkdiv 分频收发 8 位"}, [&](const std::string &n, const Params &p) -> C {

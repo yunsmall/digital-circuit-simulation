@@ -1,0 +1,232 @@
+#include "dcs/components/I2C.h"
+
+#include <cstring>
+#include <format>
+
+namespace dsc {
+
+namespace {
+constexpr int SLOT = 16;
+enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_SDA_IN, I_COUNT };
+enum OutIdx { O_DAT = 0, O_ACK, O_SCL, O_SDA_OUT, O_SDA_OE, O_COUNT };
+
+constexpr uint32_t REG_TXDATA = 0x00;
+constexpr uint32_t REG_RXDATA = 0x04;
+constexpr uint32_t REG_STATUS = 0x08;
+constexpr uint32_t REG_CONTROL = 0x0C;
+constexpr uint32_t REG_ADDR = 0x10;
+constexpr uint32_t REG_CLKDIV = 0x14;
+} // namespace
+
+I2C::I2C(const std::string &name, int clkdiv) : SequentialComponent(name, "i2c"), _clkdiv(clkdiv) {
+    if (_clkdiv < 1)
+        _clkdiv = 1;
+    setParam("clkdiv", std::to_string(_clkdiv));
+    addInput("clk", 1);
+    addInput("wb_adr_i", 32);
+    addInput("wb_dat_i", 32);
+    addInput("wb_we_i", 1);
+    addInput("wb_sel_i", 4);
+    addInput("wb_stb_i", 1);
+    addInput("wb_cyc_i", 1);
+    addInput("sda_in", 1);
+    addOutput("wb_dat_o", 32, false, true);
+    addOutput("wb_ack_o", 1, false, true);
+    addOutput("scl", 1, false, true);
+    addOutput("sda_out", 1, false, true);
+    addOutput("sda_oe", 1, false, true);
+}
+
+I2C::~I2C() = default;
+
+bool I2C::prepare(std::string &) {
+    _prepared = true;
+    return true;
+}
+
+std::vector<Component::JitSymbol> I2C::extraJitSymbols() const {
+    return {{"_dcs_i2c_tick", reinterpret_cast<void *>(&I2C::i2cTick)},
+            {"_dcs_i2c_reset", reinterpret_cast<void *>(&I2C::i2cReset)}};
+}
+
+void I2C::i2cReset(void *state_ptr, int clkdiv) {
+    auto &s = *static_cast<I2cState *>(state_ptr);
+    std::memset(&s, 0, sizeof(s));
+    s.clkdiv = (uint32_t) (clkdiv < 1 ? 1 : clkdiv);
+    s.phase = Phase::IDLE;
+    s.scl = true; // I2C 总线空闲时 SCL 与 SDA 都被上拉为高
+}
+
+std::string I2C::genStateDecl() const {
+    return std::format("static void *_i2c_state_{} = (void*)0x{:X}ULL;\n", _id,
+                       reinterpret_cast<uintptr_t>(&_state));
+}
+
+std::string I2C::genInitCode() const { return std::format("    _dcs_i2c_reset(_i2c_state_{}, {});\n", _id, _clkdiv); }
+
+std::string I2C::genFuncDef_seq() const {
+    std::string code;
+    code += "extern void _dcs_i2c_tick(void *, const uint8_t *, uint8_t *);\n";
+    code += "extern void _dcs_i2c_reset(void *, int);\n\n";
+    code += std::format("static void {}(void) {{\n", funcName_seq());
+    code += std::format("    uint8_t _in[{}][{}];\n", (int) I_COUNT, SLOT);
+    for (int i = 0; i < I_COUNT; i++) {
+        int w = (i == I_ADR || i == I_DAT) ? 32 : (i == I_SEL ? 4 : 1);
+        code += std::format("    {{ uint64_t _v=0; dcs_memcpy(&_v,_w[{}],{}); uint8_t _b[8]; dcs_memcpy(_b,&_v,8); "
+                            "dcs_memcpy(_in[{}],_b,{}); }}\n",
+                            inputs()[i]->netId(), byte_count(w), i, byte_count(w));
+    }
+    code += std::format("    uint8_t _out[{}][{}];\n", (int) O_COUNT, SLOT);
+    code += std::format("    _dcs_i2c_tick(_i2c_state_{0}, (const uint8_t*)_in, (uint8_t*)_out);\n", _id);
+    code += "    { uint32_t _d=0; dcs_memcpy(&_d,_out[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
+    code += "    { uint8_t _a=0; dcs_memcpy(&_a,_out[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";
+    code += "    { uint8_t _s=0; dcs_memcpy(&_s,_out[2],1); " + genOutputWrite(O_SCL, "_s", 1) + " }\n";
+    code += "    { uint8_t _o=0; dcs_memcpy(&_o,_out[3],1); " + genOutputWrite(O_SDA_OUT, "_o", 1) + " }\n";
+    code += "    { uint8_t _e=0; dcs_memcpy(&_e,_out[4],1); " + genOutputWrite(O_SDA_OE, "_e", 1) + " }\n";
+    code += "}\n";
+    return code;
+}
+
+std::unique_ptr<Component> I2C::clone(const std::string &new_name) const {
+    auto p = std::make_unique<I2C>(new_name, _clkdiv);
+    p->_state = _state;
+    return p;
+}
+
+void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+    auto &s = *static_cast<I2cState *>(state_ptr);
+
+    uint32_t adr = 0, wdat = 0;
+    std::memcpy(&adr, inputs + I_ADR * SLOT, 4);
+    std::memcpy(&wdat, inputs + I_DAT * SLOT, 4);
+    bool we = (inputs[I_WE * SLOT] & 1) != 0;
+    bool stb = (inputs[I_STB * SLOT] & 1) != 0;
+    bool cyc = (inputs[I_CYC * SLOT] & 1) != 0;
+    bool sda_in = (inputs[I_SDA_IN * SLOT] & 1) != 0;
+
+    bool active = stb && cyc;
+    bool stb_rise = active && !s.prev_stb;
+    s.prev_stb = active;
+
+    // ---- 事务推进：每 clkdiv 个 tick 走一个 SCL 半周期 ----
+    if (s.phase != Phase::IDLE && s.phase != Phase::DONE) {
+        if (++s.div_cnt >= s.clkdiv) {
+            s.div_cnt = 0;
+            s.scl = !s.scl;
+            if (s.scl) {
+                // SCL 高电平期间在总线上维持数据，这里不做动作
+            } else {
+                // SCL 下降沿推进一位
+                switch (s.phase) {
+                case Phase::START:
+                    s.scl = true;
+                    s.sda_low = true;
+                    s.phase = Phase::ADDR;
+                    s.bit_idx = 0;
+                    s.shift = (s.addr & 0x7Fu) << 1; // 7 位地址 + 写位
+                    s.scl = false;
+                    break;
+                case Phase::ADDR:
+                    if (s.bit_idx == 0)
+                        s.sda_low = ((s.shift >> 7) & 1u) == 0; // 高位先出
+                    else
+                        s.sda_low = ((s.shift >> (7 - s.bit_idx)) & 1u) == 0;
+                    if (++s.bit_idx >= 8) {
+                        s.phase = Phase::ADDR_ACK;
+                        s.sda_low = false; // 释放 SDA 读 ACK
+                    }
+                    break;
+                case Phase::ADDR_ACK:
+                    if (sda_in) { // 从机没拉低 = NACK
+                        s.nack = true;
+                        s.phase = Phase::STOP;
+                    } else {
+                        s.phase = Phase::DATA;
+                        s.bit_idx = 0;
+                        s.shift = s.tx_data & 0xFFu;
+                        s.sda_low = ((s.shift >> 7) & 1u) == 0;
+                    }
+                    break;
+                case Phase::DATA:
+                    if (s.bit_idx == 0)
+                        s.sda_low = ((s.shift >> 7) & 1u) == 0;
+                    else
+                        s.sda_low = ((s.shift >> (7 - s.bit_idx)) & 1u) == 0;
+                    if (++s.bit_idx >= 8) {
+                        s.phase = Phase::DATA_ACK;
+                        s.sda_low = false;
+                    }
+                    break;
+                case Phase::DATA_ACK:
+                    if (sda_in)
+                        s.nack = true;
+                    s.phase = Phase::STOP;
+                    break;
+                case Phase::STOP:
+                    s.sda_low = false; // 释放 SDA，SCL 高时形成停止条件
+                    s.scl = true;
+                    s.phase = Phase::DONE;
+                    s.done = true;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+
+    // ---- 总线访问 ----
+    uint32_t dout = 0;
+    bool ack = false;
+    if (stb_rise) {
+        const uint32_t off = adr & 0x1Fu;
+        if (!we) {
+            switch (off) {
+            case REG_RXDATA: dout = s.rx_data; break;
+            case REG_STATUS: dout = ((s.phase != Phase::IDLE && s.phase != Phase::DONE) ? 1u : 0u) |
+                                     (s.done ? 2u : 0u) | (s.nack ? 4u : 0u); break;
+            case REG_ADDR: dout = s.addr; break;
+            case REG_CLKDIV: dout = s.clkdiv; break;
+            default: dout = 0; break;
+            }
+        } else {
+            switch (off) {
+            case REG_TXDATA: s.tx_data = wdat & 0xFFu; break;
+            case REG_ADDR: s.addr = wdat & 0x7Fu; break;
+            case REG_CLKDIV:
+                if (s.phase == Phase::IDLE && (wdat & 0xFFFFu))
+                    s.clkdiv = wdat & 0xFFFFu;
+                break;
+            case REG_CONTROL:
+                s.control = wdat;
+                if ((wdat & 1u) && s.phase == Phase::IDLE) {
+                    s.phase = Phase::START;
+                    s.nack = false;
+                    s.done = false;
+                    s.div_cnt = 0;
+                    s.scl = true;
+                    s.sda_low = true; // 起始条件：SCL 高时 SDA 拉低
+                }
+                break;
+            default: break;
+            }
+        }
+        ack = true;
+        s.latched_dout = dout;
+    } else if (active) {
+        dout = s.latched_dout;
+        ack = true;
+    }
+    if (!active)
+        s.latched_dout = 0;
+    s.prev_sda_in = sda_in;
+
+    std::memset(outputs, 0, O_COUNT * SLOT);
+    std::memcpy(outputs + O_DAT * SLOT, &dout, 4);
+    outputs[O_ACK * SLOT] = ack ? 1 : 0;
+    outputs[O_SCL * SLOT] = s.scl ? 1 : 0;
+    outputs[O_SDA_OUT * SLOT] = s.sda_low ? 0 : 1;
+    outputs[O_SDA_OE * SLOT] = s.sda_low ? 1 : 0;
+}
+
+} // namespace dsc
