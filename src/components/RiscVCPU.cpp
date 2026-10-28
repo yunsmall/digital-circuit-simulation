@@ -9,7 +9,7 @@
 namespace dsc {
 
 constexpr int SLOT = 16;
-constexpr int I_CLK = 0, I_RST = 1, I_DAT = 2, I_ACK = 3, I_IRQ = 4, I_MTI = 5, I_MSI = 6, I_COUNT = 7;
+constexpr int I_CLK = 0, I_RST = 1, I_DAT = 2, I_ACK = 3, I_IRQ = 4, I_MTI = 5, I_MSI = 6, I_SEIP = 7, I_COUNT = 8;
 constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, O_HALT = 6, O_COUNT = 7;
 
 // ============================================================
@@ -17,6 +17,7 @@ RiscVCPU::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
     addInput("clk", 1); addInput("rst", 1); addInput("wb_dat_i", 32);
     addInput("wb_ack_i", 1); addInput("irq", 1);
     addInput("mti", 1); addInput("msi", 1);
+    addInput("seip", 1); // S 级外部中断，通常接 PLIC 的 S-mode context
     addOutput("wb_adr_o", 32, false, true); addOutput("wb_dat_o", 32, false, true);
     addOutput("wb_we_o", 1, false, true); addOutput("wb_sel_o", 4, false, true);
     addOutput("wb_stb_o", 1, false, true); addOutput("wb_cyc_o", 1, false, true);
@@ -69,12 +70,13 @@ std::unique_ptr<Component> RiscVCPU::clone(const std::string &n) const {
 // ============================================================
 namespace {
 struct CpuIn {
-    bool clk, rst, ack, irq, mti, msi; uint32_t dat;
+    bool clk, rst, ack, irq, mti, msi, seip; uint32_t dat;
     explicit CpuIn(const uint8_t *const *in) {
         // 固定 4 字节的 memcpy 会被编成单条 mov，比手写字节拼接更快，别改成移位
         clk=(in[I_CLK][0]&1)!=0; rst=(in[I_RST][0]&1)!=0;
         std::memcpy(&dat,in[I_DAT],4); ack=(in[I_ACK][0]&1)!=0;
         irq=(in[I_IRQ][0]&1)!=0; mti=(in[I_MTI][0]&1)!=0; msi=(in[I_MSI][0]&1)!=0;
+        seip=(in[I_SEIP][0]&1)!=0;
     }
 };
 void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, uint8_t sel,
@@ -95,6 +97,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     if (in.irq) s.mip|=RV::IRQ_MEI; else s.mip&=~RV::IRQ_MEI;
     if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
     if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
+    if (in.seip) s.mip|=RV::IRQ_SEI; else s.mip&=~RV::IRQ_SEI;
     // WFI 期间只要有中断挂起就唤醒：不看 mstatus.MIE，也不要求 mie 已使能
     // 与 WFI 的停机条件保持一致：只有本地使能的挂起中断才唤醒，
     // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动

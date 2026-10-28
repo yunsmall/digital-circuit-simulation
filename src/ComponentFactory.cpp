@@ -498,7 +498,7 @@ struct InitAllComponents {
         // ============================================================
         // RISC-V CPU + Wishbone 总线
         // ============================================================
-        f.registerType({"riscv_cpu", {}, {"clk", "rst", "wb_dat_i", "wb_ack_i", "irq", "mti", "msi"}, {"wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o", "halted"}, dsc::ComponentCategory::CPU, "RISC-V RV32IMA 软核处理器，Wishbone 总线主设备，支持外部/定时器/软件中断"}, [&](const std::string &n, const Params & /*p*/) -> C {
+        f.registerType({"riscv_cpu", {}, {"clk", "rst", "wb_dat_i", "wb_ack_i", "irq", "mti", "msi", "seip"}, {"wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o", "halted"}, dsc::ComponentCategory::CPU, "RISC-V RV32IMA 软核处理器，Wishbone 总线主设备，支持外部/定时器/软件中断"}, [&](const std::string &n, const Params & /*p*/) -> C {
             return std::make_unique<dsc::RiscVCPU>(n);
         });
 
