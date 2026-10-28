@@ -113,6 +113,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     }
 
     bool rising = !s.prev_clk && in.clk; s.prev_clk = in.clk;
+    if (rising) s.cycles++; // cycle 按时钟上升沿计数，与真实硬件的 mcycle 一致
 
     if (!rising) {
         uint32_t adr=0,wdat=0; bool we=false,stb=false,cyc=false; uint8_t sel=0;
@@ -1016,6 +1017,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- PC 更新 ----
     s.regs[0]=0; s.pc=npc;
+    s.instret++; // 每条完成的指令计一次（trap 路径也会走到这里，与规范"已退休指令数"一致）
     if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
 }
 
@@ -1033,6 +1035,7 @@ static bool csrImplemented(uint32_t addr) {
     // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
     // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为
     case 0x310:  // mstatush
+    case 0xB00: case 0xB02: case 0xB80: case 0xB82: // mcycle / minstret (+h)
     case 0xC00: case 0xC01: case 0xC02: // cycle / time / instret
     case 0xC80: case 0xC81: case 0xC82: // cycleh / timeh / instreth
     case 0xF11: case 0xF12: case 0xF13: case 0xF14: // vendorid / archid / impid / hartid
@@ -1050,6 +1053,11 @@ static bool csrImplemented(uint32_t addr) {
 
 uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     switch (addr) {
+    // cycle/instret 与 M 态的 mcycle/minstret 是同一对计数器，只是可见性不同
+    case 0xB00: case 0xC00: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
+    case 0xB80: case 0xC80: return (uint32_t) (s.cycles >> 32);
+    case 0xB02: case 0xC02: return (uint32_t) (s.instret & 0xFFFFFFFFu);
+    case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
