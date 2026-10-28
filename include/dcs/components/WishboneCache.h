@@ -63,6 +63,7 @@ private:
         uint32_t fill_line;
         int fill_word;
         uint32_t pending_adr;     // 未命中时记住原始请求
+        uint8_t pending_sel;      // 写直通期间锁存的字节使能
         bool pending_we;
         uint32_t pending_wdata;
         uint64_t hits, misses;

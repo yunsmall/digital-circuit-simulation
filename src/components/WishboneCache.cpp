@@ -132,7 +132,8 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
 
     switch (s.fill_state) {
     case F_IDLE:
-        if (up_rise) {
+        // 还有未完成的写事务时不接受新请求，否则会把它覆盖掉导致上游挂死
+        if (up_rise && !s.pending_we) {
             if (!s.up_we) {
                 CacheLine &l = s.line[line_idx];
                 if (l.valid && l.tag == tag) {
@@ -165,6 +166,7 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
                 }
                 s.pending_adr = s.up_adr;
                 s.pending_wdata = s.up_dat;
+                s.pending_sel = s.up_sel; // 锁存，等 ack 期间上游可能撤掉 sel
                 s.fill_line = line_idx;
                 s.pending_we = true;
                 s.fill_word = 1; // 标记"写已进入发送阶段"
@@ -231,7 +233,7 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
     std::memcpy(outputs + O_DADR * SLOT, &s.dn_adr, 4);
     std::memcpy(outputs + O_DDAT * SLOT, &s.dn_dat, 4);
     outputs[O_DWE * SLOT] = s.dn_we ? 1 : 0;
-    outputs[O_DSEL * SLOT] = s.dn_we ? s.up_sel : 0x0F; // 写要按字节使能，读整字
+    outputs[O_DSEL * SLOT] = s.dn_we ? s.pending_sel : 0x0F; // 写用锁存的字节使能，读整字
     outputs[O_DSTB * SLOT] = s.dn_stb ? 1 : 0;
     outputs[O_DCYC * SLOT] = s.dn_cyc ? 1 : 0;
 }

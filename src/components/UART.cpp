@@ -17,8 +17,8 @@ constexpr uint32_t REG_CONTROL = 0x0C;
 } // namespace
 
 UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "uart"), _baud_div(baud_div) {
-    if (_baud_div < 1)
-        _baud_div = 1;
+    if (_baud_div < 2)
+        _baud_div = 2;
     setParam("baud_div", std::to_string(_baud_div));
     addInput("clk", 1);
     addInput("wb_adr_i", 32);
@@ -48,7 +48,8 @@ std::vector<Component::JitSymbol> UART::extraJitSymbols() const {
 void UART::uartReset(void *state_ptr, int baud_div) {
     auto &s = *static_cast<UartState *>(state_ptr);
     std::memset(&s, 0, sizeof(s));
-    s.baud_div = (uint32_t) (baud_div < 1 ? 1 : baud_div);
+    // 半位 = baud_div/2，取 1 时半位为 0，接收状态机会每 tick 推进一次
+    s.baud_div = (uint32_t) (baud_div < 2 ? 2 : baud_div);
     s.control = 0x3; // 默认收发都使能
 }
 
