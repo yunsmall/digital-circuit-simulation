@@ -211,6 +211,13 @@ if(GTest_FOUND)
     add_dcs_test(test_edgecases  tests/test_edgecases/*.cpp)
     add_dcs_test(test_coverage   tests/test_coverage/*.cpp)
     add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
+    # Verilator 集成测试：DLL 由 verilog_test/ 子项目生成，测试里用的是相对路径，
+    # 所以工作目录要指到那里，否则加载不到 DLL
+    if(DCS_BUILD_VERILOG)
+        add_dcs_test(test_verilog tests/test_verilog/*.cpp)
+        set_tests_properties(test_verilog PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/verilog_test")
+    endif()
 
     # 测试用 DLL 元件（8 位 AND 门）
     add_library(dll_test_and SHARED tests/dll_test_and.c)

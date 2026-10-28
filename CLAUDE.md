@@ -31,6 +31,16 @@ cmake -B build_tcc \
 cmake --build build_tcc --parallel --config RelWithDebInfo
 ```
 
+两个后端的取舍（实测：61 个官方 ELF，同机同构建配置）：
+
+| 后端 | 总耗时 | 说明 |
+|------|--------|------|
+| TinyCC | ~370 ms | 编译极快，生成代码的优化程度一般 |
+| LLVM | ~1780 ms | Clang 前端慢，但生成代码运行更快 |
+
+测试程序每个只跑几千拍，编译开销占大头，所以 TCC 快得多；长时间仿真（几十万拍以上）反过来是 LLVM 占优。
+改前端实现时两个后端都要构建一遍——TCC 侧的 `tcc.h` 是内部头，发行包只带公开的 `libtcc.h`。
+
 ## Verilator 集成（可选）
 
 需 MSYS2/UCRT64 环境的 Verilator。`verilator_ROOT` 指向安装前缀。
