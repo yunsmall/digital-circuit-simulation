@@ -202,6 +202,7 @@ if(GTest_FOUND)
     add_dcs_test(test_dma        tests/test_dma/*.cpp)
     add_dcs_test(test_axi        tests/test_axi/*.cpp)
     add_dcs_test(test_edgecases  tests/test_edgecases/*.cpp)
+    add_dcs_test(test_coverage   tests/test_coverage/*.cpp)
     add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
 
     # 测试用 DLL 元件（8 位 AND 门）
