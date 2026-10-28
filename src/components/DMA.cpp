@@ -9,7 +9,7 @@ namespace {
 constexpr int SLOT = 16;
 enum InIdx {
     I_CFG_ADR = 0, I_CFG_DAT, I_CFG_WE, I_CFG_SEL, I_CFG_STB, I_CFG_CYC,
-    I_M_DAT_I, I_M_ACK_I, I_COUNT
+    I_M_DAT_I, I_M_ACK_I
 };
 enum OutIdx {
     O_CFG_DAT = 0, O_CFG_ACK,

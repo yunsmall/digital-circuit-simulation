@@ -8,7 +8,7 @@ namespace dsc {
 
 namespace {
 constexpr int SLOT = 16;
-enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_SRC, I_COUNT };
+enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_SRC };
 enum OutIdx { O_DAT = 0, O_ACK, O_IRQ, O_COUNT };
 
 constexpr uint32_t OFF_PRIORITY = 0x000000;

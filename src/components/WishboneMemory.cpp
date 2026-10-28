@@ -20,7 +20,6 @@ constexpr int I_SEL = 3;
 constexpr int I_STB = 4;
 constexpr int I_CYC = 5;
 constexpr int I_CLK = 6;
-constexpr int I_COUNT = 7;
 
 // 输出引脚索引
 constexpr int O_DAT = 0;
@@ -103,9 +102,6 @@ std::string WishboneMemory::genFuncDef_seq() const {
     code += "extern void _dcs_wbm_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_wbm_reset(void *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
-
-    // 读取所有输入线网（按 I_* 顺序）
-
 
     code += genInputPtrArray("_in");
     code += std::format("    uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);

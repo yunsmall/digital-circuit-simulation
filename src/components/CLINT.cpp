@@ -8,7 +8,6 @@ namespace dsc {
 // Wishbone 引脚索引
 constexpr int SLOT = 16;
 constexpr int I_ADR = 0, I_WDAT = 1, I_WE = 2, I_SEL = 3, I_STB = 4, I_CYC = 5, I_CLK = 6;
-constexpr int I_COUNT = 7;
 constexpr int O_DAT = 0, O_ACK = 1, O_MTI = 2, O_MSI = 3;
 
 // MMIO 偏移
@@ -62,7 +61,7 @@ std::string CLINT::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
     // 输入直接给指针数组，回调按虚实地址视图读，不再逐引脚打包
     code += genInputPtrArray("_in");
-    code += "    uint8_t _obuf[4][16]; dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += std::format("    uint8_t _obuf[4][{}]; dcs_memset(_obuf, 0, sizeof(_obuf));\n", SLOT);
     code += "    uint8_t *_op[4] = {_obuf[0],_obuf[1],_obuf[2],_obuf[3]};\n";
     code += std::format("    _dcs_clint_tick(_clint_state_{0}, _in, _op);\n", id);
     code += "    {\n";

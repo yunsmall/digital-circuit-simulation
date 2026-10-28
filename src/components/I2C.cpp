@@ -7,7 +7,7 @@ namespace dsc {
 
 namespace {
 constexpr int SLOT = 16;
-enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_SDA_IN, I_COUNT };
+enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_SDA_IN };
 enum OutIdx { O_DAT = 0, O_ACK, O_SCL, O_SDA_OUT, O_SDA_OE, O_COUNT };
 
 constexpr uint32_t REG_TXDATA = 0x00;
