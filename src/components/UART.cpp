@@ -115,7 +115,7 @@ void UART::uartTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
     // ---- 接收：起始沿 -> 半位确认起始位 -> 每位中点采样 -> 停止位校验 ----
     // 半位确认可以把窄脉冲噪声挡掉，中点采样则让波特率有偏差时仍落在位中央
     if (!s.rx_active) {
-        if (s.prev_rx && !rx) { // 空闲高转低 = 起始位
+        if (s.prev_rx && !rx && (s.control & 2u)) { // 空闲高转低 = 起始位，且 RX 已使能
             s.rx_active = true;
             s.rx_confirm = true;
             s.rx_cnt = 0;
@@ -129,7 +129,7 @@ void UART::uartTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
             if (rx) {
                 s.rx_active = false; // 半位处已回高，是噪声
             } else {
-                s.rx_cnt = s.baud_div / 2; // 再走半位正好落在 bit0 中点
+                s.rx_cnt = 0; // 再走满一位，落点才是 bit0 中点
             }
         } else if (s.rx_bit < 8) {
             s.rx_shift |= (uint32_t) (rx ? 1 : 0) << s.rx_bit;

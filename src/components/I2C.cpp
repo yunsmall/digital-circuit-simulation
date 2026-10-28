@@ -143,7 +143,7 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                         s.phase = Phase::STOP;
                     } else {
                         s.phase = Phase::DATA;
-                        s.bit_idx = 0;
+                        s.bit_idx = 1; // MSB 在进入 DATA 时已经送出，避免重复发一位
                         s.shift = s.tx_data & 0xFFu;
                         s.sda_low = ((s.shift >> 7) & 1u) == 0;
                     }
@@ -161,13 +161,15 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                 case Phase::DATA_ACK:
                     if (sda_in)
                         s.nack = true;
+                    // 此刻 SCL 是低电平，先把 SDA 拉低，下一半周期抬高 SCL 后才释放 SDA
+                    s.sda_low = true;
                     s.phase = Phase::STOP;
                     break;
                 case Phase::STOP:
-                    // 先在 SCL 低电平时释放 SDA，再由外层把 SCL 拉高，
-                    // 才能形成"SCL 高时 SDA 上升"的停止条件
+                    // 停止条件要求 SCL 高电平期间 SDA 由低变高，所以要跨两个半周期：
+                    // 先在 SCL 低时把 SDA 拉低，抬高 SCL，再在 SCL 高时释放 SDA
+                    // 进入这里时 SCL 已被外层翻成高电平，释放 SDA 即形成停止条件
                     s.sda_low = false;
-                    s.scl = true; // 释放 SDA 后再把 SCL 拉高，构成停止条件
                     s.phase = Phase::DONE;
                     s.done = true;
                     break;
