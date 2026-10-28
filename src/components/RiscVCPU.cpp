@@ -136,6 +136,11 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         case Phase::MMU_WALK_L1: adr=s.mmu_l1_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_WALK_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::MMU_AD_WRITE: adr=s.mmu_pte_addr; wdat=s.mmu_pte; we=true; sel=0x0F; stb=cyc=true; break;
+        // RMW 空拍：cyc 保持高表示总线仍被本核占用（别的设备插不进来），
+        // 只拉低 stb 让从设备看到事务边界——AMO 的原子性就靠这个
+        case Phase::AMO_GAP: adr=s.bus_adr; wdat=s.bus_wdat; sel=0x0F; stb=false; cyc=true; break;
+        case Phase::AMO_WRITE: adr=s.bus_adr; wdat=s.bus_wdat; we=true; sel=0x0F; stb=cyc=true; break;
+        case Phase::MMU_AD_GAP: adr=s.mmu_pte_addr; wdat=s.mmu_pte; sel=0x0F; stb=false; cyc=true; break;
         default: break;
         }
         packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
@@ -295,10 +300,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 // SC 的 reg[rd] 已在 case 中设置(0或1)，跳到此时不覆盖
                 amo_write:
                     if (s.lr_valid && s.lr_addr == (s.bus_adr & ~3u)) s.lr_valid = false; // AMO 写也算覆盖保留字
-                    s.bus_wdat=new_val; s.bus_we=true; // 切换到写
-                    // 保持 stb/cyc 高（同一事务），只翻转 we 0→1
-                    // WishboneMemory 检测 we_rise 在同一事务内完成写操作
-                    wb_adr=s.bus_adr; wb_dat=new_val; wb_we=true; wb_sel=0x0F; wb_stb=wb_cyc=true;
+                    s.bus_wdat=new_val; s.bus_we=true;
+                    // 读事务到此结束，先空一拍拉低 stb，下一拍再发独立的写事务
+                    s.phase = Phase::AMO_GAP;
                     break;
                 } else {
                     // 普通读；跨字非对齐访问要再读一个字，与第一次读回的内容拼接
@@ -388,7 +392,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                     if (s.mmu_is_write && !(l1e & RV::PTE_D)) upd |= RV::PTE_D;
                     if (upd != l1e) {
                         s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l1_addr; s.mmu_pte_is_l1 = true;
-                        s.phase = Phase::MMU_AD_WRITE;
+                        s.phase = Phase::MMU_AD_GAP;
                         wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
                         wb_stb = wb_cyc = true;
                         break;
@@ -434,7 +438,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                     // 注意：这里沿用同一笔事务把 we 从 0 翻到 1（stb 不拉低），
                     // 与 AMO 的写回路径一致，依赖从设备按 we 上升沿识别写操作
                     s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l2_addr; s.mmu_pte_is_l1 = false;
-                    s.phase = Phase::MMU_AD_WRITE;
+                    s.phase = Phase::MMU_AD_GAP;
                     wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
                     wb_stb = wb_cyc = true;
                     break;
@@ -455,6 +459,22 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         }
         break;
 
+    case Phase::AMO_GAP:
+        s.phase = Phase::AMO_WRITE;
+        break;
+    case Phase::AMO_WRITE:
+        wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+        if (in.ack) {
+            // 与普通写完成后的收尾保持一致：清 AMO 标志、复位访问阶段、结束事务
+            s.bus_amo = false;
+            s.acc_stage = 0;
+            wb_stb = wb_cyc = false;
+            s.phase = Phase::FETCH;
+        }
+        break;
+    case Phase::MMU_AD_GAP:
+        s.phase = Phase::MMU_AD_WRITE;
+        break;
     case Phase::MMU_AD_WRITE:
         wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
         if (in.ack) {
@@ -686,10 +706,16 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                                     : -prod - (double)c;
         float r = (float)exact;
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
+        // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
+        bool fma_snan = ((s.fregs[rs1] >> 23) & 0xFF) == 0xFF && (s.fregs[rs1] & 0x7FFFFFu) && !(s.fregs[rs1] & 0x400000u)
+                        || ((s.fregs[rs2] >> 23) & 0xFF) == 0xFF && (s.fregs[rs2] & 0x7FFFFFu) && !(s.fregs[rs2] & 0x400000u)
+                        || ((s.fregs[rs3] >> 23) & 0xFF) == 0xFF && (s.fregs[rs3] & 0x7FFFFFu) && !(s.fregs[rs3] & 0x400000u);
         if (std::isnan(r)) {
-            if (!std::isnan(a) && !std::isnan(b) && !std::isnan(c)) s.fcsr |= 0x10;
-        } else if (std::isfinite(exact) && (double)r != exact) {
-            s.fcsr |= 0x01;
+            if (fma_snan || (!std::isnan(a) && !std::isnan(b) && !std::isnan(c))) s.fcsr |= 0x10;
+        } else if (std::isfinite(exact)) {
+            if ((double)r != exact) s.fcsr |= 0x01;          // NX
+            if (std::isinf(r)) s.fcsr |= 0x04;                // OF：有限结果舍入成 inf
+            else if (r == 0.0f && exact != 0.0) s.fcsr |= 0x02; // UF
         }
         s.mstatus |= (3u << 13);
         break;
@@ -713,7 +739,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
                 s.fregs[rd] = 0x7FC00000u;
-                if (!std::isnan(a) && !std::isnan(b)) s.fcsr |= 0x10; // NV：非法运算产生 NaN
+                // sNaN 输入本身就是非法运算；其余情况是"非 NaN 输入算出了 NaN"
+                if (snan_in || (!std::isnan(a) && !std::isnan(b))) s.fcsr |= 0x10;
                 return;
             }
             setf(r);
@@ -728,7 +755,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         case RV::F7_FSUB: setf_flags((double)a - (double)b); break;
         case RV::F7_FMUL: setf_flags((double)a * (double)b); break;
         case RV::F7_FDIV:
-            if (b == 0.0f && !std::isnan(a)) s.fcsr |= 0x08; // DZ
+            // DZ 只适用于"有限非零被除数 / 零"；inf/0 的结果是 inf，不是错误
+            if (b == 0.0f && std::isfinite(a) && a != 0.0f) s.fcsr |= 0x08;
             setf_flags((double)a / (double)b);
             break;
         case RV::F7_FSQRT:
@@ -740,12 +768,14 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             switch (f3) {
             case 0: sign = ub & 0x80000000u; break;          // FSGNJ
             case 1: sign = (~ub) & 0x80000000u; break;       // FSGNJN
-            default: sign = (ua ^ ub) & 0x80000000u; break;  // FSGNJX
+            case 2: sign = (ua ^ ub) & 0x80000000u; break;   // FSGNJX
+            default: takeTrap(s, RV::EXC_II, inst); return;  // f3 >= 3 是保留编码
             }
             s.fregs[rd] = (ua & 0x7FFFFFFFu) | sign;
             break;
         }
         case RV::F7_FMINMAX:
+            if (f3 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // f3 >= 2 是保留编码
             // NaN 参与时返回另一个操作数并置 NV；两个都是 NaN 才返回 canonical NaN
             if (snan_in) s.fcsr |= 0x10;
             if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = 0x7FC00000u;
@@ -760,6 +790,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             }
             break;
         case RV::F7_FCMP: {
+            if (f3 >= 3) { takeTrap(s, RV::EXC_II, inst); return; } // f3 >= 3 是保留编码
             uint32_t r = 0;
             // FLT/FLE 遇任何 NaN 都产生无效运算；FEQ 只对 signaling NaN 报
             if (std::isnan(a) || std::isnan(b)) {
@@ -794,13 +825,19 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             }
             break;
         }
-        case RV::F7_FCVT_S_W:
-            setf(rs2 == 0 ? (float)(int32_t)v1 : (float)v1);
+        case RV::F7_FCVT_S_W: {
+            if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
+            // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX
+            double d = rs2 == 0 ? (double) (int32_t) v1 : (double) v1;
+            float f = (float) d;
+            if ((double) f != d) s.fcsr |= 0x01;
+            setf(f);
             break;
+        }
         case RV::F7_FMV_X_W:
             if (f3 == 0) { // FMV.X.W
                 s.regs[rd] = s.fregs[rs1];
-            } else {       // FCLASS.S
+            } else if (f3 == 1) { // FCLASS.S（f3 >= 2 是保留编码）
                 uint32_t u = s.fregs[rs1], cls = 0;
                 bool sign = (u >> 31) != 0;
                 uint32_t exp = (u >> 23) & 0xFF, frac = u & 0x7FFFFF;
@@ -810,6 +847,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 else if (exp == 0) cls = sign ? (1u << 2) : (1u << 5);              // 非规格化
                 else cls = sign ? (1u << 1) : (1u << 6);                            // 规格化
                 s.regs[rd] = cls;
+            } else {
+                takeTrap(s, RV::EXC_II, inst); return;
             }
             break;
         case RV::F7_FMV_W_X:

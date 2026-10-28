@@ -63,10 +63,13 @@ std::string DFlipFlop::genFuncDef_seq() const {
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
-    if (_has_rst && rst_nid >= 0)
-        read_opt += std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
-    if (_has_preset && pre_nid >= 0)
-        read_opt += std::format("\n    bool _pre = false; dcs_memcpy(&_pre, _w[{}], 1);", pre_nid);
+    // 引脚存在但悬空时也要声明变量：update 分支会引用它，否则生成的 C 代码编译失败
+    if (_has_rst)
+        read_opt += rst_nid >= 0 ? std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid)
+                              : std::string("\n    bool _rst = false;");
+    if (_has_preset)
+        read_opt += pre_nid >= 0 ? std::format("\n    bool _pre = false; dcs_memcpy(&_pre, _w[{}], 1);", pre_nid)
+                              : std::string("\n    bool _pre = false;");
 
     std::string edge = std::format("bool _rising = (_clk && !{}.prev_clk);", st);
 
@@ -272,8 +275,9 @@ std::string Register::genFuncDef_seq() const {
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
-    if (_has_rst && rst_nid >= 0)
-        read_opt += std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid);
+    if (_has_rst)
+        read_opt += rst_nid >= 0 ? std::format("\n    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);", rst_nid)
+                              : std::string("\n    bool _rst = false;");
 
     std::string update;
     if (_has_rst) {
@@ -405,8 +409,9 @@ std::string Counter::genFuncDef_seq() const {
         read_opt += "\n    bool _en = true;";
     else
         read_opt += "\n    bool _en = true;";
-    if (_has_updown && updown_nid >= 0)
-        read_opt += std::format("\n    bool _updown = false; dcs_memcpy(&_updown, _w[{}], 1);", updown_nid);
+    if (_has_updown)
+        read_opt += updown_nid >= 0 ? std::format("\n    bool _updown = false; dcs_memcpy(&_updown, _w[{}], 1);", updown_nid)
+                                   : std::string("\n    bool _updown = false;");
     if (_has_clr && clr_nid >= 0)
         read_opt += std::format("\n    bool _clr = false; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
     else if (_has_clr)
@@ -513,8 +518,9 @@ std::string ShiftRegister::genFuncDef_seq() const {
     std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
                                         : "bool _clk = false;";
     std::string read_opt;
-    if (_has_dir && dir_nid >= 0)
-        read_opt += std::format("\n    bool _dir = false; dcs_memcpy(&_dir, _w[{}], 1);", dir_nid);
+    if (_has_dir)
+        read_opt += dir_nid >= 0 ? std::format("\n    bool _dir = false; dcs_memcpy(&_dir, _w[{}], 1);", dir_nid)
+                                : std::string("\n    bool _dir = false;");
     if (_has_clr && clr_nid >= 0)
         read_opt += std::format("\n    bool _clr = false; dcs_memcpy(&_clr, _w[{}], 1);", clr_nid);
     else if (_has_clr)

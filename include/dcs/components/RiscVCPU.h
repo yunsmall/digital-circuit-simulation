@@ -118,7 +118,11 @@ public:
 private:
     enum class Phase : uint8_t {
         FETCH, WAIT_FETCH, EXECUTE, WAIT_MEM, HALTED,
-        MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_WRITE
+        // MMU_AD_GAP 是 A/D 写回前的空拍：必须先拉低 stb 结束读 PTE 那笔事务，
+        // 再重新发起写事务，不能靠"事务中途把 we 翻成 1"——不是所有从设备都认这个语义
+        // GAP 是"结束上一笔事务的空拍"：真实硬件完成一次读事务（ack）后必须先拉低 stb，
+        // 再重新发起写事务，不能在事务中途翻转 we——那不是 Wishbone 的语义
+        AMO_GAP, AMO_WRITE, MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_GAP, MMU_AD_WRITE
     };
 
     struct CpuState {

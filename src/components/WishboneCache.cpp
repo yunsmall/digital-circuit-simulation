@@ -230,7 +230,10 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
     }
     if (!up_active)
         s.up_hold_ack = false;
-    s.prev_up_stb = up_active;
+    // 填充期间不改 prev_up_stb：否则上游在填充中拉低再拉高的 stb（多主切换时常见）
+    // 会被吞掉，而缓存还停在填充状态，新请求永远进不来，旧数据还可能被当成新应答转发
+    if (s.fill_state == 0)
+        s.prev_up_stb = up_active;
 
     std::memset(outputs, 0, O_COUNT * SLOT);
     std::memcpy(outputs + O_DAT * SLOT, &dout, 4);
