@@ -121,7 +121,7 @@ struct WBROMFixture {
 
     // 半个时钟周期
     void halfTick(bool clk_val) {
-        circuit->setWire(clk->id(), {clk_val ? 1ULL : 0ULL});
+        circuit->setWire(clk->id(), {(uint8_t) (clk_val ? 1 : 0)});
         circuit->tick();
     }
 
