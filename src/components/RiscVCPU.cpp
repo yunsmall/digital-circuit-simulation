@@ -538,6 +538,31 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     int32_t s1=(int32_t)v1, s2=(int32_t)v2;
     uint32_t npc=s.pc+4;
 
+        // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
+        // 先取就近结果，再按方向用 nextafterf 修正一格。
+        auto round_to_float = [&](double exact, int rmode) -> float {
+            float r = (float) exact;
+            if (!std::isfinite(r)) return r;
+            double back = (double) r;
+            if (back == exact) return r;
+            switch (rmode) {
+            case 1: // RTZ
+                return std::fabs(back) > std::fabs(exact) ? std::nextafterf(r, 0.0f) : r;
+            case 2: // RDN
+                return back > exact ? std::nextafterf(r, -std::numeric_limits<float>::infinity()) : r;
+            case 3: // RUP
+                return back < exact ? std::nextafterf(r, std::numeric_limits<float>::infinity()) : r;
+            case 4: { // RMM：就近，中点向外
+                float away = std::nextafterf(r, exact > 0 ? std::numeric_limits<float>::infinity()
+                                                          : -std::numeric_limits<float>::infinity());
+                return std::fabs((double) away - exact) < std::fabs(back - exact) ? away : r;
+            }
+            default: return r; // RNE
+            }
+        };
+        // rm 在浮点指令里是 funct3，这里取它的字段
+        uint32_t f3_field = (inst >> RV::SH_F3) & RV::M_F3;
+        int cur_rm = (f3_field == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3_field;
     switch (op) {
     case RV::OP_IMM:
         // 移位立即数的 funct7 只有 0（SLLI）和 0x20（SRAI）合法，其余是保留编码
@@ -741,7 +766,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                      : (op == 0x47) ? prod - (double)c
                      : (op == 0x4B) ? -prod + (double)c
                                     : -prod - (double)c;
-        float r = (float)exact;
+        float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
         // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
         bool fma_snan = ((s.fregs[rs1] >> 23) & 0xFF) == 0xFF && (s.fregs[rs1] & 0x7FFFFFu) && !(s.fregs[rs1] & 0x400000u)
@@ -774,29 +799,6 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         };
         bool snan_in = is_snan(s.fregs[rs1]) || is_snan(s.fregs[rs2]);
         uint32_t rm = f3;
-        // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
-        // 先取就近结果，再按方向用 nextafterf 修正一格。
-        auto round_to_float = [&](double exact, int rmode) -> float {
-            float r = (float) exact;
-            if (!std::isfinite(r)) return r;
-            double back = (double) r;
-            if (back == exact) return r;
-            switch (rmode) {
-            case 1: // RTZ
-                return std::fabs(back) > std::fabs(exact) ? std::nextafterf(r, 0.0f) : r;
-            case 2: // RDN
-                return back > exact ? std::nextafterf(r, -std::numeric_limits<float>::infinity()) : r;
-            case 3: // RUP
-                return back < exact ? std::nextafterf(r, std::numeric_limits<float>::infinity()) : r;
-            case 4: { // RMM：就近，中点向外
-                float away = std::nextafterf(r, exact > 0 ? std::numeric_limits<float>::infinity()
-                                                          : -std::numeric_limits<float>::infinity());
-                return std::fabs((double) away - exact) < std::fabs(back - exact) ? away : r;
-            }
-            default: return r; // RNE
-            }
-        };
-        int cur_rm = (rm == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) rm;
         auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
         auto setf_flags = [&](double exact) {
@@ -890,7 +892,16 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             case 2: r = std::floor(a); break;   // RDN
             case 3: r = std::ceil(a); break;    // RUP
             case 4: r = std::round(a); break;   // RMM
-            default: r = std::nearbyint(a); break; // RNE
+            default: {
+                // 不能用 nearbyint：它跑的是当前浮点环境的舍入方向，
+                // 宿主或 DLL 调过 fesetround 就会把 RNE 悄悄变成别的模式
+                double fl = std::floor(a), ce = std::ceil(a);
+                double dlo = a - fl, dhi = ce - a;
+                if (dlo < dhi) r = fl;
+                else if (dhi < dlo) r = ce;
+                else r = (std::fmod(fl, 2.0) == 0.0 ? fl : ce); // 中点取偶
+                break;
+            }
             }
             if (std::isfinite(a) && std::isfinite(r) && r != a) s.fcsr |= 0x01; // 截掉小数部分即不精确
             if (rs2 == 0) { // FCVT.W.S
