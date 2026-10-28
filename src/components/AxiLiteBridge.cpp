@@ -84,7 +84,7 @@ std::string AxiLiteBridge::genFuncDef_seq() const {
     code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
     for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    _dcs_axib_tick(_axib_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    code += std::format("    _dcs_axib_tick(_axib_state_{0}, _in, _op);\n", _id);
     const int widths[O_COUNT] = {1, 1, 2, 1, 1, 32, 2, 1, 32, 32, 1, 4, 1, 1};
     for (int i = 0; i < O_COUNT; i++)
         code += std::format("    {{ uint32_t _v=0; dcs_memcpy(&_v,_obuf[{}],4); {} }}\n", i,

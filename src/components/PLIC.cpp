@@ -76,7 +76,7 @@ std::string PLIC::genFuncDef_seq() const {
     code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
     code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
     code += "_obuf[0],_obuf[1],_obuf[2]};\n";
-    code += std::format("    _dcs_plic_tick(_plic_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    code += std::format("    _dcs_plic_tick(_plic_state_{0}, _in, _op);\n", _id);
     // 输出仍走 genOutputWrite：它同时写 _c_out 与 _w，保证下游同拍可见
     code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
     code += "    { uint8_t _a=0; dcs_memcpy(&_a,_obuf[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";

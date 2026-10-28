@@ -76,7 +76,7 @@ std::string DMA::genFuncDef_seq() const {
     code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
     for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    _dcs_dma_tick(_dma_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    code += std::format("    _dcs_dma_tick(_dma_state_{0}, _in, _op);\n", _id);
     code += "    { uint32_t _v=0; dcs_memcpy(&_v,_obuf[0],4); " + genOutputWrite(O_CFG_DAT, "_v", 32) + " }\n";
     code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[1],1); " + genOutputWrite(O_CFG_ACK, "_v", 1) + " }\n";
     code += "    { uint32_t _v=0; dcs_memcpy(&_v,_obuf[2],4); " + genOutputWrite(O_M_ADR, "_v", 32) + " }\n";

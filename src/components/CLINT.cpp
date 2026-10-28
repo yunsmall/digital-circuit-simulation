@@ -64,7 +64,7 @@ std::string CLINT::genFuncDef_seq() const {
     code += genInputPtrArray("_in");
     code += "    uint8_t _obuf[4][16]; dcs_memset(_obuf, 0, sizeof(_obuf));\n";
     code += "    uint8_t *_op[4] = {_obuf[0],_obuf[1],_obuf[2],_obuf[3]};\n";
-    code += std::format("    _dcs_clint_tick(_clint_state_{0}, (const uint8_t **)_in, _op);\n", id);
+    code += std::format("    _dcs_clint_tick(_clint_state_{0}, _in, _op);\n", id);
     code += "    {\n";
     code += "        uint32_t _dout = 0; dcs_memcpy(&_dout, _obuf[0], 4);\n";
     code += "        uint8_t _ack = 0; dcs_memcpy(&_ack, _obuf[1], 1);\n";

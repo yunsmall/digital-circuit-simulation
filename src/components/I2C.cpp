@@ -77,7 +77,7 @@ std::string I2C::genFuncDef_seq() const {
     code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
     for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    _dcs_i2c_tick(_i2c_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    code += std::format("    _dcs_i2c_tick(_i2c_state_{0}, _in, _op);\n", _id);
     code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
     code += "    { uint8_t _a=0; dcs_memcpy(&_a,_obuf[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";
     code += "    { uint8_t _s=0; dcs_memcpy(&_s,_obuf[2],1); " + genOutputWrite(O_SCL, "_s", 1) + " }\n";

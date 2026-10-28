@@ -65,6 +65,7 @@ private:
 
     // ---- C++ 回调（注册为 JIT 符号） ----
     static void memTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
+    static void memReset(void *state_ptr);
 };
 
 } // namespace dsc
