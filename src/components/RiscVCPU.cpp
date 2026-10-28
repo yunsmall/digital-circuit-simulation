@@ -557,8 +557,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     case RV::AUIPC: s.regs[rd]=s.pc+(uint32_t)iu; break;
     case RV::OP: {
     // 同理：SLL/SRL/SRA 的 funct7 只有 0 和 0x20 合法
-    // SLL/SRL/SRA 共用 funct3（SRL 与 SRA 都是 5，靠 funct7 区分）
-    if ((f3 == RV::F3_SLL || f3 == RV::F3_SRL) && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
+    // SLL 的 funct7 只能是 0；SRL/SRA 共用 funct3=5，靠 funct7 区分
+    if (f3 == RV::F3_SLL && f7 != 0) [[unlikely]]
+    { takeTrap(s, RV::EXC_II, inst); return; }
+    if (f3 == RV::F3_SRL && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
     { takeTrap(s, RV::EXC_II, inst); return; }
     // M 扩展：funct7=0x01 时 funct3 选择乘除法，与普通运算共用同一 opcode
     if (f7 == 0x01) {
@@ -675,7 +677,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             break;
         default: [[unlikely]] takeTrap(s, RV::EXC_II, inst); return;
         }
-        if (v1 & 3) [[unlikely]] { takeTrap(s, RV::EXC_LAM, v1); return; } // AMO 必须自然对齐
+        // AMO/LR/SC 属于 store/AMO 类，misaligned 的 cause 是 6 不是 4
+        if (v1 & 3) [[unlikely]] { takeTrap(s, RV::EXC_SAM, v1); return; }
         uint32_t va=v1, pa;
         // LR 只读，只要求页有 R；SC 与其余 AMO 要写，要求 W
         bool amo_write = (((inst >> 27) & 0x1F) != RV::F5_LR);
@@ -774,6 +777,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             else if (r == 0.0f && exact != 0.0) s.fcsr |= 0x02; // UF
         };
 
+        // 这五条的 funct3 是舍入模式：5/6 保留、7 取 fcsr.frm。
+        // FSGNJ/FMINMAX/FCMP/FCVT/FMV 的 funct3 另有含义，不能套用这条。
+        if (f7 == RV::F7_FADD || f7 == RV::F7_FSUB || f7 == RV::F7_FMUL || f7 == RV::F7_FDIV
+            || f7 == RV::F7_FSQRT) {
+            if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
+        }
         switch (f7) {
         case RV::F7_FADD: setf_flags((double)a + (double)b); break;
         case RV::F7_FSUB: setf_flags((double)a - (double)b); break;
@@ -882,6 +891,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             }
             break;
         case RV::F7_FMV_W_X:
+            if (f3 != 0) { takeTrap(s, RV::EXC_II, inst); return; } // funct3 固定为 0
             s.fregs[rd] = v1;
             break;
         default:
@@ -932,7 +942,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F12_WFI:
-                // TW=1 时 S 态执行 WFI 是非法指令
+                // WFI 是 S 级指令，U 态无条件非法；S 态还要看 TW
+                if (s.priv == RV::PRIV_U) [[unlikely]]
+                { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 if (s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TW)) [[unlikely]]
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 // 有中断挂起就继续执行；否则停在这里，PC 不前进
