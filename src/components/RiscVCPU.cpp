@@ -143,7 +143,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     }
 
 
-    uint32_t wb_adr=0,wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0; bool ho=false;
+    uint32_t wb_adr=0,wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0;
 
     switch (s.phase) {
     case Phase::FETCH: {
@@ -472,7 +472,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         }
         break;
 
-    case Phase::HALTED: ho=true; break;
+    case Phase::HALTED: break;
     }
     s.regs[0]=0;
     packOut(outputs, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);

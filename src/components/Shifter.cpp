@@ -1,6 +1,7 @@
 // Shifter — 移位器实现
 #include "dcs/components/Shifter.h"
 #include <bit>
+#include <cmath>
 #include <format>
 
 namespace dsc {
@@ -21,8 +22,9 @@ Shifter::Shifter(const std::string &name, int bit_width, ShiftMode mode) :
     CombinationalComponent(name, shift_mode_str(mode)), _bit_width(bit_width),
     _mode(mode) {
     setParam("bit_width", std::to_string(bit_width));
-    // 移位量位宽 = ceil(log2(bit_width))，最小 1 位
-    int shift_bits = std::max(1, std::bit_width((unsigned) bit_width) - 1);
+    // 移位量要能表示 0..bit_width-1：bit_width(x)-1 等于 floor(log2)，非 2 的幂位宽会少一位
+    int shift_bits = (int) std::ceil(std::log2((double) bit_width));
+    if (shift_bits < 1) shift_bits = 1;
     addInput("in", bit_width);
     addInput("shift", shift_bits);
     addOutput("out", bit_width);
