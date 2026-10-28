@@ -41,6 +41,7 @@ private:
         uint32_t tx_shift; // 待发送字节
         // 接收
         bool rx_active;
+        bool rx_confirm; // 正在起始位中点做确认
         uint32_t rx_cnt;
         uint8_t rx_bit;
         uint32_t rx_shift;

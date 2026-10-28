@@ -194,7 +194,7 @@ void AxiLiteBridge::bridgeTick(void *state_ptr, const uint8_t *inputs, uint8_t *
     std::memcpy(outputs + O_WB_ADR * SLOT, &s.wb_adr, 4);
     std::memcpy(outputs + O_WB_DAT * SLOT, &s.wb_dat, 4);
     outputs[O_WB_WE * SLOT] = s.wb_we ? 1 : 0;
-    outputs[O_WB_SEL * SLOT] = 0x0F;
+    outputs[O_WB_SEL * SLOT] = s.wb_we ? s.w_strb : 0x0F; // 写事务必须按 AXI 的字节使能来
     outputs[O_WB_STB * SLOT] = s.wb_stb ? 1 : 0;
     outputs[O_WB_CYC * SLOT] = s.wb_cyc ? 1 : 0;
 }

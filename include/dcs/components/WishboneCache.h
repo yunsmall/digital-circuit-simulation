@@ -50,7 +50,7 @@ private:
         uint32_t up_adr, up_dat;
         bool up_we, up_stb, up_cyc;
         uint32_t up_latched;
-        bool up_ack;
+        bool up_hold_ack; // 应答保持到主设备撤销 stb，否则 ack 只有一拍
         bool prev_up_stb;
         // 下游事务
         uint32_t dn_adr, dn_dat;

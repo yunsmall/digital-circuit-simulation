@@ -159,7 +159,7 @@ void PLIC::plicTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                     if (!(cand & (1u << id)))
                         continue;
                     uint32_t pr = s.priority[id];
-                    if (pr > best_prio || (pr == best_prio && pr > 0 && best == 0)) {
+                    if (pr > best_prio) { // 标准 PLIC 要求严格大于 threshold
                         best_prio = pr;
                         best = (uint32_t) id;
                     }
@@ -184,7 +184,7 @@ void PLIC::plicTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                     if (!(cand & (1u << id)))
                         continue;
                     uint32_t pr = s.priority[id];
-                    if (pr > best_prio || (pr == best_prio && pr > 0 && best == 0)) {
+                    if (pr > best_prio) { // 标准 PLIC 要求严格大于 threshold
                         best_prio = pr;
                         best = (uint32_t) id;
                     }

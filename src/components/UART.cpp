@@ -112,23 +112,34 @@ void UART::uartTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
         }
     }
 
-    // ---- 接收：检测起始位下降沿，之后每 baud_div 采样一位 ----
+    // ---- 接收：起始沿 -> 半位确认起始位 -> 每位中点采样 -> 停止位校验 ----
+    // 半位确认可以把窄脉冲噪声挡掉，中点采样则让波特率有偏差时仍落在位中央
     if (!s.rx_active) {
-        if (s.prev_rx && !rx) { // 空闲高电平转低 = 起始位
+        if (s.prev_rx && !rx) { // 空闲高转低 = 起始位
             s.rx_active = true;
+            s.rx_confirm = true;
             s.rx_cnt = 0;
             s.rx_bit = 0;
             s.rx_shift = 0;
         }
-    } else if (++s.rx_cnt >= s.baud_div) {
+    } else if (++s.rx_cnt >= (s.rx_confirm ? s.baud_div / 2 : s.baud_div)) {
         s.rx_cnt = 0;
-        if (s.rx_bit < 8) {
+        if (s.rx_confirm) {
+            s.rx_confirm = false;
+            if (rx) {
+                s.rx_active = false; // 半位处已回高，是噪声
+            } else {
+                s.rx_cnt = s.baud_div / 2; // 再走半位正好落在 bit0 中点
+            }
+        } else if (s.rx_bit < 8) {
             s.rx_shift |= (uint32_t) (rx ? 1 : 0) << s.rx_bit;
             s.rx_bit++;
         } else {
             s.rx_active = false;
-            s.rx_data = s.rx_shift & 0xFFu;
-            s.rx_valid = true;
+            if (rx) { // 停止位必须是高，否则算帧错误，不交付数据
+                s.rx_data = s.rx_shift & 0xFFu;
+                s.rx_valid = true;
+            }
         }
     }
     s.prev_rx = rx;

@@ -120,6 +120,9 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
     bool dn_ack_i = (inputs[(U_COUNT + D_ACK_I) * SLOT] & 1) != 0;
 
     bool up_active = s.up_stb && s.up_cyc;
+    // 只有 stb 的上升沿才代表一个新请求；主设备会保持 stb 直到看到 ack，
+    // 期间若重复接收请求，下游会看到同一笔写被发起多次
+    bool up_rise = up_active && !s.prev_up_stb;
     uint32_t dout = 0;
     bool up_ack = false;
 
@@ -128,7 +131,7 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
 
     switch (s.fill_state) {
     case F_IDLE:
-        if (up_active) {
+        if (up_rise) {
             if (!s.up_we) {
                 CacheLine &l = s.line[line_idx];
                 if (l.valid && l.tag == tag) {
@@ -203,8 +206,17 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
         up_ack = true; // 命中的行在接请求时就地更新过了
     }
 
+    // 主设备会保持 stb 直到看见 ack，所以应答和数据必须一直有效到事务结束
+    if (up_active && s.up_hold_ack) {
+        dout = s.up_latched;
+        up_ack = true;
+    }
+    if (up_ack) {
+        s.up_latched = dout;
+        s.up_hold_ack = true;
+    }
     if (!up_active)
-        s.prev_up_stb = false;
+        s.up_hold_ack = false;
     s.prev_up_stb = up_active;
 
     std::memset(outputs, 0, O_COUNT * SLOT);

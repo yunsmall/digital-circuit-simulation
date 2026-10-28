@@ -119,12 +119,13 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                 // SCL 下降沿推进一位
                 switch (s.phase) {
                 case Phase::START:
-                    s.scl = true;
-                    s.sda_low = true;
+                    // 起始条件已在写 CONTROL 时建立（SCL 高、SDA 低），
+                    // 这里处在 SCL 下降沿，直接送出地址最高位，不能再动 scl
                     s.phase = Phase::ADDR;
                     s.bit_idx = 0;
                     s.shift = (s.addr & 0x7Fu) << 1; // 7 位地址 + 写位
-                    s.scl = false;
+                    s.sda_low = ((s.shift >> 7) & 1u) == 0;
+                    s.bit_idx = 1;
                     break;
                 case Phase::ADDR:
                     if (s.bit_idx == 0)
@@ -163,8 +164,10 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                     s.phase = Phase::STOP;
                     break;
                 case Phase::STOP:
-                    s.sda_low = false; // 释放 SDA，SCL 高时形成停止条件
-                    s.scl = true;
+                    // 先在 SCL 低电平时释放 SDA，再由外层把 SCL 拉高，
+                    // 才能形成"SCL 高时 SDA 上升"的停止条件
+                    s.sda_low = false;
+                    s.scl = true; // 释放 SDA 后再把 SCL 拉高，构成停止条件
                     s.phase = Phase::DONE;
                     s.done = true;
                     break;

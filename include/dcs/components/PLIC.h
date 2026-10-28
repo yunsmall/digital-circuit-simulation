@@ -34,7 +34,9 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    static constexpr int MAX_SOURCES = 32;
+    // 源号 0 保留，pending/enable/in_service 用 uint32_t 的 bit(id) 表示，
+    // 因此最多只能表示源 1..31
+    static constexpr int MAX_SOURCES = 31;
 
     struct PlicState {
         uint32_t priority[MAX_SOURCES + 1]; // 下标即源号，0 号未用
