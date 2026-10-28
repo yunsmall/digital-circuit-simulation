@@ -948,7 +948,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 else s.regs[rd] = (uint32_t)(int32_t)r;
             } else { // FCVT.WU.S
                 if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = 0xFFFFFFFFu; s.fcsr |= 0x10; }
-                else if (r <= -1.0f) { s.regs[rd] = 0u; s.fcsr |= 0x10; }
+                // r 已经是舍入后的整数值，只要为负就饱和到 0。
+                // 写成 <= -1 会漏掉 (-1,0) 区间，那里 (uint32_t)负数是 UB
+                else if (r < 0.0f) { s.regs[rd] = 0u; s.fcsr |= 0x10; }
                 else s.regs[rd] = (uint32_t)r;
             }
             break;
