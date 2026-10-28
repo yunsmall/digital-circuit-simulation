@@ -166,12 +166,31 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
             break;
         }
         s.fetch_pa = fpa;
+        {
+            uint32_t ic_idx = (fpa >> 2) & 255u;
+            uint32_t ic_tag = fpa >> 10;
+            if (s.icache[ic_idx].valid && s.icache[ic_idx].tag == ic_tag) {
+                s.ic_hits++;
+                s.inst = s.icache[ic_idx].inst;
+                s.phase = Phase::EXECUTE; // 命中就不再发起总线读
+                wb_stb = wb_cyc = false;
+                break;
+            }
+            s.ic_misses++;
+        }
         wb_adr=fpa; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
         break;
     }
 
     case Phase::WAIT_FETCH:
-        if (in.ack) { s.inst=in.dat; wb_stb=wb_cyc=false; s.phase=Phase::EXECUTE; }
+        if (in.ack) {
+            s.inst=in.dat;
+            uint32_t ic_idx = (s.fetch_pa >> 2) & 255u;
+            s.icache[ic_idx].tag = s.fetch_pa >> 10;
+            s.icache[ic_idx].inst = in.dat;
+            s.icache[ic_idx].valid = true;
+            wb_stb=wb_cyc=false; s.phase=Phase::EXECUTE;
+        }
         else { wb_adr=s.fetch_pa; wb_sel=0x0F; wb_stb=wb_cyc=true; }
         break;
 
@@ -429,6 +448,7 @@ void RiscVCPU::cpuReset(void *state_ptr) {
     auto &s = *static_cast<CpuState*>(state_ptr);
     std::memset(&s,0,sizeof(s));
     s.phase=Phase::FETCH; s.priv=RV::PRIV_M;
+    for (auto &l : s.icache) l.valid = false;
 }
 
 // ============================================================
@@ -756,7 +776,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         break;
     }
 
-    case RV::MISC_MEM: break;
+    case RV::MISC_MEM:
+        // FENCE.I 是软件告诉硬件"我改过指令内存了"，必须让指令缓存失效
+        if (f3 == 1) {
+            for (auto &l : s.icache) l.valid = false;
+        }
+        break;
 
     // ---- SYSTEM ----
     case RV::SYSTEM: {

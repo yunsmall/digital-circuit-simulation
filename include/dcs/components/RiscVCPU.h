@@ -170,6 +170,11 @@ private:
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
         uint32_t mmu_pte;  // 需要写回页表的 PTE（补 A/D 位）
+        // 指令缓存：直接映射，每行一条指令。循环体是最常见的取指热点，
+        // 缓存下来可以完全跳过总线事务。
+        struct ICacheLine { uint32_t tag; uint32_t inst; bool valid; };
+        ICacheLine icache[256];
+        uint32_t ic_hits, ic_misses;
 
         // 非对齐访存拆成两次对齐事务时的中间状态。真实从设备只接受字对齐地址 +
         // 字节使能，跨字访问必须由主设备自己拆开，不能改总线语义去迁就 CPU。
