@@ -59,6 +59,20 @@ struct CircuitError {
 //   4. 重建:  c.clear();     // 清空电路和编译结果，可重新构建
 //
 // 线程安全: 不支持并发，所有操作用户负责同步
+//
+// ---- 当前承担了六类职责，后续拆分的目标边界 ----
+//   NetlistGraph     createNet / connect / disconnect / removeNet / removeComponent
+//                    / findNet / check（环路与多驱动检测）/ expandComposites（拓扑序）
+//   CodeGen          generateC（把网表翻译成 C 源码，含总线决议与三阶段 tick）
+//   JitBackend       compile 里的 LLVM/TCC 分支、符号注入、函数指针解析、jitCleanup
+//   CircuitSerializer fromJson（以及 Component 侧的 toJson/exportParams）
+//   Runtime          init / tick / setWire / getWire / onBusConflict
+//   BusTopology      _bus_nets 的维护与 BusDriver 记录（跨 connect / removeNet / CodeGen）
+// 拆分时的障碍：BusDriver、_bus_nets、_w/_c_out 的命名规则三者被 CodeGen 和 Runtime 共享，
+// 要么先把这些提到独立的小类型里，要么让 CodeGen 通过只读视图访问。
+// 硬性约束：拆出来的部件必须是编译期组合的具体类型（Circuit 直接持有成员），
+// 不许引入虚基类或多态接口——tick/setWire/getWire 在每 tick 的热路径上，
+// 后端选择继续用 #ifdef 编译期决定，不能变成运行期分发。
 // ============================================================
 class Circuit {
 public:
