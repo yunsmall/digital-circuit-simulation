@@ -562,6 +562,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                                                               : -std::numeric_limits<float>::max());
                 }
             }
+            // RNE/RMM 还有一段区间需要拦：中点 2^128-2^103 小于 Fmax=2^128-2^104，
+            // 所以 exact 落在 [中点, Fmax] 时，上面那个"> Fmax"的分支进不来
+            if ((rmode == 0 || rmode == 4) && std::isfinite(exact)
+                && std::fabs(exact) >= 0x1p128 - 0x1p103)
+                return exact > 0 ? std::numeric_limits<float>::infinity()
+                                 : -std::numeric_limits<float>::infinity();
             float r = (float) exact;
             if (!std::isfinite(r)) return r;
             double back = (double) r;
