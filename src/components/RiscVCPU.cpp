@@ -1140,9 +1140,10 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_MTVAL:   s.mtval = val; break;
     case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~0x000C6122u) | (val & 0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
     case RV::CSR_SIE:     s.mie = (s.mie & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
-    // 软件可写的中断挂起位只有 SSIP（M 态还多一个 MSIP，用于触发软件中断）；
-    // STIP/SEIP 由 CLINT/PLIC 驱动，属只读，软件写了会把中断源状态覆盖掉
-    case RV::CSR_MIP:     s.mip = (s.mip & ~(RV::IRQ_SSI | RV::IRQ_MSI)) | (val & (RV::IRQ_SSI | RV::IRQ_MSI)); break;
+    // 软件能改的挂起位只有 SSIP。MSIP/STIP/SEIP 都由外部源驱动
+    //（CLINT 的 msip/mtimecmp、PLIC 的 SEIP），每个 tick 会被输入信号覆盖，
+    // 这里允许写入只会让软件以为写成功了
+    case RV::CSR_MIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break;
     case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break; // 只允许改 SSIP
     case RV::CSR_STVEC:   s.stvec = val & ~2u; break;
     case RV::CSR_SSCRATCH:s.sscratch = val; break;

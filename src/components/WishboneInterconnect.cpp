@@ -225,6 +225,10 @@ void WishboneInterconnect::routeTick(void *state_ptr, const uint8_t *inputs, uin
     }
     int prev_grant = rs.last_grant;
     int grant = -1;
+    // 事务级轮询：从上次授权的主设备开始扫描，它还保持 stb/cyc 就继续授权给它。
+    // 这不是"不轮询"——Wishbone 主设备靠撤销 stb 表示事务结束，事务进行中抢占它
+    // 会让从设备看到半截事务（下面的 insert_gap 每拍都会插空拍，双方永远完不成）。
+    // 代价是持续请求的主设备会让其他主等待，真实硬件的事务级仲裁也是如此。
     for (int k = 0; k < M; k++) {
         int i = (rs.last_grant + k) % M;
         if (mr[i].stb && mr[i].cyc) { grant = i; break; }
