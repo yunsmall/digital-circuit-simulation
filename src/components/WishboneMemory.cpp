@@ -163,11 +163,11 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint
         } else {
             // 写：立即完成，锁存 ack
             size_t addr = (size_t) adr;
-            if (addr + 4 <= ms.mem_size) {
-                if (sel & 0x01) ms.mem[addr + 0] = (uint8_t)(wdat & 0xFF);
-                if (sel & 0x02) ms.mem[addr + 1] = (uint8_t)((wdat >> 8) & 0xFF);
-                if (sel & 0x04) ms.mem[addr + 2] = (uint8_t)((wdat >> 16) & 0xFF);
-                if (sel & 0x08) ms.mem[addr + 3] = (uint8_t)((wdat >> 24) & 0xFF);
+            // 按数据宽度写，不能硬编码 4 字节：8/16 位配置会越界并写错字节数
+            if (addr + ms.data_bytes <= ms.mem_size) {
+                for (int b = 0; b < ms.data_bytes; ++b)
+                    if (sel & (1u << b))
+                        ms.mem[addr + b] = (uint8_t)((wdat >> (8 * b)) & 0xFF);
             }
             ms.latched_dout = 0;
             ms.ack_pending = true;
@@ -175,11 +175,10 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint
     } else if (we_rise) {
         // AMO 写阶段：同一事务内 we 从 0 翻 1，用已锁存的地址
         size_t addr = (size_t) ms.latched_addr;
-        if (addr + 4 <= ms.mem_size) {
-            if (sel & 0x01) ms.mem[addr + 0] = (uint8_t)(wdat & 0xFF);
-            if (sel & 0x02) ms.mem[addr + 1] = (uint8_t)((wdat >> 8) & 0xFF);
-            if (sel & 0x04) ms.mem[addr + 2] = (uint8_t)((wdat >> 16) & 0xFF);
-            if (sel & 0x08) ms.mem[addr + 3] = (uint8_t)((wdat >> 24) & 0xFF);
+        if (addr + ms.data_bytes <= ms.mem_size) {
+            for (int b = 0; b < ms.data_bytes; ++b)
+                if (sel & (1u << b))
+                    ms.mem[addr + b] = (uint8_t)((wdat >> (8 * b)) & 0xFF);
         }
         // ack 保持高（读阶段已设置），CPU 通过 bus_we 状态区分读写确认
     }

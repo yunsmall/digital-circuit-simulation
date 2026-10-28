@@ -210,7 +210,12 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         bool need_mem=false;
         execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
         if (s.halted) [[unlikely]] { s.phase=Phase::HALTED; ho=true; wb_stb=wb_cyc=false; }
-        else if (s.phase == Phase::HALTED) { /* WFI 停在这里，halted 输出保持不变 */ }
+        else if (s.phase == Phase::HALTED) {
+            // WFI 停机这一拍不能再拉高 stb：那会向从设备发一次虚假取指，
+            // 有状态的从设备（如缓存填充）可能就此卡在半完成
+            wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
+            wb_stb = wb_cyc = false;
+        }
         else if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
             // mmuTranslate 设置了 MMU 遍历阶段，输出第一次总线读请求并立即转为等待状态
             uint32_t mmu_adr = (s.phase == Phase::MMU_WALK_L1) ? s.mmu_l1_addr : s.mmu_l2_addr;
@@ -567,7 +572,13 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
         uint32_t p=pa&3;
         uint32_t n=(f3==RV::F3_LH||f3==RV::F3_LHU)?2:(f3==RV::F3_LB||f3==RV::F3_LBU)?1:4;
-        if (s.priv != RV::PRIV_M && (s.satp & RV::SATP_MODE) && ((pa & 0xFFF) + n > 0x1000)) {
+        // MPRV 下 M 态的数据访问同样走分页，此时跨页检查不能因为 priv==M 就跳过，
+        // 否则非对齐拆分会对第二个字直接用物理地址，跳过了另外一页的翻译
+        bool _paging_active = (s.satp & RV::SATP_MODE) &&
+                              (s.priv != RV::PRIV_M ||
+                               ((s.mstatus & RV::MSTATUS_MPRV) &&
+                                (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
+        if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
             // 跨页时第二个字不属于同一个物理页，需要第二次翻译（当前状态机不支持），
             // 按规范允许的做法触发 misaligned load。必须在置 need_mem 之前返回，
             // 否则 EXECUTE 之后仍会按残留的 need_mem 发起一次错误访存。
@@ -590,7 +601,13 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         uint32_t p=pa&3;
         uint32_t n=(f3==RV::F3_SB)?1:(f3==RV::F3_SH)?2:4;
         uint32_t first=(p+n>4)?(4-p):n;
-        if (s.priv != RV::PRIV_M && (s.satp & RV::SATP_MODE) && ((pa & 0xFFF) + n > 0x1000)) {
+        // MPRV 下 M 态的数据访问同样走分页，此时跨页检查不能因为 priv==M 就跳过，
+        // 否则非对齐拆分会对第二个字直接用物理地址，跳过了另外一页的翻译
+        bool _paging_active = (s.satp & RV::SATP_MODE) &&
+                              (s.priv != RV::PRIV_M ||
+                               ((s.mstatus & RV::MSTATUS_MPRV) &&
+                                (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
+        if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
             s.acc_stage = 0;
             takeTrap(s, RV::EXC_SAM, va); // 跨页非对齐写同上，只能报错
             return;
