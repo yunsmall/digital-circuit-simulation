@@ -50,7 +50,8 @@ std::string DFlipFlop::genFuncDef_seq() const {
     auto st = stateVarName();
     int en_nid = _has_en ? inputs()[2]->netId() : -1;
     int rst_nid = _has_rst ? inputs()[_has_en ? 3 : 2]->netId() : -1;
-    int pre_nid = _has_preset ? inputs()[_has_en + _has_rst + 1]->netId() : -1;
+    // 引脚顺序是 d(0), clk(1), [en], [rst], [pre]，所以 pre 前面固定有两个引脚
+    int pre_nid = _has_preset ? inputs()[2 + _has_en + _has_rst]->netId() : -1;
 
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
     std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)

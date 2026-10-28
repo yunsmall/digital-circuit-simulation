@@ -194,9 +194,12 @@ std::string FloatToInt::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
-    // TCC 不支持 __fixunssfdi（float→uint64），绕路 int64_t 避免触发
-    // （int64_t→uint64_t 是纯整数转型，不需要编译器内置函数）
-    std::string init = "uint64_t _ival = (uint64_t)(int64_t)_fval;";
+    // 无符号转换不能借道 int64_t：值 ≥ 2^63 时会变成负数。
+    // 有符号模式直接用 int64_t；无符号模式先取绝对值再按符号补，
+    // 这样只需要编译器内置的"浮点→有符号整数"，TCC 也支持
+    std::string init = _signed
+                               ? "uint64_t _ival = (uint64_t)(int64_t)_fval;"
+                               : "uint64_t _ival = _fval < 0.0 ? 0ULL : (uint64_t)(int64_t)_fval;";
 
     return std::format(R"(static void {}() {{
     {}
@@ -245,10 +248,18 @@ std::string IntToFloat::genFuncDef_comb() const {
         // 64 位有符号，直接强转
         conv = std::format(R"(
     {} _fout = ({})(int64_t)_tmp_in;)", ct, ct);
-    } else {
-        // TCC 不支持 __floatundisf（uint64→float），先转 int64_t
+    } else if (_int_w < 63) {
+        // 小于 2^63 时无符号值和有符号值范围一致，直接转即可
         conv = std::format(R"(
     {} _fout = ({})(int64_t)_tmp_in;)", ct, ct);
+    } else {
+        // ≥ 2^63 时不能借道 int64_t（会变负数），又不能直接用 __floatundisf（TCC 不支持）。
+        // 拆成高低两个 32 位部分各自转，每部分都在 int64 范围内
+        conv = std::format(R"(
+    uint64_t _u = (uint64_t)_tmp_in;
+    {} _fout = (_u & 0x8000000000000000ULL)
+        ? ({})(int64_t)(_u >> 32) * ({})(4294967296.0) + ({})(int64_t)(_u & 0xFFFFFFFFULL)
+        : ({})(int64_t)_u;)", ct, ct, ct, ct, ct);
     }
 
     return std::format(R"(static void {}() {{
