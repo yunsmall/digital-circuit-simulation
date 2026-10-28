@@ -541,6 +541,26 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
         // 先取就近结果，再按方向用 nextafterf 修正一格。
         auto round_to_float = [&](double exact, int rmode) -> float {
+            // 超出 float 范围时不能一律返回 inf：RTZ/RDN/RUP 对溢出的方向
+            // 要返回最大有限值，即使得到 inf 也还要按模式翻转
+            constexpr double kFmax = (double) std::numeric_limits<float>::max();
+            if (std::isfinite(exact) && std::fabs(exact) > kFmax) {
+                bool pos = exact > 0;
+                switch (rmode) {
+                case 1: return pos ? std::numeric_limits<float>::max() : -std::numeric_limits<float>::max(); // RTZ
+                case 2: return pos ? std::numeric_limits<float>::max()
+                                   : -std::numeric_limits<float>::infinity(); // RDN
+                case 3: return pos ? std::numeric_limits<float>::infinity()
+                                   : -std::numeric_limits<float>::max(); // RUP
+                case 4: // RMM：超过最大有限值与 inf 的中点才进 inf
+                    return std::fabs(exact) >= 0x1p128 ? (pos ? std::numeric_limits<float>::infinity()
+                                                              : -std::numeric_limits<float>::infinity())
+                                                       : (pos ? std::numeric_limits<float>::max()
+                                                              : -std::numeric_limits<float>::max());
+                default: return pos ? std::numeric_limits<float>::infinity()
+                                    : -std::numeric_limits<float>::infinity(); // RNE
+                }
+            }
             float r = (float) exact;
             if (!std::isfinite(r)) return r;
             double back = (double) r;
@@ -781,9 +801,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if ((double)r != exact) s.fcsr |= 0x01;          // NX
             // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
             // 或直接舍入成 0 而精确结果非 0
+            // UF 的定义是"tiny 且不精确"：精确的次正规数结果不能置 UF
             if (std::isinf(r)) s.fcsr |= 0x04;
-            else if (r == 0.0f ? exact != 0.0
-                               : std::fabs((double)r) < (double)std::numeric_limits<float>::min())
+            else if ((r == 0.0f ? exact != 0.0
+                                : std::fabs((double) r) < (double) std::numeric_limits<float>::min())
+                     && (double) r != exact)
                 s.fcsr |= 0x02;
         }
         s.mstatus |= (3u << 13);
@@ -954,7 +976,13 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         }
         // FS=Dirty 只在浮点状态确实被修改时设置：FMV.X.W/FCLASS 只读 freg，
         // FCMP 只有在置了 NV 时才算修改，否则上下文切换会白白多保存一次 FPU 状态
-        if (f7 != RV::F7_FMV_X_W && (f7 != RV::F7_FCMP || (s.fcsr & 0x10)))
+        // FCVT.W.S/WU.S 只读 freg、只在产生 NX/NV 时才动浮点状态；
+        // 精确转换若也置 Dirty，上下文切换会白白多保存一次 FPU
+        // F7_FCVT_W_S 同时覆盖 FCVT.W.S 和 FCVT.WU.S（rs2 区分）
+        bool fcvt_to_int = (f7 == RV::F7_FCVT_W_S);
+        if (f7 != RV::F7_FMV_X_W
+            && (!fcvt_to_int || (s.fcsr & 0x11))                 // NX 或 NV
+            && (f7 != RV::F7_FCMP || (s.fcsr & 0x10)))
             s.mstatus |= (3u << 13);
         break;
     }
@@ -1080,8 +1108,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 // 已实现的 CSR 白名单：不在这里的地址一律当非法指令处理，避免软件误以为读写生效
 static bool csrImplemented(uint32_t addr) {
     // PMP 配置/地址寄存器：本核不实现保护，但寄存器必须存在，软件会写 0 来关闭它
-    if (addr >= 0x3A0 && addr <= 0x3AF) return true;
-    if (addr >= 0x3B0 && addr <= 0x3EF) return true;
+    // pmpcfg0-3 是 0x3A0-0x3A3，pmpaddr0-15 是 0x3B0-0x3BF；
+    // 0x3A4-0x3AF 和 0x3C0-0x3EF 是保留地址，访问必须报非法指令，
+    // 否则软件能写进去并读回 0，误以为写成功了
+    if (addr >= 0x3A0 && addr <= 0x3A3) return true;
+    if (addr >= 0x3B0 && addr <= 0x3BF) return true;
     switch (addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
     case 0x306:  // mcounteren

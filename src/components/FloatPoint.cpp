@@ -164,7 +164,18 @@ std::string FloatConst::genFuncDef_comb() const {
     int o_nid = outputs()[0]->netId();
     // 有效位数要够位宽往返：float 需要 9 位，double 需要 17 位；
     // 少了会在生成代码时就把常量精度截掉
-    std::string lit = _precision <= 32 ? std::format("{:.9g}", _value) : std::format("{:.17g}", _value);
+    // std::format 对 nan/inf 会输出 "nan"/"inf"，那不是合法的 C 字面量；
+    // -0.0 会输出 "-0"，而 -0 是整数取负，仍是正零，符号丢了
+    std::string lit;
+    if (std::isnan(_value))
+        lit = _precision <= 32 ? "(0.0f/0.0f)" : "(0.0/0.0)";
+    else if (std::isinf(_value))
+        lit = _value > 0 ? (_precision <= 32 ? "(1.0f/0.0f)" : "(1.0/0.0)")
+                         : (_precision <= 32 ? "(-1.0f/0.0f)" : "(-1.0/0.0)");
+    else if (_value == 0.0 && std::signbit(_value))
+        lit = _precision <= 32 ? "-0.0f" : "-0.0";
+    else
+        lit = _precision <= 32 ? std::format("{:.9g}", _value) : std::format("{:.17g}", _value);
 
     return std::format(R"(static void {}() {{
     {} _c = {};
