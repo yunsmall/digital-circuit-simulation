@@ -87,7 +87,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
 
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
-    code += "extern void _dcs_wbm_tick(void *, const uint8_t *, uint8_t *);\n\n";
+    code += "extern void _dcs_wbm_tick(void *, const uint8_t *const *, uint8_t *const *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
 
     // 读取所有输入线网（按 I_* 顺序）
@@ -99,29 +99,17 @@ std::string WishboneMemory::genFuncDef_seq() const {
     code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
     code += "    " + gen_read_wire(inputs()[I_CLK]->netId(), 1, 1, "_clk") + "\n";
 
-    // 打包到输入缓冲区
-    code += std::format("    uint8_t _in[{}][{}];\n", I_COUNT, SLOT);
-    code += "    dcs_memset(_in, 0, sizeof(_in));\n";
-    code += "    dcs_memcpy(_in[0], &_adr, 4);\n";
-    code += "    dcs_memcpy(_in[1], &_wdat, 4);\n";
-    code += "    dcs_memcpy(_in[2], &_we, 1);\n";
-    code += "    dcs_memcpy(_in[3], &_sel, 1);\n";
-    code += "    dcs_memcpy(_in[4], &_stb, 1);\n";
-    code += "    dcs_memcpy(_in[5], &_cyc, 1);\n";
-    code += "    dcs_memcpy(_in[6], &_clk, 1);\n";
-
-    // 调用 C++ 回调
-    code += std::format("    uint8_t _out[{}][{}];\n", O_COUNT, SLOT);
-    code += "    dcs_memset(_out, 0, sizeof(_out));\n";
-    code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, (const uint8_t *)_in, (uint8_t *)_out);\n", id);
-
-    // 解包输出 → 线网
-    code += "    {\n";
-    code += "        uint32_t _dout = 0; dcs_memcpy(&_dout, _out[0], 4);\n";
-    code += "        uint8_t _ack = 0; dcs_memcpy(&_ack, _out[1], 1);\n";
-    code += "        " + genOutputWrite(O_DAT, "_dout", 32) + "\n";
-    code += "        " + genOutputWrite(O_ACK, "_ack", 1) + "\n";
-    code += "    }\n";
+    // 直接把线网指针交给回调，省掉每 tick 的打包与解包拷贝
+    code += std::format("    const uint8_t *_in[{}] = {{", I_COUNT);
+    for (int i = 0; i < I_COUNT; i++)
+        code += std::format("{}{}", i ? "," : "", std::string("_w[") + std::to_string(inputs()[i]->netId()) + "]");
+    code += "};\n";
+    code += std::format("    uint8_t *_out[{}] = {{", O_COUNT);
+    for (int i = 0; i < O_COUNT; i++)
+        code += std::format("{}{}", i ? "," : "",
+                            std::string("_c_out_") + std::to_string(id) + "_" + std::to_string(i));
+    code += "};\n";
+    code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, (const uint8_t **)_in, (uint8_t **)_out);\n", id);
     code += "}\n";
     return code;
 }
@@ -136,19 +124,19 @@ std::unique_ptr<Component> WishboneMemory::clone(const std::string &new_name) co
 // C++ 回调: 访存逻辑
 // ============================================================
 
-void WishboneMemory::memTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &ms = *static_cast<MemState *>(state_ptr);
 
-    // 解包输入（每个引脚 SLOT 字节对齐）
+    // 输入直接就是线网
     uint32_t adr, wdat;
     bool we, stb, cyc;
     uint8_t sel;
-    std::memcpy(&adr, inputs + I_ADR * SLOT, 4);
-    std::memcpy(&wdat, inputs + I_WDAT * SLOT, 4);
-    we = (inputs[I_WE * SLOT] & 1) != 0;
-    sel = inputs[I_SEL * SLOT];
-    stb = (inputs[I_STB * SLOT] & 1) != 0;
-    cyc = (inputs[I_CYC * SLOT] & 1) != 0;
+    std::memcpy(&adr, inputs[I_ADR], 4);
+    std::memcpy(&wdat, inputs[I_WDAT], 4);
+    we = (inputs[I_WE][0] & 1) != 0;
+    sel = inputs[I_SEL][0];
+    stb = (inputs[I_STB][0] & 1) != 0;
+    cyc = (inputs[I_CYC][0] & 1) != 0;
 
     // 默认输出
     uint32_t dout = 0;
@@ -208,9 +196,9 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *inputs, uint8_t *ou
         }
     }
 
-    // 打包输出
-    std::memcpy(outputs + O_DAT * SLOT, &dout, 4);
-    outputs[O_ACK * SLOT] = ack ? 1 : 0;
+    // 输出直接写线网
+    std::memcpy(outputs[O_DAT], &dout, 4);
+    outputs[O_ACK][0] = ack ? 1 : 0;
 }
 
 } // namespace dsc
