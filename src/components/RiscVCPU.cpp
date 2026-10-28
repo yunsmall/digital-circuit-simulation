@@ -398,9 +398,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                     if (s.mmu_is_write && !(l1e & RV::PTE_D)) upd |= RV::PTE_D;
                     if (upd != l1e) {
                         s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l1_addr; s.mmu_pte_is_l1 = true;
+                        // 只切相位，不在这一拍翻 we：stb 还高时改 we 会被支持 we_rise 的
+                        // 从设备当成一次写，等于写两遍。下一拍 MMU_AD_WRITE 才发起真正的写事务
                         s.phase = Phase::MMU_AD_GAP;
-                        wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
-                        wb_stb = wb_cyc = true;
                         break;
                     }
                 }
@@ -441,12 +441,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
                 if (!(l2e & RV::PTE_A)) upd |= RV::PTE_A;
                 if (s.mmu_is_write && !(l2e & RV::PTE_D)) upd |= RV::PTE_D;
                 if (upd != l2e) {
-                    // 注意：这里沿用同一笔事务把 we 从 0 翻到 1（stb 不拉低），
-                    // 与 AMO 的写回路径一致，依赖从设备按 we 上升沿识别写操作
                     s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l2_addr; s.mmu_pte_is_l1 = false;
+                    // 同 L1 路径：只切相位，写事务交给 MMU_AD_WRITE 那一拍发起
                     s.phase = Phase::MMU_AD_GAP;
-                    wb_adr = s.mmu_pte_addr; wb_dat = upd; wb_we = true; wb_sel = 0x0F;
-                    wb_stb = wb_cyc = true;
                     break;
                 }
                 // 装填 TLB
