@@ -527,7 +527,9 @@ std::string ShiftRegister::genFuncDef_seq() const {
         read_opt += "\n    bool _clr = false;";
 
     auto make_shift = [&](bool left) -> std::string {
-        return std::format(R"(        uint{0}_t _tmp;
+        // _tmp 必须先清零：memcpy 只覆盖 ceil(长度/8) 字节，位宽不是 8 的倍数时
+        // 高位是未初始化的，右移会把它们挪进有效位（读未初始化值本身也是 UB）
+        return std::format(R"(        uint{0}_t _tmp = 0;
         dcs_memcpy(&_tmp, {1}.stages, {2});
         _tmp = ({3}) | (_sin ? {4} : 0);
         _tmp &= {5};
