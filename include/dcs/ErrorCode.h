@@ -15,6 +15,7 @@ enum class ErrorCode {
     JIT_LINK_FAILED, // 重定位/添加模块失败
     JIT_SYMBOL_FAILED, // 符号注入/查找失败
     BUS_CONFLICT, // 运行时总线冲突
+    BUS_OSCILLATION, // 总线级联迭代到上限仍未稳定（多半是三态总线绕成的组合环）
 };
 
 struct CircuitError {

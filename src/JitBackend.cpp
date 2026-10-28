@@ -196,7 +196,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         }
     }
 
-    auto tsm = llvm::orc::ThreadSafeModule(std::move(module), std::make_unique<llvm::LLVMContext>());
+    // module 里的类型都在 _impl->llvm_ctx 里 uniqued，ThreadSafeModule 必须拿同一个 context，
+    // 否则违反 LLVM 契约（单线程下侥幸能跑，并发或升级后会 UAF）
+    auto tsm = llvm::orc::ThreadSafeModule(std::move(module), std::move(_impl->llvm_ctx));
     if (auto err = _impl->jit->addIRModule(std::move(tsm))) {
         auto mod_err = "添加 IR 模块失败: " + llvm::toString(std::move(err));
         cleanup();

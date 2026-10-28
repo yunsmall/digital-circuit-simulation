@@ -607,13 +607,15 @@ std::string Circuit::generateC() const {
     // 上限取元件数，防止电路里出现自激振荡时死循环。
     if (!bus_affected.empty()) {
         oss << "    // 阶段2b: 反复重跑受总线影响的组合元件，直到总线稳定\n";
+        oss << "    bool _bus_settled = false;\n";
         oss << std::format("    for (int _bus_round = 0; _bus_round < {}; _bus_round++) {{\n",
                            (int) _components.size() + 1);
         oss << "        _bus_changed = 0;\n";
         emitCombStage(&bus_affected);
         emitPropagation(2, true);
-        oss << "        if (!_bus_changed) break;\n";
+        oss << "        if (!_bus_changed) { _bus_settled = true; break; }\n";
         oss << "    }\n";
+        oss << "    if (!_bus_settled) dcs_bus_conflict(_circuit_ptr, -1);\n";
     }
 
     oss << "    // 阶段3: 时序逻辑\n";
@@ -734,8 +736,9 @@ std::vector<Component *> Circuit::topologicalSort(const std::vector<Component *>
 // ============================================================
 
 CircuitError Circuit::compile() {
-    _compiled = false;
-    _backend.cleanup();
+    // 先把入口指针全部置空再清理后端：cleanup() 会释放已编译的代码，
+    // 若本次编译失败，残留的旧函数指针就成了悬空指针
+    jitCleanup();
 
     // 展开复合元件
     expandComposites();
@@ -806,6 +809,13 @@ void Circuit::tick() {
 void Circuit::onBusConflict(int net_id) {
     if (_tick_error.code != ErrorCode::OK)
         return;
+    // net_id < 0 是阶段 2b 迭代到上限仍未收敛的信号：三态总线绕成的组合环查不出来，
+    // 只能靠迭代上限兜底，这里把它报出来而不是静默继续
+    if (net_id < 0) {
+        _tick_error.code = ErrorCode::BUS_OSCILLATION;
+        _tick_error.message = "总线级联在迭代上限内未收敛: 电路可能存在经由三态总线的组合环";
+        return;
+    }
     _tick_error.code = ErrorCode::BUS_CONFLICT;
     _tick_error.net_id = net_id;
     auto it = _bus_nets.find(net_id);
