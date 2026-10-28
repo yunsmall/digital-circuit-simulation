@@ -135,24 +135,23 @@ TEST(PrivTest, MretRestore) {
 // ============================================================
 TEST(PrivTest, EcallU) {
     PrivTestFixture f;
-    // 先切到 U-mode (mstatus.MPP=0 → mret)
-    // 然后 U-mode ecall → trap → 处理程序读 mcause → x3=EXC_ECALL_U(8)
     f.loadProgram({
-        // 设置 mtvec=0x20 (处理程序)
-        0x02000093, // 0x00: addi x1,x0,0x20
-        0x30509073, // 0x04: csrrw x0,mtvec,x1
-        // 设置 mstatus: MPP=0(U), MIE=0
-        0x00000093, // 0x08: addi x1,x0,0         (x1=0, MPP=U, MIE=0)
-        0x30009073, // 0x0C: csrrw x0,mstatus,x1
-        // mret → U-mode → 0x14
-        0x30200073, // 0x10: mret (mepc=0x14 from reset? 不对...)
-        // 不能直接用 mret 因为 mepc 初始为 0
-        // 用不同的方法：先设 mepc=0x18，然后 mret
+        0x02000093, // 0x00: addi x1, x0, 0x20   处理程序在 0x20
+        0x30509073, // 0x04: csrrw x0, mtvec, x1
+        0x01400093, // 0x08: addi x1, x0, 0x14   要返回的 U 态地址
+        0x34109073, // 0x0C: csrrw x0, mepc, x1
+        0x30200073, // 0x10: mret                → U 态 0x14（reset 后 MPP=U）
+        0x00000073, // 0x14: ecall               U 态发起 ecall
+        0x00000013, // 0x18: nop
+        0x00000013, // 0x1C: nop
+        0x342021F3, // 0x20: csrrs x3, mcause, x0
+        0x0000006F, // 0x24: jal x0, 0           自旋
     });
-    // 上面的逻辑有问题，因为 mepc 初始为 0 会导致跳转到 0
-    // 简化: 直接检查 ecall 从 M-mode 触发的行为已在 EcallM 测试
-    // 先跳过 U-mode 测试，后续再完善
-    GTEST_SKIP() << "U-mode ecall test needs proper mepc setup, skipping for now";
+    f.compile();
+    f.reset();
+    f.runCycles(80);
+    // U 态 ecall 的 cause 是 8；如果核没有真正切换特权级，会得到 11（M 态 ecall）
+    EXPECT_EQ(f.cpu->reg(3), 8u) << "U 态 ecall 应报 EXC_ECALL_U";
 }
 
 // ============================================================

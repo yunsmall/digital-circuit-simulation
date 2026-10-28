@@ -556,12 +556,18 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     case RV::LUI: s.regs[rd]=(uint32_t)iu; break;
     case RV::AUIPC: s.regs[rd]=s.pc+(uint32_t)iu; break;
     case RV::OP: {
-    // 同理：SLL/SRL/SRA 的 funct7 只有 0 和 0x20 合法
-    // SLL 的 funct7 只能是 0；SRL/SRA 共用 funct3=5，靠 funct7 区分
-    if (f3 == RV::F3_SLL && f7 != 0) [[unlikely]]
-    { takeTrap(s, RV::EXC_II, inst); return; }
-    if (f3 == RV::F3_SRL && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
-    { takeTrap(s, RV::EXC_II, inst); return; }
+    // funct7 的合法值取决于 funct3，必须在 switch 之前统一判断：
+    // f3=0 是 ADD/SUB（0x00/0x20）、f3=5 是 SRL/SRA（0x00/0x20）、
+    // f3=1 是 SLL（只能 0x00）、其余 funct3 只能 0x00。
+    // M 扩展占用的 0x01 单独放行，否则 MULH/DIVU 会被误判成保留编码。
+    if (f7 != 0x01) {
+        if (f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
+        if (f3 == RV::F3_SLL && f7 != 0) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
+        if (f3 != RV::F3_ADD && f3 != RV::F3_SRL && f7 != 0) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
+    }
     // M 扩展：funct7=0x01 时 funct3 选择乘除法，与普通运算共用同一 opcode
     if (f7 == 0x01) {
         switch (f3) {
@@ -972,7 +978,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if (f3 == 4) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; } // funct3=4 未定义
             uint32_t csr_addr=(inst>>20)&RV::M_F12, csr_val=csrRead(s, csr_addr);
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
-            bool csr_write = (f3 != RV::F3_CSRRS && f3 != RV::F3_CSRRC) || rs1 != 0;
+            // 只有 CSRRW/CSRRWI 一定写；CSRRS/CSRRC/CSRRSI/CSRRCI 在源操作数为 0 时只是读
+            bool csr_write = (f3 == RV::F3_CSRRW || f3 == RV::F3_CSRRWI) || (rs1 != 0);
             if (!csrImplemented(csr_addr) || (((csr_addr >> 10) & 3) == 3 && csr_write)) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
             // TVM=1 时 S 态读写 satp 是非法指令
