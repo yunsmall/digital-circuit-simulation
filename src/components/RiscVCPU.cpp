@@ -379,6 +379,12 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
             if ((l1e & 0xE) != 0) {
                 // 超页面（4MB）：L1 是叶子，没有 L2，不能让这个 PPN 进入 L2 缓存
                 s.l1_cache_valid = false;
+                // R=0,W=1 是保留编码，必须报页错误（与 L2 叶子路径一致）
+                if (!(l1e & 2) && (l1e & 4)) {
+                    takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
+                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                    break;
+                }
                 // 权限检查
                 if (uint32_t cause = checkPerms(l1e, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus)) {
                     takeTrap(s, cause, s.mmu_vaddr);
@@ -460,6 +466,8 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         break;
 
     case Phase::AMO_GAP:
+        // 这一拍同样要保持 cyc 高：它是 RMW 周期的中间拍，总线不能被别的设备拿走
+        wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_sel = 0x0F; wb_stb = false; wb_cyc = true;
         s.phase = Phase::AMO_WRITE;
         break;
     case Phase::AMO_WRITE:
@@ -473,6 +481,7 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
         }
         break;
     case Phase::MMU_AD_GAP:
+        wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_sel = 0x0F; wb_stb = false; wb_cyc = true;
         s.phase = Phase::MMU_AD_WRITE;
         break;
     case Phase::MMU_AD_WRITE:
@@ -673,6 +682,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- 浮点访存（FLW / FSW，自然对齐；非对齐按规范触发异常）----
     case RV::LOAD_FP: {
+        if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         uint32_t va=v1+(uint32_t)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
@@ -682,6 +692,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         } break;
 
     case RV::STORE_FP: {
+        if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         uint32_t va=v1+(uint32_t)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
@@ -693,6 +704,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- 融合乘加：FMADD / FMSUB / FNMSUB / FNMADD ----
     case 0x43: case 0x47: case 0x4B: case 0x4F: {
+        if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         if (((inst >> 25) & 3) != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 只实现单精度
@@ -723,6 +735,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- 单精度浮点运算（F 扩展），寄存器内容是 IEEE754 位模式 ----
     case RV::OP_FP: {
+        if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]);
@@ -805,8 +818,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             break;
         }
         case RV::F7_FCVT_W_S: {
+            if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
+            // rm=7 表示用 fcsr.frm；5/6 是保留编码，必须报非法指令而不是当成 RNE
+            uint32_t eff_rm = rm == 7 ? ((s.fcsr >> 5) & 7u) : rm;
+            if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
             float r;
-            switch (rm) {
+            switch (eff_rm) {
             case 1: r = std::trunc(a); break;   // RTZ
             case 2: r = std::floor(a); break;   // RDN
             case 3: r = std::ceil(a); break;    // RUP
@@ -921,6 +938,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
             bool csr_write = (f3 != RV::F3_CSRRS && f3 != RV::F3_CSRRC) || rs1 != 0;
             if (!csrImplemented(csr_addr) || (((csr_addr >> 10) & 3) == 3 && csr_write)) [[unlikely]]
+            { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
+            // FS=Off 时访问浮点 CSR 同样是非法指令（读也不行）
+            if ((csr_addr == RV::CSR_FFLAGS || csr_addr == RV::CSR_FRM || csr_addr == RV::CSR_FCSR)
+                && ((s.mstatus >> 13) & 3u) == 0) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
             uint32_t wval = (f3>=RV::F3_CSRRW&&f3<=RV::F3_CSRRC) ? v1 : (uint32_t)rs1;
             // 检查 CSR 访问权限 (最低两位 = 读写权限位)

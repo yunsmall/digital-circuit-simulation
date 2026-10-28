@@ -77,9 +77,9 @@ std::string FIFO::genFuncDef_seq() const {
     code += read_bit("_we", we_nid);
     code += read_bit("_re", re_nid);
     code += read_bit("_clk", clk_nid);
-    if (_has_rst)
-        code += "    bool _rst = false; dcs_memcpy(&_rst, _w[" + std::to_string(rst_nid >= 0 ? rst_nid : 0) +
-                "], 1);\n";
+    // 引脚存在但悬空时读常量 0，不能退回 _w[0]（那是别的线网）
+    if (_has_rst && rst_nid >= 0)
+        code += std::format("    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);\n", rst_nid);
     else
         code += "    bool _rst = false;\n";
 

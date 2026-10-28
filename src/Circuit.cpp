@@ -114,6 +114,11 @@ void Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
     if (!pin)
         throw std::runtime_error(std::format("元件 '{}' 没有引脚 '{}'", comp->name(), pin_name));
 
+    // 改接别的线网前先断开：否则旧线网的总线驱动记录会留在 _bus_nets 里，
+    // 生成代码仍把它当成旧线网的驱动源，而新线网根本不知道有这个驱动
+    if (pin->net() && pin->net() != net)
+        disconnect(comp, pin_name);
+
     if (pin->isOutput()) {
         // 找到此输出在元件中的索引
         int this_out_idx = -1;

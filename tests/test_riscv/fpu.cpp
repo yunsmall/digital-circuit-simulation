@@ -68,9 +68,19 @@ struct Fixture {
     }
 
     void load(const std::vector<uint32_t> &insts, uint32_t at = 0) {
+        // load 自动前置两条：lui x6,2（0x2000 = mstatus.FS=Initial）、csrrw x0,mstatus,x6。
+        // 真实核 reset 后 FS 是 Off，此时任何浮点指令都会触发非法指令——
+        // 裸机程序必须自己先把浮点单元打开
+        std::vector<uint32_t> all;
+        if (at == 0) {
+            all.push_back(0x00002337u);
+            all.push_back(0x30031073u);
+        }
+        all.insert(all.end(), insts.begin(), insts.end());
+
         uint8_t *m = mem->writableMemPtr();
-        for (size_t i = 0; i < insts.size(); i++) {
-            uint32_t x = insts[i], off = at + i * 4;
+        for (size_t i = 0; i < all.size(); i++) {
+            uint32_t x = all[i], off = at + i * 4;
             m[off + 0] = (uint8_t)(x & 0xFF);
             m[off + 1] = (uint8_t)((x >> 8) & 0xFF);
             m[off + 2] = (uint8_t)((x >> 16) & 0xFF);
