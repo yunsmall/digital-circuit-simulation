@@ -552,13 +552,13 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                                    : -std::numeric_limits<float>::infinity(); // RDN
                 case 3: return pos ? std::numeric_limits<float>::infinity()
                                    : -std::numeric_limits<float>::max(); // RUP
-                case 4: // RMM：超过最大有限值与 inf 的中点才进 inf
+                // RNE 和 RMM 都是"nearest"：只有超过最大有限值与 inf 的中点 2^128 才进 inf
+                case 4: // RMM
+                default: // RNE
                     return std::fabs(exact) >= 0x1p128 ? (pos ? std::numeric_limits<float>::infinity()
                                                               : -std::numeric_limits<float>::infinity())
                                                        : (pos ? std::numeric_limits<float>::max()
                                                               : -std::numeric_limits<float>::max());
-                default: return pos ? std::numeric_limits<float>::infinity()
-                                    : -std::numeric_limits<float>::infinity(); // RNE
                 }
             }
             float r = (float) exact;
