@@ -1026,7 +1026,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- PC 更新 ----
     s.regs[0]=0; s.pc=npc;
-    s.instret++; // 每条完成的指令计一次（trap 路径也会走到这里，与规范"已退休指令数"一致）
+    // 规范允许"是否把 trap 的指令计入"由实现决定；这里凡是走到尾部收尾的都计，
+    // 少数提前 return 的错误路径不计，属于同一取舍下的正常差异
+    s.instret++;
     if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
 }
 
@@ -1065,6 +1067,10 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     // cycle/instret 与 M 态的 mcycle/minstret 是同一对计数器，只是可见性不同
     case 0xB00: case 0xC00: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
     case 0xB80: case 0xC80: return (uint32_t) (s.cycles >> 32);
+    // time 本应来自 CLINT 的 mtime，这里用 cycle 近似：本核时钟与 mtime 同源，
+    // 恒返回 0 会让依赖 rdtime 的超时逻辑静默失效
+    case 0xC01: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
+    case 0xC81: return (uint32_t) (s.cycles >> 32);
     case 0xB02: case 0xC02: return (uint32_t) (s.instret & 0xFFFFFFFFu);
     case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
     case 0x306: return s.mcounteren; // mcounteren
@@ -1099,6 +1105,11 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
 }
 void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     switch (addr) {
+    // mcycle/minstret 是 R/W：软件常用写它们重置计时基准
+    case 0xB00: s.cycles = (s.cycles & 0xFFFFFFFF00000000ULL) | val; break;
+    case 0xB80: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
+    case 0xB02: s.instret = (s.instret & 0xFFFFFFFF00000000ULL) | val; break;
+    case 0xB82: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
     case 0x306: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
@@ -1116,8 +1127,10 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_MTVAL:   s.mtval = val; break;
     case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~0x000C6122u) | (val & 0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
     case RV::CSR_SIE:     s.mie = (s.mie & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
-    case RV::CSR_MIP:     s.mip = (s.mip & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
-    case RV::CSR_SIP:     s.mip = (s.mip & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
+    // 软件可写的中断挂起位只有 SSIP（M 态还多一个 MSIP，用于触发软件中断）；
+    // STIP/SEIP 由 CLINT/PLIC 驱动，属只读，软件写了会把中断源状态覆盖掉
+    case RV::CSR_MIP:     s.mip = (s.mip & ~(RV::IRQ_SSI | RV::IRQ_MSI)) | (val & (RV::IRQ_SSI | RV::IRQ_MSI)); break;
+    case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break; // 只允许改 SSIP
     case RV::CSR_STVEC:   s.stvec = val & ~2u; break;
     case RV::CSR_SSCRATCH:s.sscratch = val; break;
     case RV::CSR_SEPC:    s.sepc = val & ~3u; break;
