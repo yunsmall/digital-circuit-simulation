@@ -65,26 +65,26 @@ std::string DMA::genInitCode() const { return std::format("    _dcs_dma_reset(_d
 
 std::string DMA::genFuncDef_seq() const {
     std::string code;
-    code += "extern void _dcs_dma_tick(void *, const uint8_t *, uint8_t *);\n";
+    code += "extern void _dcs_dma_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_dma_reset(void *);\n\n";
     code += std::format("static void {}(void) {{\n", funcName_seq());
-    code += std::format("    uint8_t _in[{}][{}];\n", (int) I_COUNT, SLOT);
-    for (int i = 0; i < I_COUNT; i++) {
-        int w = (i == I_CFG_ADR || i == I_CFG_DAT || i == I_M_DAT_I) ? 32 : (i == I_CFG_SEL ? 4 : 1);
-        code += std::format("    {{ uint64_t _v=0; dcs_memcpy(&_v,_w[{}],{}); uint8_t _b[8]; dcs_memcpy(_b,&_v,8); "
-                            "dcs_memcpy(_in[{}],_b,{}); }}\n",
-                            inputs()[i]->netId(), byte_count(w), i, byte_count(w));
-    }
-    code += std::format("    uint8_t _out[{}][{}];\n", (int) O_COUNT, SLOT);
-    code += std::format("    _dcs_dma_tick(_dma_state_{0}, (const uint8_t*)_in, (uint8_t*)_out);\n", _id);
-    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_out[0],4); " + genOutputWrite(O_CFG_DAT, "_v", 32) + " }\n";
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_out[1],1); " + genOutputWrite(O_CFG_ACK, "_v", 1) + " }\n";
-    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_out[2],4); " + genOutputWrite(O_M_ADR, "_v", 32) + " }\n";
-    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_out[3],4); " + genOutputWrite(O_M_DAT, "_v", 32) + " }\n";
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_out[4],1); " + genOutputWrite(O_M_WE, "_v", 1) + " }\n";
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_out[5],1); " + genOutputWrite(O_M_SEL, "_v", 4) + " }\n";
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_out[6],1); " + genOutputWrite(O_M_STB, "_v", 1) + " }\n";
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_out[7],1); " + genOutputWrite(O_M_CYC, "_v", 1) + " }\n";
+    code += genInputPtrArray("_in");
+    // 输出先落中间缓冲，再由 genOutputWrite 同时写 _c_out 与 _w；
+    // 传给回调的必须是指针数组，二维数组强转会让回调把首字节当指针
+    code += std::format("    uint8_t _obuf[{}][{}];\n", (int) O_COUNT, SLOT);
+    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
+    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
+    code += "};\n";
+    code += std::format("    _dcs_dma_tick(_dma_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_obuf[0],4); " + genOutputWrite(O_CFG_DAT, "_v", 32) + " }\n";
+    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[1],1); " + genOutputWrite(O_CFG_ACK, "_v", 1) + " }\n";
+    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_obuf[2],4); " + genOutputWrite(O_M_ADR, "_v", 32) + " }\n";
+    code += "    { uint32_t _v=0; dcs_memcpy(&_v,_obuf[3],4); " + genOutputWrite(O_M_DAT, "_v", 32) + " }\n";
+    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[4],1); " + genOutputWrite(O_M_WE, "_v", 1) + " }\n";
+    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[5],1); " + genOutputWrite(O_M_SEL, "_v", 4) + " }\n";
+    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[6],1); " + genOutputWrite(O_M_STB, "_v", 1) + " }\n";
+    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_obuf[7],1); " + genOutputWrite(O_M_CYC, "_v", 1) + " }\n";
     code += "}\n";
     return code;
 }
@@ -95,17 +95,17 @@ std::unique_ptr<Component> DMA::clone(const std::string &new_name) const {
     return p;
 }
 
-void DMA::dmaTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+void DMA::dmaTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<DmaState *>(state_ptr);
 
     uint32_t cfg_adr = 0, cfg_dat = 0, m_dat_i = 0;
-    std::memcpy(&cfg_adr, inputs + I_CFG_ADR * SLOT, 4);
-    std::memcpy(&cfg_dat, inputs + I_CFG_DAT * SLOT, 4);
-    std::memcpy(&m_dat_i, inputs + I_M_DAT_I * SLOT, 4);
-    bool cfg_we = (inputs[I_CFG_WE * SLOT] & 1) != 0;
-    bool cfg_stb = (inputs[I_CFG_STB * SLOT] & 1) != 0;
-    bool cfg_cyc = (inputs[I_CFG_CYC * SLOT] & 1) != 0;
-    bool m_ack_i = (inputs[I_M_ACK_I * SLOT] & 1) != 0;
+    std::memcpy(&cfg_adr, inputs[I_CFG_ADR], 4);
+    std::memcpy(&cfg_dat, inputs[I_CFG_DAT], 4);
+    std::memcpy(&m_dat_i, inputs[I_M_DAT_I], 4);
+    bool cfg_we = (inputs[I_CFG_WE][0] & 1) != 0;
+    bool cfg_stb = (inputs[I_CFG_STB][0] & 1) != 0;
+    bool cfg_cyc = (inputs[I_CFG_CYC][0] & 1) != 0;
+    bool m_ack_i = (inputs[I_M_ACK_I][0] & 1) != 0;
 
     // ---- 配置端口 ----
     bool cfg_active = cfg_stb && cfg_cyc;
@@ -192,15 +192,15 @@ void DMA::dmaTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
         break;
     }
 
-    std::memset(outputs, 0, O_COUNT * SLOT);
-    std::memcpy(outputs + O_CFG_DAT * SLOT, &dout, 4);
-    outputs[O_CFG_ACK * SLOT] = ack ? 1 : 0;
-    std::memcpy(outputs + O_M_ADR * SLOT, &s.m_adr, 4);
-    std::memcpy(outputs + O_M_DAT * SLOT, &s.m_dat, 4);
-    outputs[O_M_WE * SLOT] = s.m_we ? 1 : 0;
-    outputs[O_M_SEL * SLOT] = 0x0F;
-    outputs[O_M_STB * SLOT] = s.m_stb ? 1 : 0;
-    outputs[O_M_CYC * SLOT] = s.m_cyc ? 1 : 0;
+    std::memset(outputs[O_CFG_DAT], 0, SLOT);
+    std::memcpy(outputs[O_CFG_DAT], &dout, 4);
+    outputs[O_CFG_ACK][0] = ack ? 1 : 0;
+    std::memcpy(outputs[O_M_ADR], &s.m_adr, 4);
+    std::memcpy(outputs[O_M_DAT], &s.m_dat, 4);
+    outputs[O_M_WE][0] = s.m_we ? 1 : 0;
+    outputs[O_M_SEL][0] = 0x0F;
+    outputs[O_M_STB][0] = s.m_stb ? 1 : 0;
+    outputs[O_M_CYC][0] = s.m_cyc ? 1 : 0;
 }
 
 } // namespace dsc

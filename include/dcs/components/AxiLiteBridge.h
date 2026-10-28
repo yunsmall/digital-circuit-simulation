@@ -46,7 +46,7 @@ private:
     BridgeState _state;
     bool _prepared = false;
 
-    static void bridgeTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void bridgeTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void bridgeReset(void *state_ptr);
 };
 

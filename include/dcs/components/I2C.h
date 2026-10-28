@@ -58,7 +58,7 @@ private:
     int _clkdiv = 8;
     bool _prepared = false;
 
-    static void i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void i2cTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void i2cReset(void *state_ptr, int clkdiv);
 };
 

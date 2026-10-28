@@ -52,7 +52,7 @@ private:
     int _num_sources = 8;
     bool _prepared = false;
 
-    static void plicTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void plicTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void plicReset(void *state_ptr, int num_sources);
 };
 

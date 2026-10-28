@@ -45,7 +45,7 @@ private:
     };
     ClintState _state;
 
-    static void clintTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void clintTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
 };
 
 } // namespace dsc

@@ -47,7 +47,7 @@ std::string CLINT::genStateDecl() const {
 }
 
 std::string CLINT::genInitCode() const {
-    return std::format("    _dcs_clint_tick(_clint_state_{0}, (const uint8_t*)0, (uint8_t*)0);\n", _id);
+    return std::format("    _dcs_clint_tick(_clint_state_{0}, (const uint8_t* const*)0, (uint8_t* const*)0);\n", _id);
 }
 
 std::unique_ptr<Component> CLINT::clone(const std::string &n) const {
@@ -58,7 +58,7 @@ std::string CLINT::genFuncDef_seq() const {
     int id = _id;
     std::string code;
     code += std::format("// CLINT\n");
-    code += "extern void _dcs_clint_tick(void *, const uint8_t *, uint8_t *);\n\n";
+    code += "extern void _dcs_clint_tick(void *, const uint8_t *const *, uint8_t *const *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
     // 读取 Wishbone 输入
     code += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + std::to_string(inputs()[I_ADR]->netId()) + "], 4);\n";
@@ -68,18 +68,16 @@ std::string CLINT::genFuncDef_seq() const {
     code += "    uint8_t _stb = 0; dcs_memcpy(&_stb, _w[" + std::to_string(inputs()[I_STB]->netId()) + "], 1);\n";
     code += "    uint8_t _cyc = 0; dcs_memcpy(&_cyc, _w[" + std::to_string(inputs()[I_CYC]->netId()) + "], 1);\n";
     code += "    uint8_t _clk = 0; dcs_memcpy(&_clk, _w[" + std::to_string(inputs()[I_CLK]->netId()) + "], 1);\n";
-    code += "    uint8_t _in[" + std::to_string(I_COUNT) + "][16]; dcs_memset(_in, 0, sizeof(_in));\n";
-    code += "    dcs_memcpy(_in[0], &_adr, 4); dcs_memcpy(_in[1], &_wdat, 4);\n";
-    code += "    dcs_memcpy(_in[2], &_we, 1); dcs_memcpy(_in[3], &_sel, 1);\n";
-    code += "    dcs_memcpy(_in[4], &_stb, 1); dcs_memcpy(_in[5], &_cyc, 1);\n";
-    code += "    dcs_memcpy(_in[6], &_clk, 1);\n";
-    code += "    uint8_t _out[4][16]; dcs_memset(_out, 0, sizeof(_out));\n";
-    code += std::format("    _dcs_clint_tick(_clint_state_{0}, (const uint8_t*)_in, (uint8_t*)_out);\n", id);
+    // 直接把线网指针交给回调，省掉打包与解包；输出仍走 genOutputWrite 保证下游可见
+    code += genInputPtrArray("_in");
+    code += "    uint8_t _obuf[4][16]; dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += "    uint8_t *_op[4] = {_obuf[0],_obuf[1],_obuf[2],_obuf[3]};\n";
+    code += std::format("    _dcs_clint_tick(_clint_state_{0}, (const uint8_t **)_in, _op);\n", id);
     code += "    {\n";
-    code += "        uint32_t _dout = 0; dcs_memcpy(&_dout, _out[0], 4);\n";
-    code += "        uint8_t _ack = 0; dcs_memcpy(&_ack, _out[1], 1);\n";
-    code += "        uint8_t _mti = 0; dcs_memcpy(&_mti, _out[2], 1);\n";
-    code += "        uint8_t _msi = 0; dcs_memcpy(&_msi, _out[3], 1);\n";
+    code += "        uint32_t _dout = 0; dcs_memcpy(&_dout, _obuf[0], 4);\n";
+    code += "        uint8_t _ack = 0; dcs_memcpy(&_ack, _obuf[1], 1);\n";
+    code += "        uint8_t _mti = 0; dcs_memcpy(&_mti, _obuf[2], 1);\n";
+    code += "        uint8_t _msi = 0; dcs_memcpy(&_msi, _obuf[3], 1);\n";
     for (int i = 0; i < 4; i++) {
         const char *vars[] = {"_dout", "_ack", "_mti", "_msi"};
         int wids[] = {32, 1, 1, 1};
@@ -90,7 +88,7 @@ std::string CLINT::genFuncDef_seq() const {
 }
 
 // ============================================================
-void CLINT::clintTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+void CLINT::clintTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<ClintState *>(state_ptr);
 
     // init 调用时 inputs=nullptr，仅初始化 prev_clk 避免首拍误判上升沿
@@ -98,18 +96,18 @@ void CLINT::clintTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) 
         s.prev_clk = false;
         // 清零输出
         if (outputs) {
-            std::memset(outputs, 0, 4 * SLOT);
+            for (int i = 0; i < 4; ++i) std::memset(outputs[i], 0, SLOT);
         }
         return;
     }
 
-    uint32_t adr; std::memcpy(&adr, inputs + I_ADR * SLOT, 4);
-    uint32_t wdat; std::memcpy(&wdat, inputs + I_WDAT * SLOT, 4);
-    bool we = (inputs[I_WE * SLOT] & 1) != 0;
-    uint8_t sel = inputs[I_SEL * SLOT];
-    bool stb = (inputs[I_STB * SLOT] & 1) != 0;
-    bool cyc = (inputs[I_CYC * SLOT] & 1) != 0;
-    bool clk = (inputs[I_CLK * SLOT] & 1) != 0;
+    uint32_t adr; std::memcpy(&adr, inputs[I_ADR], 4);
+    uint32_t wdat; std::memcpy(&wdat, inputs[I_WDAT], 4);
+    bool we = (inputs[I_WE][0] & 1) != 0;
+    uint8_t sel = inputs[I_SEL][0];
+    bool stb = (inputs[I_STB][0] & 1) != 0;
+    bool cyc = (inputs[I_CYC][0] & 1) != 0;
+    bool clk = (inputs[I_CLK][0] & 1) != 0;
 
     bool rising = !s.prev_clk && clk;
     s.prev_clk = clk;
@@ -195,12 +193,12 @@ void CLINT::clintTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) 
     bool mti = (s.mtime >= s.mtimecmp);
     bool msi = (s.msip & 1) != 0;
 
-    // 打包输出
-    std::memset(outputs, 0, 4 * SLOT);
-    std::memcpy(outputs + O_DAT * SLOT, &dout, 4);
-    outputs[O_ACK * SLOT] = ack ? (uint8_t)1 : (uint8_t)0;
-    outputs[O_MTI * SLOT] = mti ? (uint8_t)1 : (uint8_t)0;
-    outputs[O_MSI * SLOT] = msi ? (uint8_t)1 : (uint8_t)0;
+    // 输出直接写线网
+    for (int i = 0; i < 4; ++i) std::memset(outputs[i], 0, SLOT);
+    std::memcpy(outputs[O_DAT], &dout, 4);
+    outputs[O_ACK][0] = ack ? (uint8_t)1 : (uint8_t)0;
+    outputs[O_MTI][0] = mti ? (uint8_t)1 : (uint8_t)0;
+    outputs[O_MSI][0] = msi ? (uint8_t)1 : (uint8_t)0;
 }
 
 } // namespace dsc

@@ -165,6 +165,11 @@ public:
     // （包含 _c_oe = true，三态门可在其后覆盖 oe）
     [[nodiscard]] std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
 
+    // 模式 B 回调直接接收线网指针数组：省掉每 tick 把引脚打包进 16 字节槽、
+    // 再把输出解包出来的拷贝。依赖的不变式是 _w[] 高位恒 0、_c_out_* 在 init 时清零。
+    [[nodiscard]] std::string genInputPtrArray(std::string_view arr) const;
+    [[nodiscard]] std::string genOutputPtrArray(std::string_view arr) const;
+
 protected:
     void setParam(const std::string &key, const std::string &value) {
         _params[key] = value;

@@ -50,7 +50,7 @@ private:
     int _clkdiv = 4;
     bool _prepared = false;
 
-    static void spiTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void spiTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void spiReset(void *state_ptr, int clkdiv);
 };
 

@@ -57,7 +57,7 @@ private:
     int _baud_div = 8;
     bool _prepared = false;
 
-    static void uartTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs);
+    static void uartTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void uartReset(void *state_ptr, int baud_div);
 };
 

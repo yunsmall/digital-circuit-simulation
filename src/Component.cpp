@@ -107,6 +107,26 @@ Pin *Component::addOutput(const std::string &pin_name, int bit_width, bool is_tr
     return ptr;
 }
 
+std::string Component::genInputPtrArray(std::string_view arr) const {
+    std::string s = std::format("    const uint8_t *{}[{}] = {{", arr, _inputs.size());
+    for (size_t i = 0; i < _inputs.size(); i++)
+        s += std::format("{}{}", i ? "," : "",
+                         std::string("_w[") + std::to_string(_inputs[i]->netId()) + "]");
+    s += "};\n";
+    return s;
+}
+
+// 只对时序元件可用：组合元件的输出必须经 genOutputWrite 同拍写进 _w[]，
+// 直接写 _c_out_ 会让下游组合逻辑看不到本拍结果
+std::string Component::genOutputPtrArray(std::string_view arr) const {
+    std::string s = std::format("    uint8_t *{}[{}] = {{", arr, _outputs.size());
+    for (size_t i = 0; i < _outputs.size(); i++)
+        s += std::format("{}{}", i ? "," : "",
+                         std::string("_c_out_") + std::to_string(_id) + "_" + std::to_string(i));
+    s += "};\n";
+    return s;
+}
+
 std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin_w) const {
     // 写 _c_out（供总线决议用）
     std::string s = gen_write_wire(_id, out_idx, val, pin_w);

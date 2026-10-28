@@ -66,23 +66,21 @@ std::string PLIC::genInitCode() const {
 
 std::string PLIC::genFuncDef_seq() const {
     std::string code;
-    code += "extern void _dcs_plic_tick(void *, const uint8_t *, uint8_t *);\n";
+    code += "extern void _dcs_plic_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_plic_reset(void *, int);\n\n";
     code += std::format("static void {}(void) {{\n", funcName_seq());
-    code += std::format("    uint8_t _in[{}][{}];\n", (int) I_COUNT, SLOT);
-    code += "    dcs_memset(_in, 0, sizeof(_in));\n"; // 位宽不足 4 字节的输入会留高位垃圾
-    code += "    { uint8_t _v=0; dcs_memcpy(&_v,_w[" + std::to_string(inputs()[I_CLK]->netId()) + "],1); dcs_memcpy(_in[0],&_v,1); }\n";
-    for (int i = I_ADR; i < I_COUNT; i++) {
-        int w = (i == I_ADR || i == I_DAT) ? 32 : (i == I_SEL ? 4 : (i == I_SRC ? _num_sources : 1));
-        code += std::format("    {{ uint64_t _v=0; dcs_memcpy(&_v,_w[{}],{}); uint8_t _b[8]; dcs_memcpy(_b,&_v,8); "
-                            "dcs_memcpy(_in[{}],_b,{}); }}\n",
-                            inputs()[i]->netId(), byte_count(w), i, byte_count(w));
-    }
-    code += std::format("    uint8_t _out[{}][{}];\n", (int) O_COUNT, SLOT);
-    code += std::format("    _dcs_plic_tick(_plic_state_{0}, (const uint8_t*)_in, (uint8_t*)_out);\n", _id);
-    code += "    { uint32_t _d=0; dcs_memcpy(&_d,_out[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
-    code += "    { uint8_t _a=0; dcs_memcpy(&_a,_out[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";
-    code += "    { uint8_t _i=0; dcs_memcpy(&_i,_out[2],1); " + genOutputWrite(O_IRQ, "_i", 1) + " }\n";
+    code += genInputPtrArray("_in");
+    // 输出先落中间缓冲，再由 genOutputWrite 同时写 _c_out 和 _w（下游同拍可见）；
+    // 传给回调的必须是指针数组，二维数组强转会让回调把首字节当指针读
+    code += std::format("    uint8_t _obuf[{}][{}];\n", (int) O_COUNT, SLOT);
+    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
+    code += "_obuf[0],_obuf[1],_obuf[2]};\n";
+    code += std::format("    _dcs_plic_tick(_plic_state_{0}, (const uint8_t **)_in, _op);\n", _id);
+    // 输出仍走 genOutputWrite：它同时写 _c_out 与 _w，保证下游同拍可见
+    code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
+    code += "    { uint8_t _a=0; dcs_memcpy(&_a,_obuf[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";
+    code += "    { uint8_t _i=0; dcs_memcpy(&_i,_obuf[2],1); " + genOutputWrite(O_IRQ, "_i", 1) + " }\n";
     code += "}\n";
     return code;
 }
@@ -93,17 +91,17 @@ std::unique_ptr<Component> PLIC::clone(const std::string &new_name) const {
     return p;
 }
 
-void PLIC::plicTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
+void PLIC::plicTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<PlicState *>(state_ptr);
 
     uint32_t adr = 0, wdat = 0;
-    std::memcpy(&adr, inputs + I_ADR * SLOT, 4);
-    std::memcpy(&wdat, inputs + I_DAT * SLOT, 4);
-    bool we = (inputs[I_WE * SLOT] & 1) != 0;
-    bool stb = (inputs[I_STB * SLOT] & 1) != 0;
-    bool cyc = (inputs[I_CYC * SLOT] & 1) != 0;
+    std::memcpy(&adr, inputs[I_ADR], 4);
+    std::memcpy(&wdat, inputs[I_DAT], 4);
+    bool we = (inputs[I_WE][0] & 1) != 0;
+    bool stb = (inputs[I_STB][0] & 1) != 0;
+    bool cyc = (inputs[I_CYC][0] & 1) != 0;
     uint32_t src = 0;
-    std::memcpy(&src, inputs + I_SRC * SLOT, 4);
+    std::memcpy(&src, inputs[I_SRC], 4);
 
     bool active = stb && cyc;
     bool stb_rise = active && !s.prev_stb;
@@ -218,10 +216,11 @@ void PLIC::plicTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
             break;
         }
 
-    std::memset(outputs, 0, O_COUNT * SLOT);
-    std::memcpy(outputs + O_DAT * SLOT, &dout, 4);
-    outputs[O_ACK * SLOT] = ack ? 1 : 0;
-    outputs[O_IRQ * SLOT] = irq ? 1 : 0;
+    // 每个输出引脚都要完整写入，否则 _c_out_ 会残留上一拍的值
+    std::memset(outputs[O_DAT], 0, SLOT);
+    std::memcpy(outputs[O_DAT], &dout, 4);
+    outputs[O_ACK][0] = ack ? 1 : 0;
+    outputs[O_IRQ][0] = irq ? 1 : 0;
 }
 
 } // namespace dsc
