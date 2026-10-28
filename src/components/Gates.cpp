@@ -127,7 +127,7 @@ std::string GateTSBUF::genFuncDef_comb() const {
     int oe_nid = inputs()[1]->netId();
 
     std::string read_oe = oe_nid >= 0 ? std::format("uint8_t _oe = 0; dcs_memcpy(&_oe, _w[{}], 1);", oe_nid)
-                                      : "uint8_t _oe = 1;";
+                                      : "uint8_t _oe = 0;"; // 悬空按框架约定读 0：不驱动总线
 
     return std::format(R"(static void {}() {{
     {}

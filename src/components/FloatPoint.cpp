@@ -194,12 +194,28 @@ std::string FloatToInt::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
-    // 无符号转换不能借道 int64_t：值 ≥ 2^63 时会变成负数。
-    // 有符号模式直接用 int64_t；无符号模式先取绝对值再按符号补，
-    // 这样只需要编译器内置的"浮点→有符号整数"，TCC 也支持
+    // (int64_t)_fval 在 NaN 或 |值| >= 2^63 时是 C 的 UB，必须先分流。
+    // 无符号且 >= 2^63 时不能借道 int64_t（会变负），拆成"减 2^63 再加最高位"。
+    std::string nan_case = "0";
+    std::string hi_case = _signed ? "0x7FFFFFFFFFFFFFFFULL" : "0xFFFFFFFFFFFFFFFFULL";
+    std::string neg_case = _signed ? "(uint64_t)(int64_t)(-0x1p63)" : "0ULL";
+    std::string limit = _signed ? "0x1p63" : "0x1p64";
+    // 无符号还要再看一半区间：低于 2^63 直接转，高于则减 2^63 再补最高位
     std::string init = _signed
-                               ? "uint64_t _ival = (uint64_t)(int64_t)_fval;"
-                               : "uint64_t _ival = _fval < 0.0 ? 0ULL : (uint64_t)(int64_t)_fval;";
+        ? std::format("    uint64_t _ival;\n"
+                      "    if (_fval != _fval) _ival = {};\n"
+                      "    else if (_fval >= {}) _ival = {};\n"
+                      "    else if (_fval < -0x1p63) _ival = {};\n"
+                      "    else _ival = (uint64_t)((int64_t)_fval);",
+                      nan_case, limit, hi_case, neg_case)
+        : std::format("    uint64_t _ival;\n"
+                      "    if (_fval != _fval) _ival = 0;\n"
+                      "    else if (_fval < 0.0) _ival = 0;\n"
+                      "    else if (_fval >= 0x1p64) _ival = {};\n"
+                      "    else if (_fval >= 0x1p63)\n"
+                      "        _ival = (uint64_t)((int64_t)(_fval - 0x1p63)) + 0x8000000000000000ULL;\n"
+                      "    else _ival = (uint64_t)(int64_t)_fval;",
+                      hi_case);
 
     return std::format(R"(static void {}() {{
     {}
