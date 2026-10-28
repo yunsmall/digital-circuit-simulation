@@ -145,6 +145,7 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                 case Phase::ADDR_ACK:
                     if (sda_in) { // 从机没拉低 = NACK
                         s.nack = true;
+                        s.sda_low = true; // SCL 低时先把 SDA 拉低，下一半周期释放才构成 STOP
                         s.phase = Phase::STOP;
                     } else {
                         s.phase = Phase::DATA;
@@ -199,12 +200,13 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                 break;
             case REG_ADDR: s.addr = wdat & 0x7Fu; break;
             case REG_CLKDIV:
-                if (s.phase == Phase::IDLE && (wdat & 0xFFFFu))
+                if ((s.phase == Phase::IDLE || s.phase == Phase::DONE) && (wdat & 0xFFFFu))
                     s.clkdiv = wdat & 0xFFFFu;
                 break;
             case REG_CONTROL:
                 s.control = wdat;
-                if ((wdat & 1u) && s.phase == Phase::IDLE) {
+                // DONE 表示上一次事务已经结束，必须允许再次启动，否则这个控制器只能用一次
+                if ((wdat & 1u) && (s.phase == Phase::IDLE || s.phase == Phase::DONE)) {
                     s.phase = Phase::START;
                     s.nack = false;
                     s.done = false;
