@@ -48,6 +48,7 @@ private:
         CacheLine line[256];      // 上限 256 行，实际只用 num_lines
         // 上游事务
         uint32_t up_adr, up_dat;
+        uint8_t up_sel;  // 字节使能，字节写不能覆盖同字的其它字节
         bool up_we, up_stb, up_cyc;
         uint32_t up_latched;
         bool up_hold_ack; // 应答保持到主设备撤销 stb，否则 ack 只有一拍

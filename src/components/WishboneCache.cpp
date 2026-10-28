@@ -113,6 +113,7 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
     std::memcpy(&s.up_adr, inputs + U_ADR * SLOT, 4);
     std::memcpy(&s.up_dat, inputs + U_DAT * SLOT, 4);
     s.up_we = (inputs[U_WE * SLOT] & 1) != 0;
+    s.up_sel = inputs[U_SEL * SLOT];
     s.up_stb = (inputs[U_STB * SLOT] & 1) != 0;
     s.up_cyc = (inputs[U_CYC * SLOT] & 1) != 0;
     uint32_t dn_dat_i = 0;
@@ -153,7 +154,12 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
                 CacheLine &l = s.line[line_idx];
                 if (l.valid && l.tag == tag) {
                     s.hits++;
-                    l.data[(s.up_adr >> 2) & 3] = s.up_dat;
+                    // 只更新被选中的字节，否则字节写会把同字其它字节一起改掉
+                    uint8_t *dst = reinterpret_cast<uint8_t *>(&l.data[(s.up_adr >> 2) & 3]);
+                    const uint8_t *src = reinterpret_cast<const uint8_t *>(&s.up_dat);
+                    for (int b = 0; b < 4; b++)
+                        if (s.up_sel & (1u << b))
+                            dst[b] = src[b];
                 } else {
                     s.misses++;
                 }
@@ -225,7 +231,7 @@ void WishboneCache::cacheTick(void *state_ptr, const uint8_t *inputs, uint8_t *o
     std::memcpy(outputs + O_DADR * SLOT, &s.dn_adr, 4);
     std::memcpy(outputs + O_DDAT * SLOT, &s.dn_dat, 4);
     outputs[O_DWE * SLOT] = s.dn_we ? 1 : 0;
-    outputs[O_DSEL * SLOT] = 0x0F;
+    outputs[O_DSEL * SLOT] = s.dn_we ? s.up_sel : 0x0F; // 写要按字节使能，读整字
     outputs[O_DSTB * SLOT] = s.dn_stb ? 1 : 0;
     outputs[O_DCYC * SLOT] = s.dn_cyc ? 1 : 0;
 }

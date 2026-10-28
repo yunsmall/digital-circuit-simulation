@@ -70,6 +70,7 @@ std::string PLIC::genFuncDef_seq() const {
     code += "extern void _dcs_plic_reset(void *, int);\n\n";
     code += std::format("static void {}(void) {{\n", funcName_seq());
     code += std::format("    uint8_t _in[{}][{}];\n", (int) I_COUNT, SLOT);
+    code += "    dcs_memset(_in, 0, sizeof(_in));\n"; // 位宽不足 4 字节的输入会留高位垃圾
     code += "    { uint8_t _v=0; dcs_memcpy(&_v,_w[" + std::to_string(inputs()[I_CLK]->netId()) + "],1); dcs_memcpy(_in[0],&_v,1); }\n";
     for (int i = I_ADR; i < I_COUNT; i++) {
         int w = (i == I_ADR || i == I_DAT) ? 32 : (i == I_SEL ? 4 : (i == I_SRC ? _num_sources : 1));

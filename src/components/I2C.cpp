@@ -114,7 +114,12 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
             s.div_cnt = 0;
             s.scl = !s.scl;
             if (s.scl) {
-                // SCL 高电平期间在总线上维持数据，这里不做动作
+                // 停止条件要求 SCL 高电平期间 SDA 由低变高，只能在这里释放
+                if (s.phase == Phase::STOP) {
+                    s.sda_low = false;
+                    s.phase = Phase::DONE;
+                    s.done = true;
+                }
             } else {
                 // SCL 下降沿推进一位
                 switch (s.phase) {
@@ -165,14 +170,7 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                     s.sda_low = true;
                     s.phase = Phase::STOP;
                     break;
-                case Phase::STOP:
-                    // 停止条件要求 SCL 高电平期间 SDA 由低变高，所以要跨两个半周期：
-                    // 先在 SCL 低时把 SDA 拉低，抬高 SCL，再在 SCL 高时释放 SDA
-                    // 进入这里时 SCL 已被外层翻成高电平，释放 SDA 即形成停止条件
-                    s.sda_low = false;
-                    s.phase = Phase::DONE;
-                    s.done = true;
-                    break;
+                case Phase::STOP: break; // SDA 在 SCL 高电平相位释放才构成停止条件
                 default:
                     break;
                 }
