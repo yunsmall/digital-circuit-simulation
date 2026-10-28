@@ -137,6 +137,11 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     oss << "void circuit_tick(void) {\n";
     // 先算出哪些组合元件要重跑：输入直接或间接挂在总线网上的那些。
     // 没有总线网的电路集合为空，阶段2b 就是零开销。
+    //
+    // 这里只收组合元件是有意的，也是阶段2b 能安全重复执行的前提：
+    // 组合元件对输入是纯函数，跑几次结果都一样。反过来，任何带状态的东西
+    //（MMIO 设备、有副作用的读）都不允许出现在这个集合里——一个 tick 内被跑多次
+    // 会丢掉中断或字节。所以凡是有副作用的元件，必须是时序元件。
     std::set<Component *> bus_affected;
     {
         std::vector<Component *> queue;
