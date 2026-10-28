@@ -9,16 +9,6 @@
 #include "Component.h"
 #include "Net.h"
 
-#ifndef DCS_USE_TCC
-// LLVM/Clang 类型前向声明（仅 LLVM 后端需要，TCC 后端不引入 LLVM 依赖）
-namespace llvm {
-class LLVMContext;
-namespace orc {
-    class LLJIT;
-}
-} // namespace llvm
-#endif
-
 namespace dsc {
 
 // ============================================================

@@ -78,12 +78,17 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
                 params[k] = v.is_string() ? v.get<std::string>() : v.dump();
         }
         // DLL 路径相对于 JSON 文件所在目录
-        if (type == "dll" && !base_dir.empty()) {
-            auto it = params.find("path");
-            if (it != params.end()) {
-                std::filesystem::path p(it->second);
-                if (p.is_relative())
-                    it->second = (std::filesystem::path(base_dir) / p).string();
+        // 带文件路径的元件，其路径相对于 JSON 所在目录解析；
+        // 不这样做的话，换个工作目录加载就找不到文件了
+        if (!base_dir.empty()) {
+            const char *path_key = type == "dll" ? "path" : type == "rom" ? "filepath" : nullptr;
+            if (path_key) {
+                auto it = params.find(path_key);
+                if (it != params.end()) {
+                    std::filesystem::path p(it->second);
+                    if (p.is_relative())
+                        it->second = (std::filesystem::path(base_dir) / p).string();
+                }
             }
         }
 

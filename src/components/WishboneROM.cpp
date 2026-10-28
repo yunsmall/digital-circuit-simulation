@@ -121,8 +121,9 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
     code += std::format("        _bra_ack_{0} = true;\n", id);
     code += "    }\n";
 
-    // stb 撤销 → 事务结束
-    code += std::format("    if (!_stb && _bra_ack_{0}) {{\n", id);
+    // 主设备撤销 stb 就认为事务结束，不管有没有等到 ack：否则异常恢复（复位、提前撤销）
+    // 会把 _bra_wait 留在 0，下一次上升沿被 "< 0" 挡住，适配器永久卡死
+    code += std::format("    if (!_stb) {{\n", id);
     code += std::format("        _bra_ack_{0} = false;\n", id);
     code += std::format("        _bra_wait_{0} = -1;\n", id);
     code += "    }\n";
