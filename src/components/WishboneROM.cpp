@@ -64,6 +64,7 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
     int id = _id;
 
     int adr_in   = inputs()[0]->netId();  // wb_adr_i
+    int we_in    = inputs()[2]->netId();  // wb_we_i
     int stb_in   = inputs()[4]->netId();  // wb_stb_i
     int cyc_in   = inputs()[5]->netId();  // wb_cyc_i
     int rdat_in  = inputs()[7]->netId();  // rom_data
@@ -92,6 +93,14 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
         code += std::format("    bool _stb = false; dcs_memcpy(&_stb, _w[{}], 1);\n", stb_in);
     } else {
         code += "    bool _stb = false;\n";
+    }
+
+    // ROM 是只读的：写事务照常结束（否则主设备会挂在等 ack），
+    // 但不会改动内容。把 we 读进来至少能在调试时看到这笔操作被当成了什么
+    if (we_in >= 0) {
+        code += std::format("    bool _we = false; dcs_memcpy(&_we, _w[{}], 1);\n", we_in);
+    } else {
+        code += "    bool _we = false;\n";
     }
 
     // 先递减（在 rise 检测之前，避免同一 tick 刚设就减）
