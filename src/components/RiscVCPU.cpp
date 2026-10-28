@@ -774,10 +774,33 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         };
         bool snan_in = is_snan(s.fregs[rs1]) || is_snan(s.fregs[rs2]);
         uint32_t rm = f3;
+        // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
+        // 先取就近结果，再按方向用 nextafterf 修正一格。
+        auto round_to_float = [&](double exact, int rmode) -> float {
+            float r = (float) exact;
+            if (!std::isfinite(r)) return r;
+            double back = (double) r;
+            if (back == exact) return r;
+            switch (rmode) {
+            case 1: // RTZ
+                return std::fabs(back) > std::fabs(exact) ? std::nextafterf(r, 0.0f) : r;
+            case 2: // RDN
+                return back > exact ? std::nextafterf(r, -std::numeric_limits<float>::infinity()) : r;
+            case 3: // RUP
+                return back < exact ? std::nextafterf(r, std::numeric_limits<float>::infinity()) : r;
+            case 4: { // RMM：就近，中点向外
+                float away = std::nextafterf(r, exact > 0 ? std::numeric_limits<float>::infinity()
+                                                          : -std::numeric_limits<float>::infinity());
+                return std::fabs((double) away - exact) < std::fabs(back - exact) ? away : r;
+            }
+            default: return r; // RNE
+            }
+        };
+        int cur_rm = (rm == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) rm;
         auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
         auto setf_flags = [&](double exact) {
-            float r = (float) exact;
+            float r = round_to_float(exact, cur_rm);
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
                 s.fregs[rd] = 0x7FC00000u;
@@ -884,9 +907,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         case RV::F7_FCVT_S_W: {
             if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
             if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; } // 5/6 保留
-            // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX
+            // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX，并且按 rm 舍入
             double d = rs2 == 0 ? (double) (int32_t) v1 : (double) v1;
-            float f = (float) d;
+            float f = round_to_float(d, cur_rm);
             if ((double) f != d) s.fcsr |= 0x01;
             setf(f);
             break;

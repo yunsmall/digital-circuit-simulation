@@ -116,6 +116,12 @@ uint32_t enc_flw(int rd, int rs1, int imm) { return ((uint32_t)(imm & 0xFFF) << 
 uint32_t enc_fsw(int rs2, int rs1, int imm) {
     return (((uint32_t)(imm & 0xFE0) << 20)) | (rs2 << 20) | (rs1 << 15) | (2u << 12) | ((uint32_t)(imm & 0x1F) << 7) | 0x27;
 }
+static uint32_t enc_fcvt(int rd, int rs1, int rm, int rs2) {
+    return (0x68u << 25) | ((uint32_t) rs2 << 20) | ((uint32_t) rs1 << 15)
+           | ((uint32_t) rm << 12) | ((uint32_t) rd << 7) | 0x53u;
+}
+static uint32_t enc_jal0() { return 0x0000006Fu; }
+
 uint32_t enc_fp(uint32_t f7, int rd, int rs1, int rs2) {
     return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (rd << 7) | 0x53;
 }
@@ -203,3 +209,19 @@ TEST(FpuTest, DivideByZeroSetsFlag) {
     EXPECT_EQ(f.cpu->freg(3), 0x7F800000u) << "除零应得到 +inf";
     EXPECT_NE(f.cpu->fcsr() & 0x08, 0u) << "应置 DZ 标志";
 }
+
+// 舍入模式必须真正生效：RTZ 与 RNE 对同一个不精确输入给出不同结果
+// 0xFFFFFFFF（按无符号 4294967295）转 float：
+//   RNE 得 2^32 = 4294967296（0x4F800000）
+//   RTZ 得 4294967040（0x4F7FFFFF）
+TEST(FpuTest, FcvtRespectsRoundingMode) {
+    Fixture f;
+    f.load({
+        enc_addi(1, 0, -1),          // x1 = 0xFFFFFFFF（按无符号是 4294967295）
+        enc_fcvt(5, 1, 1, 1),        // fcvt.s.wu f5, x1, RTZ(1)  rs2=1 表示无符号
+        enc_jal0(),
+    });
+    f.run(80);
+    EXPECT_EQ(f.cpu->freg(5), 0x4F7FFFFFu) << "RTZ 应向下截断而不是就近舍入";
+}
+
