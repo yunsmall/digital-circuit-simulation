@@ -167,3 +167,33 @@ TEST(FloatToIntTest, F64ToS16) {
     c.tick();
     EXPECT_EQ(readWireInt(c, out->id(), 16), 0x8000);
 }
+
+// ---- 无符号整数转浮点（≥ 2^63 的半区）----
+// 借道 int64_t 会变成负数，这是最容易漏的一档
+TEST(FloatPointTest, IntToFloatUnsignedLarge) {
+    dsc::Circuit c;
+    auto *i = c.createNet("i");
+    auto *o = c.createNet("o");
+    auto *cv = c.addComponent(std::make_unique<dsc::IntToFloat>("cv", 64, 32, false));
+    c.connect(cv, "in", i);
+    c.connect(cv, "out", o);
+    c.compile();
+    c.init();
+
+    auto out_f = [&] {
+        auto v = c.getWire(o->id());
+        uint32_t u = uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
+        float f;
+        std::memcpy(&f, &u, 4);
+        return f;
+    };
+
+    // 0x8000000000000000 = 2^63，转成 float 应约 9.22e18（正数，不能是负的）
+    std::vector<uint8_t> hi(16, 0);
+    hi[7] = 0x80;
+    c.setWire(i->id(), hi);
+    c.tick();
+    EXPECT_GT(out_f(), 0.0f) << "2^63 转浮点必须是正数";
+    EXPECT_NEAR(out_f() / 9.223372e18f, 1.0f, 0.01f) << "2^63 的量级要正确";
+}
+
