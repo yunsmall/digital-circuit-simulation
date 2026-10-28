@@ -119,6 +119,8 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                     s.sda_low = false;
                     s.phase = Phase::DONE;
                     s.done = true;
+                } else if (s.phase == Phase::ADDR_ACK || s.phase == Phase::DATA_ACK) {
+                    s.sda_low = false; // 主机释放 SDA，从机此时才能拉低表示 ACK
                 }
             } else {
                 // SCL 下降沿推进一位
@@ -137,10 +139,9 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                         s.sda_low = ((s.shift >> 7) & 1u) == 0; // 高位先出
                     else
                         s.sda_low = ((s.shift >> (7 - s.bit_idx)) & 1u) == 0;
-                    if (++s.bit_idx >= 8) {
+                    // 最后一位刚写进 sda_low，这里不能覆盖它，释放动作交给 SCL 高电平相位
+                    if (++s.bit_idx >= 8)
                         s.phase = Phase::ADDR_ACK;
-                        s.sda_low = false; // 释放 SDA 读 ACK
-                    }
                     break;
                 case Phase::ADDR_ACK:
                     if (sda_in) { // 从机没拉低 = NACK
@@ -159,10 +160,8 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
                         s.sda_low = ((s.shift >> 7) & 1u) == 0;
                     else
                         s.sda_low = ((s.shift >> (7 - s.bit_idx)) & 1u) == 0;
-                    if (++s.bit_idx >= 8) {
-                        s.phase = Phase::DATA_ACK;
-                        s.sda_low = false;
-                    }
+                    if (++s.bit_idx >= 8)
+                        s.phase = Phase::DATA_ACK; // 同上，最后一位由 SCL 高电平相位释放
                     break;
                 case Phase::DATA_ACK:
                     if (sda_in)
