@@ -194,7 +194,9 @@ void I2C::i2cTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
             }
         } else {
             switch (off) {
-            case REG_TXDATA: s.tx_data = wdat & 0xFFu; break;
+            case REG_TXDATA:
+                if (s.phase == Phase::IDLE) s.tx_data = wdat & 0xFFu; // 事务进行中不许换数据
+                break;
             case REG_ADDR: s.addr = wdat & 0x7Fu; break;
             case REG_CLKDIV:
                 if (s.phase == Phase::IDLE && (wdat & 0xFFFFu))

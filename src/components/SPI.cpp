@@ -146,7 +146,7 @@ void SPI::spiTick(void *state_ptr, const uint8_t *inputs, uint8_t *outputs) {
             }
         } else {
             switch (off) {
-            case REG_TXDATA: s.tx_shift = wdat & 0xFFu; break;
+            case REG_TXDATA: if (!s.busy) s.tx_shift = wdat & 0xFFu; break; // 传输中改写会破坏当前字节
             case REG_CLKDIV:
                 if (!s.busy && (wdat & 0xFFFFu))
                     s.clkdiv = wdat & 0xFFFFu;
