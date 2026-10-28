@@ -948,9 +948,9 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
-    // bit16(XS[1]) 原本可写而 bit15(XS[0]) 不可写，软件写 XS=3 会变成 2；
-    // 本核没有任何额外扩展状态，XS 恒为 0，直接从可写掩码里去掉
-    case RV::CSR_MSTATUS: s.mstatus = val & 0x00FE79EAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
+    // 本核没有额外扩展状态、也不支持非字节序：
+    //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
+    case RV::CSR_MSTATUS: s.mstatus = val & 0x007E79AAu; break;  // 写入掩码: SIE/MIE/SPIE/UBE/MPIE/SPP/MPP/FS/XS/MPRV/SUM/MXR/TVM/TW/TSR
     case RV::CSR_MEDELEG: s.medeleg = val & 0xFFFF; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
