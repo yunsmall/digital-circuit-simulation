@@ -162,12 +162,15 @@ FloatConst::FloatConst(const std::string &name, int precision, double value) :
 std::string FloatConst::genFuncDef_comb() const {
     auto [ct, bytes] = float_info(_precision);
     int o_nid = outputs()[0]->netId();
+    // 有效位数要够位宽往返：float 需要 9 位，double 需要 17 位；
+    // 少了会在生成代码时就把常量精度截掉
+    std::string lit = _precision <= 32 ? std::format("{:.9g}", _value) : std::format("{:.17g}", _value);
 
     return std::format(R"(static void {}() {{
     {} _c = {};
     {}
 }})",
-                       funcName_comb(), ct, std::format("{:.9g}", _value), genOutputWrite(0, "_c", _precision));
+                       funcName_comb(), ct, lit, genOutputWrite(0, "_c", _precision));
 }
 
 std::unique_ptr<Component> FloatConst::clone(const std::string &n) const {
