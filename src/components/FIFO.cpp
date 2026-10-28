@@ -106,14 +106,17 @@ std::string FIFO::genFuncDef_seq() const {
     code += "        }\n";
     code += "    }\n";
     code += "    _fifo_clk_" + fid + " = _clk;\n";
-
-    // 输出：在时钟操作之后计算，反映本周期结果
+    // dout 走 FWFT（first-word fall-through）语义：它任何时刻都等于"下一个可读数据"。
+    // 所以输出必须放在 rd_ptr 前进之后再算——读操作那一拍 dout 变成新的 head 是对的，
+    // 被读走的数据在 rd_en 之前就已经出现在 dout 上，主设备不会漏读。
+    // 这不是"指针先前进导致丢数据"，别照着标准 FIFO 的时序来改。
     if (q_nid >= 0) {
         code += "    uint8_t* _rslot = _fifo_p_" + fid + " + _fifo_rd_ptr_" + fid + " * d_bytes;\n";
         code += "    " + std::string(c_int_type(_data_width)) + " _dout = 0;\n";
         code += "    dcs_memcpy(&_dout, _rslot, " + std::to_string(d_bytes) + ");\n";
         code += "    " + genOutputWrite(0, "_dout", _data_width) + "\n";
     }
+
     if (f_nid >= 0) {
         code += "    uint8_t _full = (_fifo_count_" + fid + " >= " + fd + ") ? 1 : 0;\n";
         code += "    " + genOutputWrite(1, "_full", 1) + "\n";

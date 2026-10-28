@@ -43,9 +43,14 @@ std::string BarrelShifter::genFuncDef_comb() const {
     else
         write = "    // 输出悬空\n";
 
+    // 悬空 amt 必须读常量 0；退回 _w[0] 会读到别的元件的驱动值，移位量就随机了
+    std::string read_amt = amt_nid >= 0
+                                   ? std::format("{} _amt = 0; dcs_memcpy(&_amt, _w[{}], {});", c_int_type(_sh_bits),
+                                                 amt_nid, byte_count(_sh_bits))
+                                   : std::format("{} _amt = 0;", c_int_type(_sh_bits));
     return std::format(R"(static void {}() {{
     {}
-    {} _amt = 0; dcs_memcpy(&_amt, _w[{}], {});
+    {}
     _amt &= {};
     {}
     {}
@@ -65,8 +70,8 @@ std::string BarrelShifter::genFuncDef_comb() const {
     }}
 {}
 }})",
-                       funcName_comb(), gen_read_wire(in_nid, _bw, in_nw, "_in"), c_int_type(_sh_bits),
-                       amt_nid >= 0 ? amt_nid : 0, byte_count(_sh_bits), gen_mask(_sh_bits), read_dir, read_arith,
+                       funcName_comb(), gen_read_wire(in_nid, _bw, in_nw, "_in"), read_amt,
+                       gen_mask(_sh_bits), read_dir, read_arith,
                        c_int_type(_bw),
                        _bw - 1, // 检查 MSB（符号位）
                        gen_mask(_bw), // 全1掩码

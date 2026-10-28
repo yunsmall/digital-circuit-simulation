@@ -705,6 +705,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     // ---- 融合乘加：FMADD / FMSUB / FNMSUB / FNMADD ----
     case 0x43: case 0x47: case 0x4B: case 0x4F: {
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
+        // FMA 的 rm 在 funct3：5/6 是保留编码，7 表示取 fcsr.frm
+        if ((f3 == 7 ? ((s.fcsr >> 5) & 7u) : f3) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
         auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         if (((inst >> 25) & 3) != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 只实现单精度
@@ -844,6 +846,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         }
         case RV::F7_FCVT_S_W: {
             if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
+            if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; } // 5/6 保留
             // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX
             double d = rs2 == 0 ? (double) (int32_t) v1 : (double) v1;
             float f = (float) d;
