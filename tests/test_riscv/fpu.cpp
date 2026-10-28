@@ -224,4 +224,3 @@ TEST(FpuTest, FcvtRespectsRoundingMode) {
     f.run(80);
     EXPECT_EQ(f.cpu->freg(5), 0x4F7FFFFFu) << "RTZ 应向下截断而不是就近舍入";
 }
-
