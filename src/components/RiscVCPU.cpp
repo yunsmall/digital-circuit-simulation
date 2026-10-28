@@ -102,6 +102,9 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     // 外部中断线要每 tick 反映到 mip，否则停机期间收不到中断
     if (in.irq) s.mip|=RV::IRQ_MEI; else s.mip&=~RV::IRQ_MEI;
     if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
+    // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
+    // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起
+    if ((s.mideleg & RV::IRQ_STI) && in.mti) s.mip |= RV::IRQ_STI; else s.mip &= ~RV::IRQ_STI;
     if (in.msi) s.mip|=RV::IRQ_MSI; else s.mip&=~RV::IRQ_MSI;
     if (in.seip) s.mip|=RV::IRQ_SEI; else s.mip&=~RV::IRQ_SEI;
     // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
@@ -1074,6 +1077,10 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     case 0xB02: case 0xC02: return (uint32_t) (s.instret & 0xFFFFFFFFu);
     case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
     case 0x306: return s.mcounteren; // mcounteren
+    case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: return s.pmpcfg[addr - 0x3A0];
+    case 0x3B0: case 0x3B1: case 0x3B2: case 0x3B3: case 0x3B4: case 0x3B5: case 0x3B6: case 0x3B7:
+    case 0x3B8: case 0x3B9: case 0x3BA: case 0x3BB: case 0x3BC: case 0x3BD: case 0x3BE: case 0x3BF:
+        return s.pmpaddr[addr - 0x3B0];
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
@@ -1105,6 +1112,11 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
 }
 void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     switch (addr) {
+    // pmpaddr 是 0x3B0..0x3BF，pmpcfg 是 0x3A0..0x3A3
+    case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: s.pmpcfg[addr - 0x3A0] = val; break;
+    case 0x3B0: case 0x3B1: case 0x3B2: case 0x3B3: case 0x3B4: case 0x3B5: case 0x3B6: case 0x3B7:
+    case 0x3B8: case 0x3B9: case 0x3BA: case 0x3BB: case 0x3BC: case 0x3BD: case 0x3BE: case 0x3BF:
+        s.pmpaddr[addr - 0x3B0] = val; break;
     // mcycle/minstret 是 R/W：软件常用写它们重置计时基准
     case 0xB00: s.cycles = (s.cycles & 0xFFFFFFFF00000000ULL) | val; break;
     case 0xB80: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
@@ -1117,7 +1129,8 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
     case RV::CSR_MSTATUS: s.mstatus = val & 0x007E79AAu; break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
-    case RV::CSR_MEDELEG: s.medeleg = val & 0xFFFF; break;
+    // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
+    case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
     case RV::CSR_MTVEC:   s.mtvec = val & ~2u; break; // 保留 bit0（MODE），只清保留位 bit1

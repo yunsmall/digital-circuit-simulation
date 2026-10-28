@@ -144,6 +144,9 @@ private:
         uint32_t mstatus, mtvec, mepc, mcause, mie, mip, mscratch, mtval;
         // 决定 S 态能否读 cycle/time/instret（U 态还要再过 scounteren，本核未实现 S 态计数器委派）
         uint32_t mcounteren;
+        // PMP 配置与地址：本核不做保护，但必须能原样存回。
+        // 软件靠"写 0 再读回验证"判断 PMP 是否已关闭，恒返回 0 会让它误判
+        uint32_t pmpcfg[4], pmpaddr[16];
         uint32_t medeleg, mideleg;
 
         // S-mode CSR
