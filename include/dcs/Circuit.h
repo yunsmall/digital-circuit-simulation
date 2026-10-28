@@ -1,4 +1,6 @@
 #pragma once
+#include "dcs/ErrorCode.h"
+#include "dcs/JitBackend.h"
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -23,24 +25,6 @@ namespace dsc {
 // 运行时错误
 // ============================================================
 
-enum class ErrorCode {
-    OK = 0,
-    PIN_NOT_FOUND,
-    MULTIPLE_DRIVERS,
-    COMBINATIONAL_LOOP,
-    PREPARE_FAILED, // DLL 加载等编译前准备失败
-    JIT_COMPILE_FAILED, // C→IR 编译失败（TCC/Clang 统一）
-    JIT_LINK_FAILED, // 重定位/添加模块失败
-    JIT_SYMBOL_FAILED, // 符号注入/查找失败
-    BUS_CONFLICT, // 运行时总线冲突
-};
-
-struct CircuitError {
-    ErrorCode code = ErrorCode::OK;
-    int net_id = -1;
-    std::vector<int> comp_ids; // 参与冲突的元件 ID
-    std::string message;
-};
 
 // ============================================================
 // Circuit — 电路容器 + JIT 编译 + 仿真运行
@@ -180,11 +164,9 @@ private:
     bool _compiled = false;
     CircuitError _tick_error;
 
-#ifndef DCS_USE_TCC
-    std::unique_ptr<llvm::LLVMContext> _llvm_ctx;
-    std::unique_ptr<llvm::orc::LLJIT> _jit;
-#endif
-    void *_tcc_state = nullptr; // TCCState* (TCC 后端使用)
+    // JIT 后端是编译期选定的具体类型，不是多态接口——这里的每次调用都只发生在
+    // compile() 里，tick 走的是后端解析出来的函数指针，热路径上没有额外间接层
+    JitBackend _backend;
 
     static std::string _jit_include_dir; // JIT 头文件搜索路径（空=自动检测）
 

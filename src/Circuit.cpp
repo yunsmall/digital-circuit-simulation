@@ -50,6 +50,12 @@ extern "C" void dcs_bus_conflict(void *circuit, int net_id) {
 }
 
 namespace dsc {
+void dcsBusConflictThunk(void *circuit_ptr, int net_id) {
+    dcs_bus_conflict(circuit_ptr, net_id);
+}
+} // namespace dsc
+
+namespace dsc {
 
 // 编译器环境初始化（内部调用，只执行一次）
 static void init_compiler_env() {
@@ -106,15 +112,7 @@ void Circuit::jitCleanup() {
     _reset_fn = nullptr;
     _set_wire_fn = nullptr;
     _get_wire_fn = nullptr;
-#ifdef DCS_USE_TCC
-    if (_tcc_state) {
-        tcc_delete(static_cast<TCCState *>(_tcc_state));
-        _tcc_state = nullptr;
-    }
-#else
-    _jit.reset();
-    _llvm_ctx.reset();
-#endif
+    _backend.cleanup();
     _compiled = false;
 }
 
@@ -543,20 +541,22 @@ std::string Circuit::generateC() const {
         // 让它之后的比对读到未初始化的栈内存
         if (track_change)
             oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, _w[{}], 16);\n", net_id, net_id, net_id);
-        oss << "        int _active = -1;\n";
+        oss << "        int _active = -1, _conflict = 0;\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
             int oi = drivers[di].out_idx;
             if (di == 0)
                 oss << std::format("        if (_c_oe_{}_{}) _active = {};\n", cid, oi, di);
             else
+                // 多驱动冲突只置标志，不跳转：跳转会绕过下面所有语句（包括旧值快照的初始化）
                 oss << std::format(
                         "        if (_c_oe_{}_{}) {{\n"
-                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); goto _bus_done_{}_{}; }}\n"
-                        "            _active = {};\n"
+                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); _conflict = 1; }}\n"
+                        "            else _active = {};\n"
                         "        }}\n",
-                        cid, oi, net_id, net_id, round, di);
+                        cid, oi, net_id, di);
         }
+        oss << "        if (!_conflict) {\n";
         oss << "        if (_active >= 0) {\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
@@ -568,7 +568,7 @@ std::string Circuit::generateC() const {
         oss << "        } else {\n";
         oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
         oss << "        }\n";
-        oss << std::format("    _bus_done_{}_{}: ;\n", net_id, round);
+        oss << "        }\n";
         if (track_change)
             oss << std::format(
                     "    for (int _i=0;_i<16;_i++) if (_old_{}[_i] != _w[{}][_i]) {{ _bus_changed=1; break; }}\n",
@@ -734,23 +734,8 @@ std::vector<Component *> Circuit::topologicalSort(const std::vector<Component *>
 // ============================================================
 
 CircuitError Circuit::compile() {
-    // 仅重置 JIT 函数指针，不卸载 DLL
-    _tick_fn = nullptr;
-    _init_fn = nullptr;
-    _deinit_fn = nullptr;
-    _reset_fn = nullptr;
-    _set_wire_fn = nullptr;
-    _get_wire_fn = nullptr;
     _compiled = false;
-#ifdef DCS_USE_TCC
-    if (_tcc_state) {
-        tcc_delete(static_cast<TCCState *>(_tcc_state));
-        _tcc_state = nullptr;
-    }
-#else
-    _jit.reset();
-    _llvm_ctx.reset();
-#endif
+    _backend.cleanup();
 
     // 展开复合元件
     expandComposites();
@@ -765,197 +750,39 @@ CircuitError Circuit::compile() {
 
     std::string c_code = generateC();
 
-
-    // 获取 shim 路径：优先使用 setJitIncludeDir() 设置的路径，否则自动检测
+    // shim 路径：优先使用 setJitIncludeDir() 设置的路径，否则按构建目录布局自动检测
     auto shim_path = []() -> std::string {
         namespace fs = std::filesystem;
-        // 优先：用户通过 setJitIncludeDir() 设置
-        if (!_jit_include_dir.empty()) {
-            if (fs::exists(_jit_include_dir))
-                return _jit_include_dir;
-        }
-        // 回退：exe 同目录下的 shim/
+        if (!_jit_include_dir.empty() && fs::exists(_jit_include_dir))
+            return _jit_include_dir;
         auto dir = fs::path(exeDir());
         auto shim = dir / "shim";
         if (fs::exists(shim))
             return shim.string();
-        // 再回退：exe 上两级（开发构建目录结构）
         shim = dir.parent_path().parent_path() / "shim";
-        if (fs::exists(shim))
-            return shim.string();
-        // 再回退：安装布局（bin/dcs → ../include/dcs/shim）
-        shim = dir.parent_path() / "include" / "dcs" / "shim";
         if (fs::exists(shim))
             return shim.string();
         return "";
     }();
 
-#ifdef DCS_USE_TCC
-    // ============================================================
-    // TinyCC 后端
-    // ============================================================
-    auto *s = tcc_new();
-    if (!s) {
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "tcc_new 失败"};
-    }
-
-    tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
-
-    // 不使用标准库，纯独立 C 代码
-    tcc_set_options(s, "-nostdlib -O2");
-
-    if (!shim_path.empty()) {
-        tcc_add_sysinclude_path(s, shim_path.c_str());
-    }
-
-    // 统一入口：编译前注入所有元件的额外 JIT 符号（DLL 函数指针、内存地址等）
-    tcc_add_symbol(s, "dcs_bus_conflict",
-                   reinterpret_cast<void *>(reinterpret_cast<void (*)(void *, int)>(&dcs_bus_conflict)));
-    // -nostdlib 下 TCC 处理大块初始化/结构体赋值时会自行发出 memset/memcpy 调用，
-    // 这几个符号必须由宿主提供，否则链接期报未解析引用
-    {
-        using memset_fn = void *(*)(void *, int, unsigned long long);
-        using memcpy_fn = void *(*)(void *, const void *, unsigned long long);
-        using memmove_fn = void *(*)(void *, const void *, unsigned long long);
-        static memset_fn s_memset = [](void *d, int c, unsigned long long n) { return std::memset(d, c, (size_t) n); };
-        static memcpy_fn s_memcpy = [](void *d, const void *s2, unsigned long long n) { return std::memcpy(d, s2, (size_t) n); };
-        static memmove_fn s_memmove = [](void *d, const void *s2, unsigned long long n) { return std::memmove(d, s2, (size_t) n); };
-        tcc_add_symbol(s, "memset", reinterpret_cast<void *>(s_memset));
-        tcc_add_symbol(s, "memcpy", reinterpret_cast<void *>(s_memcpy));
-        tcc_add_symbol(s, "memmove", reinterpret_cast<void *>(s_memmove));
-    }
+    // 各元件要暴露给生成代码的符号（回调函数指针、状态对象地址等）
+    std::vector<std::pair<std::string, void *>> symbols;
     for (auto &comp: _components)
         for (auto &[name, ptr]: comp->extraJitSymbols())
-            tcc_add_symbol(s, name.c_str(), ptr);
+            symbols.emplace_back(name, ptr);
 
-    if (tcc_compile_string(s, c_code.c_str()) == -1) {
-        tcc_delete(s);
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "TCC 编译失败"};
-    }
+    auto res = _backend.compile(c_code, shim_path, this, symbols);
+    if (res.code != ErrorCode::OK)
+        return {res.code, -1, {}, res.message};
 
-    // 重定位（TCC HEAD 及 Windows 均为单参数；旧版 apt 需双参数 tcc_relocate(s, TCC_RELOCATE_AUTO)）
-    tcc_relocate(s);
-
-    // 查找函数符号
-    _tick_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_tick"));
-    _init_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_init"));
-    _deinit_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_deinit"));
-    _reset_fn = reinterpret_cast<void (*)()>(tcc_get_symbol(s, "circuit_reset"));
-    _set_wire_fn = reinterpret_cast<void (*)(int, const uint8_t *)>(tcc_get_symbol(s, "circuit_set_wire"));
-    _get_wire_fn = reinterpret_cast<void (*)(int, uint8_t *)>(tcc_get_symbol(s, "circuit_get_wire"));
-
-    if (!_tick_fn || !_init_fn || !_set_wire_fn || !_get_wire_fn) {
-        tcc_delete(s);
-        return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, "TCC 查找符号失败"};
-    }
-
-    _tcc_state = s;
+    _tick_fn = res.tick;
+    _init_fn = res.init;
+    _deinit_fn = res.deinit;
+    _reset_fn = res.reset;
+    _set_wire_fn = res.set_wire;
+    _get_wire_fn = res.get_wire;
     _compiled = true;
     return {ErrorCode::OK};
-
-#else
-    // ============================================================
-    // LLVM/Clang 后端
-    // ============================================================
-    init_compiler_env();
-
-    _llvm_ctx = std::make_unique<llvm::LLVMContext>();
-
-    auto mem_buf = llvm::MemoryBuffer::getMemBuffer(c_code, "circuit.c");
-    auto ci = std::make_unique<clang::CompilerInstance>();
-    ci->createDiagnostics();
-    auto &invoc = ci->getInvocation();
-    invoc.getTargetOpts().Triple = llvm::sys::getDefaultTargetTriple();
-    invoc.getTargetOpts().CPU = "x86-64"; // 基线 x86-64，避免 CI VM 中 SIGILL
-    invoc.getLangOpts().C99 = true;
-    invoc.getLangOpts().C11 = true;
-    invoc.getLangOpts().CPlusPlus = false;
-    invoc.getLangOpts().Bool = true;
-    invoc.getLangOpts().Freestanding = true; // 不依赖标准库
-    invoc.getCodeGenOpts().OptimizationLevel = 2;
-    invoc.getCodeGenOpts().RelocationModel = llvm::Reloc::PIC_;
-
-    if (!shim_path.empty()) {
-        auto &hdr = invoc.getHeaderSearchOpts();
-        hdr.AddPath(shim_path, clang::frontend::System, false, false);
-    }
-
-    invoc.getPreprocessorOpts().UsePredefines = true;
-    invoc.getFrontendOpts().Inputs.push_back(clang::FrontendInputFile("circuit.c", clang::Language::C));
-    invoc.getFrontendOpts().ProgramAction = clang::frontend::EmitLLVMOnly;
-    ci->getPreprocessorOpts().addRemappedFile("circuit.c", mem_buf.release());
-
-    auto action = std::make_unique<clang::EmitLLVMOnlyAction>(_llvm_ctx.get());
-    if (!ci->ExecuteAction(*action)) {
-        jitCleanup();
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, "Clang 编译 C 代码失败"};
-    }
-    auto module = action->takeModule();
-
-    auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
-    if (!jtmb) {
-        jitCleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, {}, "检测目标机失败: " + llvm::toString(jtmb.takeError())};
-    }
-    jtmb->setCPU("x86-64"); // 基线 x86-64，避免 CI VM 中 SIGILL
-    auto jit_or_err = llvm::orc::LLJITBuilder().setJITTargetMachineBuilder(std::move(*jtmb)).create();
-    if (!jit_or_err) {
-        auto llvm_err = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());
-        jitCleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, {}, llvm_err};
-    }
-    _jit = std::move(*jit_or_err);
-
-    // 统一入口：注入所有元件的额外 JIT 符号（DLL 函数指针等）
-    {
-        llvm::orc::SymbolMap syms;
-        // 注入总线冲突回调
-        syms[_jit->mangleAndIntern("dcs_bus_conflict")] = {
-                llvm::orc::ExecutorAddr::fromPtr(
-                        reinterpret_cast<void *>(reinterpret_cast<void (*)(void *, int)>(&dcs_bus_conflict))),
-                llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable};
-        for (auto &comp: _components)
-            for (auto &[name, ptr]: comp->extraJitSymbols())
-                syms[_jit->mangleAndIntern(name)] = {llvm::orc::ExecutorAddr::fromPtr(ptr),
-                                                     llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable};
-        if (auto err = _jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(syms)))) {
-            auto sym_err = "注入 JIT 符号失败: " + llvm::toString(std::move(err));
-            jitCleanup();
-            return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, sym_err};
-        }
-    }
-
-    auto tsm = llvm::orc::ThreadSafeModule(std::move(module), std::make_unique<llvm::LLVMContext>());
-    if (auto err = _jit->addIRModule(std::move(tsm))) {
-        auto mod_err = "添加 IR 模块失败: " + llvm::toString(std::move(err));
-        jitCleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, {}, mod_err};
-    }
-
-    auto lookup = [this]<typename F>(const std::string &name) -> F {
-        if (!_jit)
-            return nullptr;
-        auto sym = _jit->lookup(name);
-        if (!sym) {
-            llvm::consumeError(sym.takeError());
-            return nullptr;
-        }
-        return sym->template toPtr<F>();
-    };
-    _tick_fn = lookup.operator()<void (*)()>("circuit_tick");
-    _init_fn = lookup.operator()<void (*)()>("circuit_init");
-    _deinit_fn = lookup.operator()<void (*)()>("circuit_deinit");
-    _reset_fn = lookup.operator()<void (*)()>("circuit_reset");
-    _set_wire_fn = lookup.operator()<void (*)(int, const uint8_t *)>("circuit_set_wire");
-    _get_wire_fn = lookup.operator()<void (*)(int, uint8_t *)>("circuit_get_wire");
-
-    if (!_tick_fn || !_init_fn || !_set_wire_fn || !_get_wire_fn) {
-        jitCleanup();
-        return {ErrorCode::JIT_SYMBOL_FAILED, -1, {}, "查找 JIT 符号失败"};
-    }
-    _compiled = true;
-    return {ErrorCode::OK};
-#endif
 }
 
 // ============================================================
