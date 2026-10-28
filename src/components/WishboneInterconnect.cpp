@@ -172,6 +172,7 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         code += std::format("        dcs_memcpy(&_s{}_dat, _out[{}], 4);\n", i, base + 1);
         code += std::format("        dcs_memcpy(&_s{}_we, _out[{}], 1);\n", i, base + 2);
         code += std::format("        dcs_memcpy(&_s{}_sel, _out[{}], 1);\n", i, base + 3);
+        // _s*_sel 是 uint8_t，routeTick 里按 4 位使用
         code += std::format("        dcs_memcpy(&_s{}_stb, _out[{}], 1);\n", i, base + 4);
         code += std::format("        dcs_memcpy(&_s{}_cyc, _out[{}], 1);\n", i, base + 5);
         // 输出引脚索引: 2(主侧) + i*6
@@ -179,7 +180,7 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         code += "        " + genOutputWrite(out_base, std::format("_s{}_adr", i), 32) + "\n";
         code += "        " + genOutputWrite(out_base + 1, std::format("_s{}_dat", i), 32) + "\n";
         code += "        " + genOutputWrite(out_base + 2, std::format("_s{}_we", i), 1) + "\n";
-        code += "        " + genOutputWrite(out_base + 3, std::format("_s{}_sel", i), 1) + "\n";
+        code += "        " + genOutputWrite(out_base + 3, std::format("_s{}_sel", i), 4) + "\n"; // sel 是 4 位字节使能
         code += "        " + genOutputWrite(out_base + 4, std::format("_s{}_stb", i), 1) + "\n";
         code += "        " + genOutputWrite(out_base + 5, std::format("_s{}_cyc", i), 1) + "\n";
     }
