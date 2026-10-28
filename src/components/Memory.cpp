@@ -112,6 +112,15 @@ std::string Memory::genFuncDef_seq() const {
     if (_wr_stages > 1) {
         code += "    // 写流水线移位+提交\n";
         int wlast = _wr_stages - 1;
+        // 顺序是"采样 → 提交 → 移位"：提交处理的是上一拍移到末级的请求，
+        // 此拍采样的还要走 _wr_stages-1 次移位，总延迟才是 write_latency
+        code += std::format("    _wr_pend_{0}[0] = 0;\n", id);
+        code += std::format("    if (_clk && !_dcs_mem_clk_{0} && _we) {{\n", id);
+        code += std::format("        _wr_addr_{0}[0] = _addr;\n", id);
+        code += std::format("        _wr_data_{0}[0] = _din & 0x{1:X}ULL;\n", id,
+                            (_data_width == 64) ? ~0ULL : (1ULL << _data_width) - 1);
+        code += std::format("        _wr_pend_{0}[0] = 1;\n", id);
+        code += "    }\n";
         code += std::format("    if (_wr_pend_{0}[{1}]) {{\n", id, wlast);
         code += "        if ((uint64_t)_wr_addr_" + sid + "[" + std::to_string(wlast) + "] + " +
                 std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
@@ -126,13 +135,6 @@ std::string Memory::genFuncDef_seq() const {
             code += std::format("    _wr_data_{0}[{1}] = _wr_data_{0}[{2}];\n", id, i, i - 1);
             code += std::format("    _wr_pend_{0}[{1}] = _wr_pend_{0}[{2}];\n", id, i, i - 1);
         }
-        code += std::format("    _wr_pend_{0}[0] = 0;\n", id);
-        code += std::format("    if (_clk && !_dcs_mem_clk_{0} && _we) {{\n", id);
-        code += std::format("        _wr_addr_{0}[0] = _addr;\n", id);
-        code += std::format("        _wr_data_{0}[0] = _din & 0x{1:X}ULL;\n", id,
-                            (_data_width == 64) ? ~0ULL : (1ULL << _data_width) - 1);
-        code += std::format("        _wr_pend_{0}[0] = 1;\n", id);
-        code += "    }\n";
     }
     else {
         code += "    // 零写延迟：直接写入\n";

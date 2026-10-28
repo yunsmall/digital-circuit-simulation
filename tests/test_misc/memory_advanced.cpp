@@ -221,3 +221,35 @@ TEST(MiscTest, MemoryByteAddrWriteNonAligned) {
     c.tick();
     EXPECT_EQ(mem16->data()[7], 0); // 没写进去
 }
+
+// write_latency=1 时，写入应在 we 上升沿后的第 1 拍生效，不能拖到第 2 拍
+TEST(MiscTest, MemoryWriteLatencyIsExact) {
+    dsc::Circuit c;
+    auto *addr = c.createNet("addr"), *din = c.createNet("din"), *we = c.createNet("we"), *clk = c.createNet("clk");
+    auto *dout = c.createNet("dout"), *busy = c.createNet("busy");
+    auto *mem = static_cast<dsc::Memory *>(c.addComponent(std::make_unique<dsc::Memory>("mem", 4, 8, 0, 1)));
+    c.connect(mem, "addr", addr);
+    c.connect(mem, "data_in", din);
+    c.connect(mem, "we", we);
+    c.connect(mem, "clk", clk);
+    c.connect(mem, "data_out", dout);
+    c.connect(mem, "busy", busy);
+    c.compile();
+    c.init();
+    c.setWire(addr->id(), {2, 0});
+    c.setWire(din->id(), {0x5A, 0});
+    c.setWire(we->id(), {1, 0});
+    c.setWire(clk->id(), {0, 0});
+    c.tick();
+    // 第 1 拍上升沿：采样请求
+    c.setWire(clk->id(), {1, 0});
+    c.tick();
+    EXPECT_EQ(mem->data()[2], 0) << "写请求刚采样，本拍还不该落地";
+    c.setWire(we->id(), {0, 0});
+    c.setWire(clk->id(), {0, 0});
+    c.tick();
+    c.setWire(clk->id(), {1, 0});
+    c.tick();
+    EXPECT_EQ(mem->data()[2], 0x5A) << "write_latency=1 应在第 1 拍后生效";
+}
+
