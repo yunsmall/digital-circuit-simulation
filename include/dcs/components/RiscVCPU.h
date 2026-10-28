@@ -142,6 +142,8 @@ private:
 
         // M-mode CSR
         uint32_t mstatus, mtvec, mepc, mcause, mie, mip, mscratch, mtval;
+        // 决定 S 态能否读 cycle/time/instret（U 态还要再过 scounteren，本核未实现 S 态计数器委派）
+        uint32_t mcounteren;
         uint32_t medeleg, mideleg;
 
         // S-mode CSR

@@ -1002,6 +1002,15 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             uint32_t wval = (f3>=RV::F3_CSRRW&&f3<=RV::F3_CSRRC) ? v1 : (uint32_t)rs1;
             // 检查 CSR 访问权限 (最低两位 = 读写权限位)
             if ((csr_addr>>8)&3) { uint8_t min_priv=(uint8_t)((csr_addr>>8)&3); if(s.priv<min_priv) [[unlikely]] { takeTrap(s,RV::EXC_II,inst); npc=s.pc; break; }}
+            // 计数器 CSR 在 S 态以下还要过 mcounteren 的对应位：CY(0)/TM(1)/IR(2)
+            if (s.priv < RV::PRIV_M) {
+                int cbit = (csr_addr == 0xC00 || csr_addr == 0xC80) ? 0
+                           : (csr_addr == 0xC01 || csr_addr == 0xC81) ? 1
+                           : (csr_addr == 0xC02 || csr_addr == 0xC82) ? 2
+                                                                     : -1;
+                if (cbit >= 0 && !((s.mcounteren >> cbit) & 1)) [[unlikely]]
+                { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
+            }
             switch(f3){
             case RV::F3_CSRRW: case RV::F3_CSRRWI: csrWrite(s, csr_addr, wval); break;                              // CSR 写入不依赖 rd
             case RV::F3_CSRRS: case RV::F3_CSRRSI: if(rs1!=0) csrWrite(s, csr_addr, csr_val|wval); break;           // rs1=0 时不写 CSR
@@ -1058,6 +1067,7 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     case 0xB80: case 0xC80: return (uint32_t) (s.cycles >> 32);
     case 0xB02: case 0xC02: return (uint32_t) (s.instret & 0xFFFFFFFFu);
     case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
+    case 0x306: return s.mcounteren; // mcounteren
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
@@ -1089,6 +1099,7 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
 }
 void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     switch (addr) {
+    case 0x306: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
