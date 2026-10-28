@@ -48,7 +48,8 @@ Switch::Switch(const std::string &name, int bit_width) : CombinationalComponent(
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("in", bit_width);
     addInput("en", 1);
-    addOutput("out", bit_width);
+    // 开关的本质是"断开"：en=0 时应当释放总线，而不是驱动 0
+    addOutput("out", bit_width, true);
 }
 
 std::string Switch::genFuncDef_comb() const {
@@ -57,7 +58,7 @@ std::string Switch::genFuncDef_comb() const {
     int o0 = outputs()[0]->netId();
     std::string write;
     if (o0 >= 0)
-        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
+        write = std::format("    {}\n    _c_oe_{}_0 = _en;\n", genOutputWrite(0, "_out", _bit_width), _id);
     // 悬空 en 必须读常量 0，退回 _w[0] 会读到别的元件的驱动值
     std::string read_en = en >= 0
                                  ? std::format("    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en)

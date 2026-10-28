@@ -52,6 +52,9 @@ std::string BarrelShifter::genFuncDef_comb() const {
     {}
     {}
     _amt &= {};
+    // 非 2 的幂位宽时 _amt 可能大于数据位宽，而算术右移的补位用的是 (位宽 - _amt)，
+    // 那会变成负数移位（UB）。饱和到位宽后：算术右移得全符号位，逻辑右移/左移得 0
+    if (_amt > {}) _amt = {};
     {}
     {}
     {} _out = 0;
@@ -71,7 +74,7 @@ std::string BarrelShifter::genFuncDef_comb() const {
 {}
 }})",
                        funcName_comb(), gen_read_wire(in_nid, _bw, in_nw, "_in"), read_amt,
-                       gen_mask(_sh_bits), read_dir, read_arith,
+                       gen_mask(_sh_bits), _bw, _bw, read_dir, read_arith,
                        c_int_type(_bw),
                        _bw - 1, // 检查 MSB（符号位）
                        gen_mask(_bw), // 全1掩码

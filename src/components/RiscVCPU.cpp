@@ -700,6 +700,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- 浮点访存（FLW / FSW，自然对齐；非对齐按规范触发异常）----
     case RV::LOAD_FP: {
+        // FLW 写完 freg 后 FS 必须是 Dirty，否则上下文切换不会保存浮点寄存器
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         uint32_t va=v1+(uint32_t)ii, pa;
@@ -707,6 +708,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
         wb_adr=pa; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
         s.bus_adr=pa; s.bus_funct3=2; s.bus_rd=(uint8_t)rd; s.bus_fp=1; s.acc_stage=0;
+        s.mstatus |= (3u << 13); // FLW 写 freg，FS 置 Dirty
         } break;
 
     case RV::STORE_FP: {
