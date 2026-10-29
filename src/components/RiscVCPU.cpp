@@ -376,8 +376,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     case 3: // LD，只有 RV64 有
                         if constexpr (XLEN == 64) result = (XLen) value;
                         break;
-                    case 6: // LWU，只有 RV64 有
-                        if constexpr (XLEN == 64) result = (XLen) value;
+                    case 6: // LWU：只取低 32 位并零扩展，非对齐时高半是相邻字
+                        if constexpr (XLEN == 64) result = (XLen)(uint32_t) value;
                         break;
                     }
                     if (s.bus_fp) s.fregs[s.bus_rd]=value; // FLW：结果进 f 寄存器
@@ -1126,11 +1126,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 else out = (XLen)(SXLen)(int32_t)r;
                 s.regs[rd] = out;
             } else { // FCVT.WU.S
-                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t)0xFFFFFFFFu; s.fcsr |= 0x10; }
+                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = (XLen)(uint32_t)0xFFFFFFFFu; s.fcsr |= 0x10; }
                 // r 已经是舍入后的整数值，只要为负就饱和到 0。
                 // 写成 <= -1 会漏掉 (-1,0) 区间，那里 (uint32_t)负数是 UB
                 else if (r < 0.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)0u; s.fcsr |= 0x10; }
-                else s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t)r;
+                else s.regs[rd] = (XLen)(uint32_t)r;
             }
             break;
         }
@@ -1271,9 +1271,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if ((csr_addr>>8)&3) { uint8_t min_priv=(uint8_t)((csr_addr>>8)&3); if(s.priv<min_priv) [[unlikely]] { takeTrap(s,RV::EXC_II,inst); npc=s.pc; break; }}
             // 计数器 CSR 在 S 态以下还要过 mcounteren 的对应位：CY(0)/TM(1)/IR(2)
             if (s.priv < RV::PRIV_M) {
-                int cbit = (csr_addr == 0xC00 || csr_addr == 0xC80) ? 0
-                           : (csr_addr == 0xC01 || csr_addr == 0xC81) ? 1
-                           : (csr_addr == 0xC02 || csr_addr == 0xC82) ? 2
+                int cbit = (csr_addr == RV::CSR_CYCLE || csr_addr == RV::CSR_CYCLEH) ? 0
+                           : (csr_addr == RV::CSR_TIME || csr_addr == RV::CSR_TIMEH) ? 1
+                           : (csr_addr == RV::CSR_INSTRET || csr_addr == RV::CSR_INSTRETH) ? 2
                                                                      : -1;
                 if (cbit >= 0 && !((s.mcounteren >> cbit) & 1)) [[unlikely]]
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
@@ -1362,14 +1362,20 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     // MXL=1(RV32) | I(8) | M(12) | A(0) | F(5) | S(18) | U(20) —— 与实现的指令集和特权级一一对应
     // MXL 字段必须反映实际位宽：RV32 是 1、RV64 是 2。
     // 后面两个位是 A 和 F 扩展
-    case RV::CSR_MISA:
-        return ((XLEN == 64) ? (XLen) 2 << 62 : (XLen) 1 << 30)
+    case RV::CSR_MISA: {
+        // MXL 反映实际位宽：RV32 是 1、RV64 是 2。用 if constexpr 分档，
+        // 免得 RV32 实例化里出现 (uint32_t)2 << 62 这种越界移位
+        XLen mxl = 0;
+        if constexpr (XLEN == 64) mxl = (XLen) 2 << 62;
+        else mxl = (XLen) 1 << 30;
+        return mxl
                | (1u << 0)   // A
                | (1u << 5)   // F
                | (1u << 8)   // I
                | (1u << 12)  // M
                | (1u << 18)  // S
                | (1u << 20); // U
+    }
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;
     case RV::CSR_MIE:     return s.mie;
