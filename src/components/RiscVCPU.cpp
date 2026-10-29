@@ -1257,8 +1257,19 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 // 按 op 决定是 a*b±c 还是 -(a*b)±c
                 double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
                                                       : std::fma(-a, b, (op == 0x4B) ? c : -c);
+                // fma 的结果本身是舍入过的，拿不到"是否精确"。用两条余项拼出精确误差：
+                // pe 是 a*b 的余项，se 是 p+c 的 TwoSum 余项
+                {
+                    double p = a * b;
+                    double pe = std::fma(a, b, -p);
+                    double sp = p + c;
+                    double bb = sp - p;
+                    double se = (p - (sp - bb)) + (c - bb);
+                    if (std::isfinite(m) && (pe + se) != 0.0) s.fcsr |= 0x01;   // NX
+                }
                 if (std::isnan(m)) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                 else s.fregs[rd] = d2u(m);
+                break;
                 break;
             }
         }
@@ -1500,7 +1511,15 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             case RV::F7_FSQRT:
                 if (da < 0.0) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                 else if (std::isnan(da)) { s.fregs[rd] = 0x7FF8000000000000ULL; if (dsnan) s.fcsr |= 0x10; }
-                else setd_flags(std::sqrt(da));
+                else {
+                    // sqrt 的结果本身就是舍入后的值，拿它当"精确值"比较永远相等，
+                    // NX 就永远置不上。平方回去比才能判断是否精确
+                    double r0 = std::sqrt(da);
+                    setd(r0);
+                    // 不能用 r0*r0 != da 判断：舍入会让两边相等、把不精确误判成精确。
+                    // fma(r0,r0,-da) 给出 r0*r0 - da 的精确值，非零才说明 sqrt 真的不精确
+                    if (std::fma(r0, r0, -da) != 0.0) s.fcsr |= 0x01;   // NX
+                }
                 break;
             case RV::F7_FSGNJ: {
                 uint64_t sign = 0;
