@@ -540,7 +540,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
         // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
         // 先取就近结果，再按方向用 nextafterf 修正一格。
-        auto round_to_float = [&](double exact, int rmode) -> float {
+        auto round_to_float = [&](double exact, int rmode, bool cancelled_to_zero = false) -> float {
             // 超出 float 范围时不能一律返回 inf：RTZ/RDN/RUP 对溢出的方向
             // 要返回最大有限值，即使得到 inf 也还要按模式翻转
             constexpr double kFmax = (double) std::numeric_limits<float>::max();
@@ -568,6 +568,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 && std::fabs(exact) >= 0x1p128 - 0x1p103)
                 return exact > 0 ? std::numeric_limits<float>::infinity()
                                  : -std::numeric_limits<float>::infinity();
+            // 两个非零数相加精确抵消时，IEEE 754 §6.3 规定 RDN/RTZ 的结果是 -0，
+            // 其余模式才是 +0。C 的加法固定产生 +0，这里按模式补上符号
+            if (exact == 0.0 && !std::signbit(exact) && (rmode == 1 || rmode == 2)) {
+                // 只有"两个同号相减归零"才走这里，由调用方标记
+                if (cancelled_to_zero) return -0.0f;
+            }
             float r = (float) exact;
             if (!std::isfinite(r)) return r;
             double back = (double) r;
@@ -836,8 +842,8 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         uint32_t rm = f3;
         auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
-        auto setf_flags = [&](double exact) {
-            float r = round_to_float(exact, cur_rm);
+        auto setf_flags = [&](double exact, bool cancelled_to_zero = false) {
+            float r = round_to_float(exact, cur_rm, cancelled_to_zero);
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
                 s.fregs[rd] = 0x7FC00000u;
@@ -865,8 +871,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
         }
         switch (f7) {
-        case RV::F7_FADD: setf_flags((double)a + (double)b); break;
-        case RV::F7_FSUB: setf_flags((double)a - (double)b); break;
+        // a-b 与 a+(-b) 在"精确抵消成零"时按 IEEE 754 要给出有符号零
+        case RV::F7_FADD: setf_flags((double)a + (double)b,
+                                     a != 0.0f && b == -a); break;
+        case RV::F7_FSUB: setf_flags((double)a - (double)b,
+                                     a != 0.0f && b == a); break;
         case RV::F7_FMUL: setf_flags((double)a * (double)b); break;
         case RV::F7_FDIV:
             // DZ 只适用于"有限非零被除数 / 零"；inf/0 的结果是 inf，不是错误
