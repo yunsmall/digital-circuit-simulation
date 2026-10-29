@@ -1622,7 +1622,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         uint32_t flags_before = s.fcsr; // 用于判断本次是否新置了异常标志
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
-        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        // 把操作数当浮点数用时才检查 NaN-box：高 32 位不是全 1 说明这不是合法的
+        // 单精度值，按规范整体当作 canonical NaN。FMV.X.W / FCLASS.S 直接读位模式，
+        // 不经过这里，因此不受影响
+        auto u2f = [](uint64_t v) -> float {
+            uint32_t u = (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            float f; std::memcpy(&f, &u, 4); return f;
+        };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]);
         // qNaN 是静默的，只有 signaling NaN 才触发无效运算
