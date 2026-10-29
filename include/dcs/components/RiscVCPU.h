@@ -223,6 +223,9 @@ private:
         // MMU 遍历上下文（TLB miss 时保存，遍历完成后重试原指令）
         uint32_t mmu_vaddr;      // 虚地址
         bool mmu_is_write;
+        // 页表遍历要跨好几拍，这期间取指也会调 mmuTranslate 把 mmu_is_write 清掉；
+        bool mmu_pte_is_write;
+        // A/D 检查必须看开始遍历时的那个副本
         bool mmu_is_exec;
         uint64_t mmu_root;       // satp 根页表物理地址：Sv32 就有 34 位，32 位装不下
         uint64_t mmu_l1_addr;    // L1 PTE 总线地址

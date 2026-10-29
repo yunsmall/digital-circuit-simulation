@@ -657,18 +657,14 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
                     break;
                 }
-                // 大页的 A/D 同样要落到内存页表上，否则与 4KB 页路径行为不一致
-                {
-                    uint32_t upd = l1e;
-                    if (!(l1e & RV::PTE_A)) upd |= RV::PTE_A;
-                    if (s.mmu_is_write && !(l1e & RV::PTE_D)) upd |= RV::PTE_D;
-                    if (upd != l1e) {
-                        s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l1_addr; s.mmu_pte_is_l1 = true;
-                        // 只切相位，不在这一拍翻 we：stb 还高时改 we 会被支持 we_rise 的
-                        // 从设备当成一次写，等于写两遍。下一拍 MMU_AD_WRITE 才发起真正的写事务
-                        s.phase = Phase::MMU_AD_GAP;
-                        break;
-                    }
+                // A/D 位按规范有两种合法实现：硬件自动置位（Svadu）或触发 page fault
+                // 交给软件处理。标准 riscv-tests 的 dirty.S 假定的是后者——它先做一次
+                // 本该 fault 的 store、再检查内存没被写。这里走 page fault 这条路
+                if (!(l1e & RV::PTE_A) || (s.mmu_pte_is_write && !(l1e & RV::PTE_D))) {
+                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF),
+                             s.mmu_vaddr);
+                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                    break;
                 }
                 int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
                 auto &e = s.tlb[idx];
@@ -709,14 +705,11 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 if (uint32_t cause = checkPerms(l2e, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus))
                 { takeTrap(s, cause, s.mmu_vaddr);
                   s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false; break; }
-                // A/D 位必须落到内存页表上，否则软件做页老化会看到过期值
-                uint32_t upd = l2e;
-                if (!(l2e & RV::PTE_A)) upd |= RV::PTE_A;
-                if (s.mmu_is_write && !(l2e & RV::PTE_D)) upd |= RV::PTE_D;
-                if (upd != l2e) {
-                    s.mmu_pte = upd; s.mmu_pte_addr = s.mmu_l2_addr; s.mmu_pte_is_l1 = false;
-                    // 同 L1 路径：只切相位，写事务交给 MMU_AD_WRITE 那一拍发起
-                    s.phase = Phase::MMU_AD_GAP;
+                // 同 L1 路径：A/D 缺失走 page fault，不由硬件改写页表
+                if (!(l2e & RV::PTE_A) || (s.mmu_pte_is_write && !(l2e & RV::PTE_D))) {
+                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF),
+                             s.mmu_vaddr);
+                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
                     break;
                 }
                 // 装填 TLB
@@ -2322,6 +2315,7 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     // TLB miss → 通过 Wishbone 总线遍历页表
     s.mmu_vaddr = vaddr;
     s.mmu_is_write = is_write;
+    s.mmu_pte_is_write = is_write;   // 遍历期间不变，取指不会污染它
     s.mmu_is_exec = is_exec;
     s.mmu_priv = priv; // 遍历相位里做权限检查要用同一个特权级
     s.mmu_root = ((uint64_t)(s.satp & 0x3FFFFF)) << 12;
