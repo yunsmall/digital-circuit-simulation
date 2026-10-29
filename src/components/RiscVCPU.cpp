@@ -1340,7 +1340,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
             const uint32_t erm = (f3 == 7) ? ((s.fcsr >> 5) & 7u) : f3;
             if (erm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-            if ((f7 & 1u) == 0u) {
+            if ((f7 & 1u) != 0u) {
                 // FCVT.D.S：单精度 -> 双精度。float 的每个值 double 都能精确表示，不会丢精度
                 float fv; uint32_t u = (uint32_t) s.fregs[rs1];
                 std::memcpy(&fv, &u, 4);
