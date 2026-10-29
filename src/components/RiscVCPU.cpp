@@ -568,9 +568,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 && std::fabs(exact) >= 0x1p128 - 0x1p103)
                 return exact > 0 ? std::numeric_limits<float>::infinity()
                                  : -std::numeric_limits<float>::infinity();
-            // 两个非零数相加精确抵消时，IEEE 754 §6.3 规定 RDN/RTZ 的结果是 -0，
-            // 其余模式才是 +0。C 的加法固定产生 +0，这里按模式补上符号
-            if (exact == 0.0 && !std::signbit(exact) && (rmode == 1 || rmode == 2)) {
+            // 两个数精确抵消时，IEEE 754 §6.3 只有 roundTowardNegative 给 -0，
+            // 其余模式（含 RTZ）都是 +0。C 的加法固定产生 +0，这里补上符号
+            if (exact == 0.0 && !std::signbit(exact) && rmode == 2) {
                 // 只有"两个同号相减归零"才走这里，由调用方标记
                 if (cancelled_to_zero) return -0.0f;
             }
@@ -803,7 +803,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                      : (op == 0x4B) ? -prod + (double)c
                                     : -prod - (double)c;
         // prod 与 c 精确抵消时零的符号也要按模式定（只有相加形式会抵消）
-        bool fma_cancel = prod != 0.0 && ((op == 0x43 || op == 0x4B) ? c == -prod : c == prod);
+        // FMADD=prod+c、FMSUB=prod-c、FNMSUB=-prod+c、FNMADD=-prod-c，
+        // 抵消条件取决于实际表达式的符号
+        bool fma_cancel = prod != 0.0 && ((op == 0x43 || op == 0x4F) ? c == -prod : c == prod);
         float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3, fma_cancel);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
         // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
@@ -874,10 +876,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         }
         switch (f7) {
         // a-b 与 a+(-b) 在"精确抵消成零"时按 IEEE 754 要给出有符号零
+        // 零与零的相反符号相加也算抵消（如 (+0)+(-0)、(+0)-(+0)），
+        // 所以不能用 a != 0 把零排除
         case RV::F7_FADD: setf_flags((double)a + (double)b,
-                                     a != 0.0f && b == -a); break;
+                                     b == -a && (a != 0.0f || std::signbit(a) != std::signbit(b))); break;
         case RV::F7_FSUB: setf_flags((double)a - (double)b,
-                                     a != 0.0f && b == a); break;
+                                     b == a && (a != 0.0f || std::signbit(a) == std::signbit(b))); break;
         case RV::F7_FMUL: setf_flags((double)a * (double)b); break;
         case RV::F7_FDIV:
             // DZ 只适用于"有限非零被除数 / 零"；inf/0 的结果是 inf，不是错误
