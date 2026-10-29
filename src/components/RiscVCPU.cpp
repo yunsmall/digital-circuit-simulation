@@ -270,7 +270,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             }
             if (s.acc_stage == 4) { // 发起第二次事务
                 uint32_t p = s.acc_va & 3;
-                uint32_t a2 = (s.acc_va & ~(XLen)3) + 4;
+                XLen a2 = (s.acc_va & ~(XLen)3) + 4;
                 uint32_t dat = 0;
                 uint8_t sel = 0x0F;
                 if (s.bus_we) {
@@ -560,6 +560,10 @@ void RiscVCPU<XLEN>::cpuReset(void *state_ptr) {
 // ============================================================
 static bool csrImplemented(uint32_t addr); // 定义在 csrRead 之前，这里先声明
 
+// csrImplemented 的定义在文件后半段，execute 需要先看到声明
+template<int XLEN> requires SupportedXlen<XLEN>
+static bool csrImplemented(uint32_t addr);
+
 template<int XLEN> requires SupportedXlen<XLEN>
 void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                        XLenOf<XLEN> &wb_adr, uint32_t &wb_dat, bool &wb_we,
@@ -840,7 +844,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         wb_sel=(uint8_t)(((1u<<first)-1u)<<p); wb_dat=v2<<(8*p);
         s.acc_va=pa; s.acc_raw=v2; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((n>first)?1:0);
         if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效
-            uint32_t w0 = pa & ~(XLen)3;
+            XLen w0 = pa & ~(XLen)3;
             if (s.lr_addr == w0 || (s.acc_stage == 1 && s.lr_addr == w0 + 4)) s.lr_valid = false;
         }
         wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~3u; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
@@ -1114,11 +1118,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 else out = (XLen)(SXLen)(int32_t)r;
                 s.regs[rd] = out;
             } else { // FCVT.WU.S
-                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = 0xFFFFFFFFu; s.fcsr |= 0x10; }
+                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t)0xFFFFFFFFu; s.fcsr |= 0x10; }
                 // r 已经是舍入后的整数值，只要为负就饱和到 0。
                 // 写成 <= -1 会漏掉 (-1,0) 区间，那里 (uint32_t)负数是 UB
-                else if (r < 0.0f) { s.regs[rd] = 0u; s.fcsr |= 0x10; }
-                else s.regs[rd] = (uint32_t)r;
+                else if (r < 0.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)0u; s.fcsr |= 0x10; }
+                else s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t)r;
             }
             break;
         }
@@ -1245,7 +1249,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
             // 只有 CSRRW/CSRRWI 一定写；CSRRS/CSRRC/CSRRSI/CSRRCI 在源操作数为 0 时只是读
             bool csr_write = (f3 == RV::F3_CSRRW || f3 == RV::F3_CSRRWI) || (rs1 != 0);
-            if (!csrImplemented(csr_addr) || (((csr_addr >> 10) & 3) == 3 && csr_write)) [[unlikely]]
+            if (!csrImplemented<XLEN>(csr_addr) || (((csr_addr >> 10) & 3) == 3 && csr_write)) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
             // TVM=1 时 S 态读写 satp 是非法指令
             if (csr_addr == RV::CSR_SATP && s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TVM)) [[unlikely]]
@@ -1291,24 +1295,29 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 // CSR 读写
 // ============================================================
 // 已实现的 CSR 白名单：不在这里的地址一律当非法指令处理，避免软件误以为读写生效
+template<int XLEN> requires SupportedXlen<XLEN>
 static bool csrImplemented(uint32_t addr) {
     // PMP 配置/地址寄存器：本核不实现保护，但寄存器必须存在，软件会写 0 来关闭它
     // pmpcfg0-3 是 0x3A0-0x3A3，pmpaddr0-15 是 0x3B0-0x3BF；
     // 0x3A4-0x3AF 和 0x3C0-0x3EF 是保留地址，访问必须报非法指令，
     // 否则软件能写进去并读回 0，误以为写成功了
-    if (addr >= 0x3A0 && addr <= 0x3A3) return true;
+    // RV64 的 pmpcfg 每项占 8 字节，只有 pmpcfg0/pmpcfg2（奇数号是 RV32 的布局）
+    if (addr >= 0x3A0 && addr <= 0x3A3) return (XLEN == 32) || ((addr & 1) == 0);
     if (addr >= 0x3B0 && addr <= 0x3BF) return true;
     switch (addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
     case 0x306:  // mcounteren
     // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
     // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为
-    case 0x310:  // mstatush
-    case 0xB00: case 0xB02: case 0xB80: case 0xB82: // mcycle / minstret (+h)
+    case 0xB00: case 0xB02: // mcycle / minstret
     case 0xC00: case 0xC01: case 0xC02: // cycle / time / instret
-    case 0xC80: case 0xC81: case 0xC82: // cycleh / timeh / instreth
     case 0xF11: case 0xF12: case 0xF13: case 0xF14: // vendorid / archid / impid / hartid
         return true;
+    // 下面这些只在 RV32 存在：RV64 的计数器是完整的 64 位，没有高半 CSR，
+    // mstatush 也只在 RV32 有意义
+    case 0x310: case 0xB80: case 0xB82:
+    case 0xC80: case 0xC81: case 0xC82:
+        return (XLEN == 32);
     case RV::CSR_SSTATUS: case RV::CSR_SIE: case RV::CSR_STVEC: case RV::CSR_SSCRATCH:
     case RV::CSR_SEPC: case RV::CSR_SCAUSE: case RV::CSR_STVAL: case RV::CSR_SIP: case RV::CSR_SATP:
     case RV::CSR_MSTATUS: case RV::CSR_MISA: case RV::CSR_MEDELEG: case RV::CSR_MIDELEG:
@@ -1542,7 +1551,7 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     }
     if ((s.satp & RV::SATP_MODE) == 0) [[unlikely]] { paddr = vaddr; return true; }
 
-    uint32_t vpn = vaddr >> 12;
+    uint64_t vpn = (uint64_t) vaddr >> 12;
     // TLB 查找
     for (int i = 0; i < RV::TLB_SIZE; i++) {
         auto &e = s.tlb[i];
