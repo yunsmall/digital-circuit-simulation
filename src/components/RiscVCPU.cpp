@@ -813,6 +813,14 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // 零交叉时"异号"的含义取决于实际表达式：
         // prod+c / -prod-c 要异号才抵消，prod-c / -prod+c 要同号才抵消
         bool same_sign = (std::signbit(prod) == std::signbit(c));
+        // 用 TwoProduct/TwoSum 的误差项判断 double 这一步是否丢了低位：
+        // 指数差很大时（如 1.0 + 2^-100）(dobule)r != exact 检测不出来
+        double prod_hi = (double) a * (double) b;
+        double prod_err = std::fma((double) a, (double) b, -prod_hi); // 乘积的舍入误差
+        double sum_hi = prod_hi + (double) c;
+        double bv = sum_hi - prod_hi;
+        double sum_err = (prod_hi - (sum_hi - bv)) + ((double) c - bv);
+        bool fma_inexact = (prod_err != 0.0) || (sum_err != 0.0);
         bool fma_cancel = ((op == 0x43 || op == 0x4F) ? c == -prod : c == prod)
                           && (prod != 0.0 || c != 0.0
                               || (op == 0x43 || op == 0x4F ? !same_sign : same_sign));
@@ -828,7 +836,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             if (fma_snan || mul_invalid || (!std::isnan(a) && !std::isnan(b) && !std::isnan(c)))
                 s.fcsr |= 0x10;
         } else if (std::isfinite(exact)) {
-            if ((double)r != exact) s.fcsr |= 0x01;          // NX
+            if ((double)r != exact || fma_inexact) s.fcsr |= 0x01; // NX
             // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
             // 或直接舍入成 0 而精确结果非 0
             // UF 的定义是"tiny 且不精确"：精确的次正规数结果不能置 UF
@@ -860,7 +868,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         uint32_t rm = f3;
         auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
-        auto setf_flags = [&](double exact, bool cancelled_to_zero = false) {
+        auto setf_flags = [&](double exact, bool cancelled_to_zero = false, bool extra_inexact = false) {
             float r = round_to_float(exact, cur_rm, cancelled_to_zero);
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
@@ -871,7 +879,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             }
             setf(r);
             if (!std::isfinite(exact)) return;
-            if ((double) r != exact) s.fcsr |= 0x01; // NX
+            if ((double) r != exact || extra_inexact) s.fcsr |= 0x01; // NX
             // OF：舍入成 inf；UF：结果是非规格化数，或舍入成 0 而精确值非 0
             // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到，
             // 但按 IEEE 754 只要无界指数下的结果超出 Fmax 就要报 OF
@@ -892,10 +900,22 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // a-b 与 a+(-b) 在"精确抵消成零"时按 IEEE 754 要给出有符号零
         // 零与零的相反符号相加也算抵消（如 (+0)+(-0)、(+0)-(+0)），
         // 所以不能用 a != 0 把零排除
-        case RV::F7_FADD: setf_flags((double)a + (double)b,
-                                     b == -a && (a != 0.0f || std::signbit(a) != std::signbit(b))); break;
-        case RV::F7_FSUB: setf_flags((double)a - (double)b,
-                                     b == a && (a != 0.0f || std::signbit(a) == std::signbit(b))); break;
+        case RV::F7_FADD: {
+            // TwoSum：误差项非零说明 double 这一步就丢了低位，
+            // 而这种情况 (double)r != exact 检测不出来（exact 本身已经被舍入过）
+            double x = (double) a, y = (double) b, sum = x + y;
+            double bv = sum - x;
+            double err = (x - (sum - bv)) + (y - bv);
+            setf_flags(sum, b == -a && (a != 0.0f || std::signbit(a) != std::signbit(b)), err != 0.0);
+            break;
+        }
+        case RV::F7_FSUB: {
+            double x = (double) a, y = -(double) b, sum = x + y;
+            double bv = sum - x;
+            double err = (x - (sum - bv)) + (y - bv);
+            setf_flags(sum, b == a && (a != 0.0f || std::signbit(a) == std::signbit(b)), err != 0.0);
+            break;
+        }
         case RV::F7_FMUL: setf_flags((double)a * (double)b); break;
         case RV::F7_FDIV:
             // DZ 只适用于"有限非零被除数 / 零"；inf/0 的结果是 inf，不是错误
