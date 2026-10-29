@@ -95,9 +95,9 @@ std::string WishboneMemory::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
 
     code += genInputPtrArray("_in");
-    code += std::format("    uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
-    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
-    code += std::format("    uint8_t *_op[{}] = {{", O_COUNT);
+    // _obuf/_op 用 static：memTick 每拍写满两个输出，不需要每拍清零/重建指针表
+    code += std::format("    static uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
+    code += std::format("    static uint8_t *const _op[{}] = {{", O_COUNT);
     for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
     code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, _in, _op);\n", id);

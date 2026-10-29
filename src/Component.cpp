@@ -109,8 +109,10 @@ Pin *Component::addOutput(const std::string &pin_name, int bit_width, bool is_tr
 
 std::string Component::genInputPtrArray(std::string_view arr) const {
     // 未连接的引脚 netId 为 -1，直接展开会生成 _w[-1]；统一指向一个恒零槽位
+    // 用 static const 初始化：_w 和零槽位都是静态存储，地址是编译期常量，
+    // 这样每拍不用在栈上重新构造一遍指针数组
     std::string s = "    static const uint8_t _dcs_zero_slot[16] = {0};\n";
-    s += std::format("    const uint8_t *{}[{}] = {{", arr, _inputs.size());
+    s += std::format("    static const uint8_t *const {}[{}] = {{", arr, _inputs.size());
     for (size_t i = 0; i < _inputs.size(); i++) {
         int nid = _inputs[i]->netId();
         s += i ? "," : "";

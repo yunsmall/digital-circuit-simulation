@@ -190,8 +190,9 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
                     continue; // 总线网留给决议阶段
                 int nb = byte_count(n->bit_width());
                 oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
-                oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
-                oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
+                // _c_out 的高位由 genOutputWrite 清零，整块 16 字节一次拷过去即可：
+                // 比"拷 nb 字节再清剩余"少一次调用，定长拷贝也更容易被编译器展开
+                oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n", nid, c->id(), oi);
                 // 三态输出关闭时必须把线网清成 0：这里是"执行即传播"，
                 // 同一阶段里排在后面的组合元件马上就会读它，读到上一拍的残留值就错了
                 oss << "    } else {\n";
@@ -236,10 +237,9 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
             int oi = drivers[di].out_idx;
-            oss << std::format("            {}if (_active == {}) dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n",
-                               di == 0 ? "" : "else ", di, net_id, cid, oi, nb);
+            oss << std::format("            {}if (_active == {}) dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n",
+                               di == 0 ? "" : "else ", di, net_id, cid, oi);
         }
-        oss << std::format("            dcs_memset(_w[{}] + {}, 0, {});\n", net_id, nb, 16 - nb);
         oss << "        } else {\n";
         oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
         oss << "        }\n";
@@ -263,8 +263,7 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
                 continue; // 总线已处理
             int nb = byte_count(n->bit_width());
             oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
-            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, {});\n", nid, c->id(), oi, nb);
-            oss << std::format("        dcs_memset(_w[{}] + {}, 0, {});\n", nid, nb, 16 - nb);
+            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n", nid, c->id(), oi);
             oss << "    } else {\n";
             oss << std::format("        dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", nid);
             oss << "    }\n";

@@ -137,7 +137,10 @@ uint32_t runElf(const std::string &path, std::string &err) {
     // 链接在高地址的镜像要从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
     f.cpu->setPc((uint64_t) img.entry);
 
-    for (int i = 0; i < 200000; ++i) {
+    // tick 上限可放大：性能基准要跑上千万拍，正常用例 20 万拍就够
+    int max_ticks = 200000;
+    if (const char *e = std::getenv("DCS_MAX_TICKS")) max_ticks = std::atoi(e);
+    for (int i = 0; i < max_ticks; ++i) {
         f.cycle();
         uint32_t v = f.peek(static_cast<uint32_t>(img.tohost) & (uint32_t)(cap - 1));
         if (v != 0)
