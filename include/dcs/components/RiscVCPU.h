@@ -123,16 +123,20 @@ namespace RV {
     constexpr uint8_t PRIV_U=0, PRIV_S=1, PRIV_M=3;
 
     // ---- satp ----
-    constexpr uint32_t SATP_MODE=1u<<31; // Sv32
+    constexpr uint32_t SATP_MODE=1u<<31; // Sv32：RV32 的 satp[31]
+    constexpr uint32_t SATP_MODE_SV39 = 8; // Sv39：RV64 的 satp[63:60]
 
     // ---- 位域 ----
     constexpr int SH_OP=0, SH_RD=7, SH_F3=12, SH_RS1=15, SH_RS2=20, SH_F7=25;
     constexpr uint32_t M_OP=0x7F, M_RD=0x1F, M_F3=0x7, M_RS1=0x1F, M_RS2=0x1F, M_F7=0x7F, M_F12=0xFFF;
 
     // ---- 页表项位 ----
+    // Sv32 与 Sv39 的 PTE 低位布局相同，区别在 PPN 宽度和 PTE 本身的字节数
     constexpr uint32_t PTE_V=1u<<0, PTE_R=1u<<1, PTE_W=1u<<2, PTE_X=1u<<3;
     constexpr uint32_t PTE_U=1u<<4, PTE_G=1u<<5, PTE_A=1u<<6, PTE_D=1u<<7;
     constexpr uint32_t PPN_MASK=0x3FFFFFu, PAGE_OFF_MASK=0xFFFu;
+    // PTE 中 PPN 的位宽：Sv32 22 位，Sv39 44 位
+    constexpr uint64_t PPN_MASK_SV39 = (1ull << 44) - 1;
 
     // ---- TLB ----
     constexpr int TLB_SIZE = 32;
@@ -160,12 +164,18 @@ public:
     // halted：执行 WFI 期间为高，有中断待处理时自动唤醒
     XLen reg(int idx) const;
     XLen pc() const;
+    // 复位后的 PC 是 0；测试镜像若链接在 DRAM_BASE 这类高地址，由外部在复位后
+    // 把入口地址写进来，否则 PC 相对寻址会按低地址算错
+    void setPc(XLen v) { _state.pc = v; }
     bool halted() const;
     uint32_t freg(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
     uint32_t fcsr() const { return _state.fcsr; }
     uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
     uint32_t mepc() const { return _state.mepc; }
     uint32_t mtval() const { return _state.mtval; }
+    // 当前特权级与 mstatus，供调试/测试核对 trap 语义
+    uint8_t priv() const { return _state.priv; }
+    uint32_t mstatus() const { return _state.mstatus; }
 
     bool hasCombinational() const override { return false; }
     bool hasSequential() const override { return true; }
@@ -184,11 +194,12 @@ private:
         FETCH, WAIT_FETCH, EXECUTE, WAIT_MEM, HALTED,
         // C 扩展下，落在字内偏移 2 的 32 位指令跨两个字，要再读一个字来拼
         FETCH_HI_GAP, WAIT_FETCH_HI,  // 跨字取指：两次读之间要拉低 stb 一拍
-        // MMU_AD_GAP 是 A/D 写回前的空拍：必须先拉低 stb 结束读 PTE 那笔事务，
-        // 再重新发起写事务，不能靠"事务中途把 we 翻成 1"——不是所有从设备都认这个语义
         // GAP 是"结束上一笔事务的空拍"：真实硬件完成一次读事务（ack）后必须先拉低 stb，
         // 再重新发起写事务，不能在事务中途翻转 we——那不是 Wishbone 的语义
-        AMO_GAP, AMO_WRITE, MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_GAP, MMU_AD_WRITE,
+        AMO_GAP, AMO_WRITE,
+        // 页表遍历：Sv32 的 PTE 4 字节一次读完；Sv39 的 PTE 8 字节，
+        // 总线只有 32 位，要拆成低半、高半两笔事务（LO/HI 各有一拍拉低 stb 的发起相位）
+        MMU_WALK_LO, WAIT_MMU_LO, MMU_WALK_HI, WAIT_MMU_HI,
         // RV64 的 .D 原子操作要读写各两段（总线只有 32 位）：
         // 读完低半再读高半、写低半再写高半，中间都隔一个 GAP 结束事务
         AMO_READ_HI, AMO_GAP_HI, AMO_WRITE_HI
@@ -231,27 +242,31 @@ private:
         uint32_t sstatus, sie, sip, sscratch;
         XLen stvec, sepc, scause, stval, satp;
 
-        // Sv32 TLB
-        // ASID 在 RV32 是 satp[30:22] 共 9 位，用 uint8_t 会截断高位，导致 TLB 命中错误页表项
+        // Sv32/Sv39 TLB
+        // ASID 在 RV32 是 satp[30:22] 共 9 位，RV64 是 satp[59:44] 共 16 位，
+        // 用 uint8_t 会截断高位，导致 TLB 命中错误页表项
+        // vpn 在 Sv39 下是 31 位（39-12+4），ppn 取 32 位物理地址的低 20 位，都能装进 uint32_t
         struct TlbEntry { uint32_t vpn, ppn; uint16_t asid; uint8_t flags; bool valid, global; };
         TlbEntry tlb[RV::TLB_SIZE];
         uint32_t tlb_cycle; // 用于 LRU 替换
 
-        // L1 PTE 缓存（1 项，覆盖 4MB）
-        uint32_t l1_cache_tag;   // vaddr[31:22]
-        uint32_t l1_cache_ppn;   // L1 PTE >> 10
+        // 顶层 PTE 缓存（1 项）：Sv32 覆盖 4MB、Sv39 覆盖 1GB。
+        // 存的是最高级非叶子 PTE 的 PPN，命中后可直接跳过最高一级总线读
+        uint64_t l1_cache_tag;   // 虚拟地址的 VPN[最高级]
+        uint64_t l1_cache_ppn;   // 该 PTE 的 PPN（Sv39 是 44 位，必须用 64 位存）
         bool l1_cache_valid;
 
         // MMU 遍历上下文（TLB miss 时保存，遍历完成后重试原指令）
-        uint32_t mmu_vaddr;      // 虚地址
+        uint64_t mmu_vaddr;      // 虚地址：Sv39 是 39 位，32 位装不下
         bool mmu_is_write;
         // 页表遍历要跨好几拍，这期间取指也会调 mmuTranslate 把 mmu_is_write 清掉；
         bool mmu_pte_is_write;
         // A/D 检查必须看开始遍历时的那个副本
         bool mmu_is_exec;
-        uint64_t mmu_root;       // satp 根页表物理地址：Sv32 就有 34 位，32 位装不下
-        uint64_t mmu_l1_addr;    // L1 PTE 总线地址
-        uint64_t mmu_l2_addr;    // L2 PTE 总线地址
+        uint64_t mmu_next_page;  // 下一级页表基址（当前 PTE 的 PPN << 12）
+        uint64_t mmu_pte_addr;   // 当前 PTE 的总线地址（低半）
+        uint64_t mmu_pte_lo;     // Sv39 已读回的低 32 位，等高半拼成完整 PTE
+        uint8_t mmu_level;       // 当前遍历到第几级：Sv32 从 1 到 0，Sv39 从 2 到 0
 
         // LR/SC 保留地址
         uint32_t lr_addr;
@@ -275,9 +290,6 @@ private:
         XLen fetch_hi_addr;   // 跨字取指时第二个字的地址，显式保存避免重算
         uint8_t fetch_gap_cnt;  // 跨字取指拉低 stb 之后，ack 撤销还要再等一拍
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
-        uint32_t mmu_pte;      // 需要写回页表的 PTE（补 A/D 位）
-        uint32_t mmu_pte_addr; // 该 PTE 的物理地址
-        bool mmu_pte_is_l1;    // 写回的是 L1（大页）还是 L2 PTE
         // 指令缓存：直接映射，每行一条指令。循环体是最常见的取指热点，
         // 缓存下来可以完全跳过总线事务。
         // 一个 4 字节字里可能装两条压缩指令（pc&3 为 0 和 2），
@@ -322,8 +334,12 @@ private:
     static bool takeTrap(CpuState &s, XLen cause, XLen tval);
     static bool mmuTranslate(CpuState &s, XLen vaddr, XLen &paddr,
                              bool is_write, bool is_exec);
+    // 处理一个刚读回的页表项：校验合法性/权限/A/D，装填 TLB 或推进到下一级。
+    // 返回 true 表示 TLB 已装填（调用方把相位设回取指/执行）；false 表示
+    // 已 trap 或者还要继续遍历，相位已经在函数里设好
+    static bool handlePte(CpuState &s, uint64_t pte);
     // 返回 0 表示放行，否则返回应触发的页错误 cause。
-    // TLB 命中、L1 大页、L2 4KB 页三条路径共用，避免改一处漏两处。
+    // TLB 命中、各级页表叶子路径共用，避免改一处漏两处。
     static uint32_t checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t priv, uint32_t mstatus);
 };
 

@@ -116,11 +116,12 @@ TEST(MmuTest, Sv32BasicDataLoad) {
 
     // L2 PTE[0] @ PA 0xB000 (vpn[0]=0, VA 0x0000-0x0FFF):
     //   identity map: PPN=0, V=1,R=1,W=1,X=1,U=1
-    w32p(0xB000, (0x0 << 10) | 0x0F);
+    // A 位必须置上：本实现缺 A/D 时报 page fault 交给软件，不会硬件改写页表
+    w32p(0xB000, (0x0 << 10) | 0x4F);
 
     // L2 PTE[2] @ PA 0xB008 (vpn[0]=2, VA 0x2000-0x2FFF):
-    //   map to PA 0x6000: PPN=0x6, V=1,R=1,W=1（S 态访问，U 位必须为 0，否则需要 SUM）
-    w32p(0xB008, (0x6 << 10) | 0x07);
+    //   map to PA 0x6000: PPN=0x6, V=1,R=1,W=1,A=1（S 态访问，U 位必须为 0，否则需要 SUM）
+    w32p(0xB008, (0x6 << 10) | 0x47);
 
     // 数据 @ PA 0x6000
     w32p(0x6000, 0x000000AB);
@@ -199,11 +200,10 @@ TEST(MmuTest, Sv32BasicDataLoad) {
     EXPECT_EQ(f.cpu->reg(3), 0xABu) << "MMU 页表遍历后 x3 应为 0xAB";
     EXPECT_FALSE(f.cpu->halted()) << "CPU 不应停机";
 
-    // 叶子 PTE 原本没有 A/D 位，遍历时必须把 A 写回内存页表
+    // 叶子 PTE 带 A 位，读操作不需要 D；本实现不改写页表，PTE 应保持原值
     uint32_t l2pte = (uint32_t) mp[0xB008] | ((uint32_t) mp[0xB009] << 8) |
                      ((uint32_t) mp[0xB00A] << 16) | ((uint32_t) mp[0xB00B] << 24);
-    EXPECT_NE(l2pte & 0x40u, 0u) << "访问过的叶子 PTE 应被置上 A 位";
-    EXPECT_NE(l2pte & 0x1800u, 0u) << "PPN 字段不应被破坏";
+    EXPECT_EQ(l2pte, 0x1847u) << "访问后 PTE 不应被硬件改写（A/D 走 page fault 策略）";
 }
 
 // ============================================================
@@ -222,10 +222,10 @@ TEST(MmuTest, Sv32L1CacheHit) {
 
     uint32_t satp_val = 0x80000000u | 0xA;
     w32p(0xA000, (0xB << 10) | 0x01);   // L1: PPN=0xB, V=1
-    w32p(0xB000, (0x0 << 10) | 0x0F);    // L2[0]: identity map VA 0x0000
-    // 用 0x07（V|R|W）而不是 0x17：S 态访问 U=1 的页需要 mstatus.SUM，这里测的是普通 S 页
-    w32p(0xB008, (0x6 << 10) | 0x07);    // L2[2]: VA 0x2000→PA 0x6000
-    w32p(0xB00C, (0x7 << 10) | 0x07);    // L2[3]: VA 0x3000→PA 0x7000
+    w32p(0xB000, (0x0 << 10) | 0x4F);    // L2[0]: identity map VA 0x0000（A 必须置位）
+    // 用 0x47（V|R|W|A）而不是 0x17：S 态访问 U=1 的页需要 mstatus.SUM，这里测的是普通 S 页
+    w32p(0xB008, (0x6 << 10) | 0x47);    // L2[2]: VA 0x2000→PA 0x6000
+    w32p(0xB00C, (0x7 << 10) | 0x47);    // L2[3]: VA 0x3000→PA 0x7000
     w32p(0x6000, 0x000000AB);            // 数据 @ PA 0x6000
     w32p(0x7000, 0x000000CD);            // 数据 @ PA 0x7000
 

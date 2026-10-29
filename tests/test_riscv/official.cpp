@@ -117,11 +117,14 @@ uint32_t runElf(const std::string &path, std::string &err) {
     }
     Fixture f;
     const size_t cap = 1u << 16; // WishboneMemory(name, 16, 32) 的地址空间
-    if (static_cast<size_t>(img.base) + img.data.size() > cap) {
+    // 测试可以链接在 DRAM_BASE(0x80000000) 这类高地址：存储器只有低 addr_width 根
+    // 地址线，高位在硬件上不存在、自然别名回来，装载偏移同样取容量的低 cap 位
+    const size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
+    if (load_off + img.data.size() > cap) {
         err = "映像超出存储器容量";
         return 0;
     }
-    std::memcpy(f.mem->writableMemPtr() + img.base, img.data.data(), img.data.size());
+    std::memcpy(f.mem->writableMemPtr() + load_off, img.data.data(), img.data.size());
     if (!f.compile()) {
         err = "compile 失败";
         return 0;
@@ -130,10 +133,12 @@ uint32_t runElf(const std::string &path, std::string &err) {
     f.circuit->setWire(f.rst_net->id(), {1});
     f.circuit->tick();
     f.circuit->setWire(f.rst_net->id(), {0});
+    // 链接在高地址的镜像要从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
+    f.cpu->setPc((uint32_t) img.entry);
 
     for (int i = 0; i < 200000; ++i) {
         f.cycle();
-        uint32_t v = f.peek(img.tohost);
+        uint32_t v = f.peek(static_cast<uint32_t>(img.tohost) & (uint32_t)(cap - 1));
         if (v != 0)
             return v;
     }

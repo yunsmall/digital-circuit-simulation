@@ -1,37 +1,86 @@
-#!/bin/sh
-# 用 clang 交叉编译官方 riscv-tests 用例，产物给 tests/test_riscv/official.cpp 加载。
-# 源目录默认取仓库里的 tmp/riscv-tests-master（需含 riscv-test-env 的 env/p）。
+#!/bin/bash
+# 用 clang 交叉编译官方 riscv-tests 用例（RV32 + RV64），产物给
+# tests/test_riscv/official.cpp 与 tests/test_riscv64/official64.cpp 加载。
+#
+# 关于源码：官方源码在 .weak 里声明 mtvec_handler/stvec_handler，同时又在
+# 测试里用 .global 把它们升为全局。clang 的集成汇编器不接受这种"弱符号升全局"，
+# gcc 可以。本机只有 clang，所以这里把源码复制到临时目录并去掉这两行 .global，
+# 仓库里不必再维护一份改过的副本——从 GitHub 下载的原始源码可以直接编译。
+#
+# 用法: bash build.sh [输出目录32] [输出目录64]
+#       环境变量 RISCV_TESTS_DIR 指定原始源码根（含 isa/ 与 env/），
+#       默认依次找 tmp/riscv-tests-master、tests/riscv-official/src
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-SRC=${RISCV_TESTS_DIR:-$ROOT/tmp/riscv-tests-master}
-OUT=$ROOT/tests/riscv-official/out
 CLANG=${CLANG:-clang}
-mkdir -p "$OUT"
+JOBS=${JOBS:-6}
+OUT32=${1:-$ROOT/tests/riscv-official/out}
+OUT64=${2:-$ROOT/tests/riscv-official/out64}
 
-if [ ! -d "$SRC/env/p" ]; then
-    echo "缺少 $SRC/env/p（riscv-test-env 子模块内容）" >&2
-    exit 1
+if [ -n "$RISCV_TESTS_DIR" ] && [ -d "$RISCV_TESTS_DIR/isa" ]; then
+    ISADIR=$RISCV_TESTS_DIR/isa
+    ENVINC=$RISCV_TESTS_DIR/env
+elif [ -d "$ROOT/tmp/riscv-tests-master/isa" ]; then
+    ISADIR=$ROOT/tmp/riscv-tests-master/isa
+    ENVINC=$ROOT/tmp/riscv-tests-master/env
+else
+    ISADIR=$ROOT/tests/riscv-official/src
+    ENVINC=$ROOT/tests/riscv-official/env
 fi
 
-ok=0; failed=0
-for suite in rv32ui rv32um rv32ua rv32uf; do
-    case $suite in
-        rv32ui) march=rv32i ;;
-        rv32uf) march=rv32imaf ;;
-        *)      march=rv32im ;;
-    esac
-    for s in "$SRC/isa/$suite"/*.S; do
+STRIP=$ROOT/tests/riscv-official/.build-src
+LINK_LOW=$ROOT/tests/riscv-official/dcs_link.ld        # 链接到 0，映像直接装进 64KB 内存
+LINK_DRAM=$ROOT/tests/riscv-official/dcs_link_dram.ld  # 链接到 DRAM_BASE，给用 DRAM_BASE 算地址的用例
+
+mkdir -p "$OUT32" "$OUT64" "$STRIP"
+CMDS=$(mktemp)
+: > "$CMDS"
+
+plan_suite() {
+    xlen=$1; suite=$2; march=$3; mabi=$4; outdir=$5
+    [ -d "$ISADIR/$suite" ] || return 0
+    for s in "$ISADIR/$suite"/*.S; do
+        [ -e "$s" ] || continue
         name=$(basename "$s" .S)
-        if "$CLANG" --target=riscv32-unknown-elf -march=$march -mabi=ilp32 \
-             -nostdlib -nostartfiles -static \
-             -I"$SRC/env/p" -I"$SRC/isa" -I"$SRC/isa/macros/scalar" \
-             -T"$ROOT/tests/riscv-official/dcs_link.ld" \
-             -Wl,--image-base=0x0 -Wl,--no-relax \
-             -o "$OUT/$suite-p-$name.elf" "$s" 2>/dev/null; then
-            ok=$((ok+1))
-        else
-            failed=$((failed+1))
-        fi
+        mkdir -p "$STRIP/$suite"
+        # 去掉 .global mtvec_handler / .global stvec_handler（见文件头说明）
+        grep -v -E '^[[:space:]]*\.global[[:space:]]+(mtvec|stvec)_handler' "$s" \
+            > "$STRIP/$suite/$name.S" || true
+        # dirty.S 用 "符号 - DRAM_BASE" 计算虚拟地址：只有链接在 DRAM_BASE 时
+        # 这个差值才是它期望的低地址（链接在 0 会让 32 位减法回绕）
+        link=$LINK_LOW
+        [ "$name" = "dirty" ] && link=$LINK_DRAM
+        echo "$CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi -nostdlib -nostartfiles -static -I$ENVINC/p -I$ISADIR -I$ISADIR/macros/scalar -I$ENVINC -T$link -Wl,--no-relax -o $outdir/$suite-p-$name.elf $STRIP/$suite/$name.S || echo FAIL:$suite-p-$name.elf >> $CMDS.fail" >> "$CMDS"
     done
+}
+
+# mi/si 必须用带 F/D 的 march：它们的 csr.S 在 FS=Off 时走 #error 分支，
+# 编成不带浮点的镜像会注定失败
+for x in 32 64; do
+    if [ "$x" = 32 ]; then
+        mbase=rv32; abi=ilp32; abid=ilp32d; out=$OUT32
+    else
+        mbase=rv64; abi=lp64; abid=lp64d; out=$OUT64
+    fi
+    plan_suite $x rv${x}ui  ${mbase}i            $abi  $out
+    plan_suite $x rv${x}um  ${mbase}im           $abi  $out
+    plan_suite $x rv${x}ua  ${mbase}ima          $abi  $out
+    plan_suite $x rv${x}uc  ${mbase}ic           $abi  $out
+    plan_suite $x rv${x}uf  ${mbase}imaf         $abi  $out
+    plan_suite $x rv${x}mi  ${mbase}id           $abid $out
+    plan_suite $x rv${x}si  ${mbase}id           $abid $out
+    plan_suite $x rv${x}uzba    ${mbase}im_zba    $abi $out
+    plan_suite $x rv${x}uzbb    ${mbase}im_zbb    $abi $out
+    plan_suite $x rv${x}uzbc    ${mbase}im_zbc    $abi $out
+    plan_suite $x rv${x}uzbkb   ${mbase}im_zbkb   $abi $out
+    plan_suite $x rv${x}uzbs    ${mbase}im_zbs    $abi $out
+    plan_suite $x rv${x}uzicond ${mbase}im_zicond $abi $out
 done
-echo "编译完成: $ok 个, 失败 $failed 个 -> $OUT"
+
+TOTAL=$(wc -l < "$CMDS")
+# 并行编译：每个进程一条 clang 命令
+xargs -d '\n' -P "$JOBS" -I CMD sh -c CMD < "$CMDS"
+FAILED=0
+[ -f "$CMDS.fail" ] && FAILED=$(wc -l < "$CMDS.fail")
+echo "编译完成: $((TOTAL-FAILED)) 个, 失败 $FAILED 个 -> $OUT32 / $OUT64"
+rm -f "$CMDS" "$CMDS.fail"

@@ -137,6 +137,9 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint
     uint32_t dout = 0;
     bool ack = false;
 
+    // 存储器容量是 2 的幂，用掩码把主设备地址折算进来
+    auto foldAddr = [&](uint32_t a) -> size_t { return (size_t) a & (ms.mem_size - 1); };
+
     // stb 上升沿检测：新事务到来
     bool stb_active = stb && cyc;
     bool stb_rise = stb_active && !ms.prev_stb;
@@ -146,18 +149,21 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint
     ms.prev_we = stb_active && we;
 
     if (stb_rise) {
+        // 从设备只有 addr_width 根地址线，主设备送来的更高位在这一层就不存在了。
+        // 折算进容量而不是判定越界：真实电路上没接的地址线不会让从设备"不响应"，
+        // 只会让高地址与低地址互为别名。官方 riscv-tests 用 DRAM_BASE(0x80000000)
+        // 计算访存地址，而测试夹具的存储器只有 64KB，正是靠这个别名才能落到镜像上
+        const size_t addr = foldAddr(adr);
         // 锁存地址（后续 AMO 写阶段可能用到）
-        ms.latched_addr = adr;
+        ms.latched_addr = (uint32_t) addr;
         if (!we) {
             // 读：锁存结果，保持直到 stb 拉低
-            size_t addr = (size_t) adr;
             ms.latched_dout = 0;
             if (addr + ms.data_bytes <= ms.mem_size)
                 std::memcpy(&ms.latched_dout, ms.mem + addr, ms.data_bytes);
             ms.ack_pending = true;
         } else {
             // 写：立即完成，锁存 ack
-            size_t addr = (size_t) adr;
             // 按数据宽度写，不能硬编码 4 字节：8/16 位配置会越界并写错字节数
             if (addr + ms.data_bytes <= ms.mem_size) {
                 for (int b = 0; b < ms.data_bytes; ++b)
@@ -168,7 +174,7 @@ void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint
             ms.ack_pending = true;
         }
     } else if (we_rise) {
-        // AMO 写阶段：同一事务内 we 从 0 翻 1，用已锁存的地址
+        // AMO 写阶段：同一事务内 we 从 0 翻 1，用已锁存的（已折算过的）地址
         size_t addr = (size_t) ms.latched_addr;
         if (addr + ms.data_bytes <= ms.mem_size) {
             for (int b = 0; b < ms.data_bytes; ++b)

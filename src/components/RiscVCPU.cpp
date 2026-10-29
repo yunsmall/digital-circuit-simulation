@@ -18,6 +18,20 @@ static inline bool pagingEnabled(unsigned long long satp) {
     else return (satp >> 31) != 0;
 }
 
+// Sv32 是两级、每级 10 位 VPN，PTE 4 字节；Sv39 是三级、每级 9 位 VPN，PTE 8 字节
+template<int XLEN> struct SvParams {
+    static constexpr int levels   = (XLEN == 32) ? 2 : 3;
+    static constexpr int vpn_bits = (XLEN == 32) ? 10 : 9;
+    static constexpr int pte_size = (XLEN == 32) ? 4 : 8;
+    static constexpr uint64_t vpn_field_mask = (1ull << vpn_bits) - 1;
+    // 根页表 PPN 的位置：Sv32 是 satp[21:0]，Sv39 是 satp[43:0]
+    static constexpr uint64_t root_ppn_mask = (XLEN == 32) ? 0x3FFFFFULL : ((1ull << 44) - 1);
+    static constexpr uint32_t asid(uint64_t satp) {
+        if constexpr (XLEN == 64) return (uint32_t)((satp >> 44) & 0xFFFF);
+        else return (uint32_t)((satp >> 22) & 0x1FF);
+    }
+};
+
 constexpr int SLOT = 16;
 constexpr int I_CLK = 0, I_RST = 1, I_DAT = 2, I_ACK = 3, I_IRQ = 4, I_MTI = 5, I_MSI = 6, I_SEIP = 7;
 constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, O_HALT = 6, O_COUNT = 7;
@@ -174,16 +188,14 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             stb=cyc=!hold_off;
             break;
         }
-        case Phase::WAIT_MMU_L1: adr=s.mmu_l1_addr; sel=0x0F; stb=cyc=true; break;
-        case Phase::WAIT_MMU_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
-        case Phase::MMU_WALK_L1: adr=s.mmu_l1_addr; sel=0x0F; stb=cyc=true; break;
-        case Phase::MMU_WALK_L2: adr=s.mmu_l2_addr; sel=0x0F; stb=cyc=true; break;
-        case Phase::MMU_AD_WRITE: adr=s.mmu_pte_addr; wdat=s.mmu_pte; we=true; sel=0x0F; stb=cyc=true; break;
+        case Phase::WAIT_MMU_LO: adr=(XLen)s.mmu_pte_addr; sel=0x0F; stb=cyc=true; break;
+        case Phase::WAIT_MMU_HI: adr=(XLen)(s.mmu_pte_addr + 4); sel=0x0F; stb=cyc=true; break;
+        case Phase::MMU_WALK_LO: adr=(XLen)s.mmu_pte_addr; sel=0x0F; stb=cyc=true; break;
+        case Phase::MMU_WALK_HI: adr=(XLen)(s.mmu_pte_addr + 4); sel=0x0F; stb=cyc=true; break;
         // RMW 空拍：cyc 保持高表示总线仍被本核占用（别的设备插不进来），
         // 只拉低 stb 让从设备看到事务边界——AMO 的原子性就靠这个
         case Phase::AMO_GAP: adr=s.bus_adr; wdat=s.bus_wdat; sel=0x0F; stb=false; cyc=true; break;
         case Phase::AMO_WRITE: adr=s.bus_adr; wdat=s.bus_wdat; we=true; sel=0x0F; stb=cyc=true; break;
-        case Phase::MMU_AD_GAP: adr=s.mmu_pte_addr; wdat=s.mmu_pte; sel=0x0F; stb=false; cyc=true; break;
         default: break;
         }
         packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
@@ -198,10 +210,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         // 取指同样过 MMU：S/U 态开启 satp 后 pc 是虚拟地址
         XLen fpa=0;
         if (!mmuTranslate(s, s.pc, fpa, false, true)) [[unlikely]] {
-            if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
-                uint32_t adr = (s.phase == Phase::MMU_WALK_L1) ? s.mmu_l1_addr : s.mmu_l2_addr;
-                wb_adr=adr; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
-                s.phase = (s.phase == Phase::MMU_WALK_L1) ? Phase::WAIT_MMU_L1 : Phase::WAIT_MMU_L2;
+            if (s.phase == Phase::MMU_WALK_LO) {
+                // mmuTranslate 起了页表遍历：本拍发起第一笔 PTE 读，立即转入等待
+                wb_adr=(XLen)s.mmu_pte_addr; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
+                s.phase = Phase::WAIT_MMU_LO;
                 break;
             }
             // 页错误已进 trap，s.pc 现在是 trap 入口。M 态入口是物理地址可直接用；
@@ -210,10 +222,9 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             if (s.priv == RV::PRIV_M || !pagingEnabled<XLEN>(s.satp)) {
                 s.fetch_pa = s.pc;
             } else if (!mmuTranslate(s, s.pc, fpa2, false, true)) {
-                if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
-                    uint32_t adr2 = (s.phase == Phase::MMU_WALK_L1) ? s.mmu_l1_addr : s.mmu_l2_addr;
-                    wb_adr=adr2; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
-                    s.phase = (s.phase == Phase::MMU_WALK_L1) ? Phase::WAIT_MMU_L1 : Phase::WAIT_MMU_L2;
+                if (s.phase == Phase::MMU_WALK_LO) {
+                    wb_adr=(XLen)s.mmu_pte_addr; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
+                    s.phase = Phase::WAIT_MMU_LO;
                     break;
                 }
                 s.phase = Phase::FETCH; wb_stb = wb_cyc = false; // stvec 未映射：继续 trap，由软件负责
@@ -347,11 +358,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
             wb_stb = wb_cyc = false;
         }
-        else if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
-            // mmuTranslate 设置了 MMU 遍历阶段，输出第一次总线读请求并立即转为等待状态
-            uint32_t mmu_adr = (s.phase == Phase::MMU_WALK_L1) ? s.mmu_l1_addr : s.mmu_l2_addr;
-            wb_adr = mmu_adr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
-            s.phase = (s.phase == Phase::MMU_WALK_L1) ? Phase::WAIT_MMU_L1 : Phase::WAIT_MMU_L2;
+        else if (s.phase == Phase::MMU_WALK_LO) {
+            // mmuTranslate 起了页表遍历，输出第一次 PTE 读请求并立即转为等待状态
+            wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+            s.phase = Phase::WAIT_MMU_LO;
         }
         else if (need_mem) [[unlikely]] { s.bus_adr=wb_adr; s.bus_wdat=wb_dat; s.bus_we=wb_we; s.bus_sel=wb_sel; s.phase=Phase::WAIT_MEM; }
         else { s.phase=Phase::FETCH; wb_sel=0x0F; wb_stb=wb_cyc=false; }
@@ -609,122 +619,37 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         }
         break;
 
-    case Phase::MMU_WALK_L1:
-        // 发起 L1 PTE 读请求
-        wb_adr = s.mmu_l1_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
-        s.phase = Phase::WAIT_MMU_L1;
+    case Phase::MMU_WALK_LO:
+        // 发起当前级 PTE 低半读请求
+        wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        s.phase = Phase::WAIT_MMU_LO;
         break;
 
-    case Phase::WAIT_MMU_L1:
-        wb_adr = s.mmu_l1_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+    case Phase::WAIT_MMU_LO:
+        wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
         if (in.ack) {
-            uint32_t l1e = in.dat;
-            // 检查 V 位
-            if (!(l1e & 1)) {
-                takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
-                s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                break;
-            }
-            // 保留编码只有 R=0,W=1（W 必须伴随 R）；R=0,W=0,X=1 是合法的 execute-only 页
-            if (!(l1e & 2) && (l1e & 4)) {
-                takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
-                s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                break;
-            }
-            // 缓存 L1 PTE（用于后续 TLB miss 时的快速路径）
-            s.l1_cache_tag = s.mmu_vaddr >> 22;
-            s.l1_cache_ppn = l1e >> 10;
-            s.l1_cache_valid = true;
-            if ((l1e & 0xE) != 0) {
-                // 超页面（4MB）：L1 是叶子，没有 L2，不能让这个 PPN 进入 L2 缓存
-                s.l1_cache_valid = false;
-                // R=0,W=1 是保留编码，必须报页错误（与 L2 叶子路径一致）
-                if (!(l1e & 2) && (l1e & 4)) {
-                    takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
-                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                    break;
-                }
-                // 权限检查
-                if (uint32_t cause = checkPerms(l1e, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus)) {
-                    takeTrap(s, cause, s.mmu_vaddr);
-                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                    break;
-                }
-                // Sv32 的 4MiB 超级页要求 ppn[0]（PTE bits 19:10）为 0。非零说明页表配错了，
-                // 规范要求报 page fault：直接丢弃这 10 位、拿虚拟地址的 ppn[0] 拼会译到错误地址
-                if (l1e & 0x000FFC00u) {
-                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF), s.mmu_vaddr);
-                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                    break;
-                }
-                // A/D 位按规范有两种合法实现：硬件自动置位（Svadu）或触发 page fault
-                // 交给软件处理。标准 riscv-tests 的 dirty.S 假定的是后者——它先做一次
-                // 本该 fault 的 store、再检查内存没被写。这里走 page fault 这条路
-                if (!(l1e & RV::PTE_A) || (s.mmu_pte_is_write && !(l1e & RV::PTE_D))) {
-                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF),
-                             s.mmu_vaddr);
-                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                    break;
-                }
-                int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
-                auto &e = s.tlb[idx];
-                e.vpn = s.mmu_vaddr >> 12; e.ppn = ((l1e >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF);
-                e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(l1e & 0xFF); // satp[30:22] 是 ASID
-                e.valid = true; e.global = (l1e >> 5) & 1;
-                s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
-                wb_stb = wb_cyc = false;
+            if constexpr (XLEN == 64) {
+                // Sv39 的 PTE 是 8 字节：先存下低半，拉低 stb 结束这笔事务，
+                // 下一拍 MMU_WALK_HI 再读高半。PTE 自然 8 字节对齐，两半不会跨页
+                s.mmu_pte_lo = in.dat;
+                s.phase = Phase::MMU_WALK_HI;
             } else {
-                // 非叶子 PTE（R=W=X=0）：指向 L2 页表
-                s.mmu_l2_addr = (((uint64_t)(l1e >> 10)) << 12) | (uint64_t)(((s.mmu_vaddr >> 12) & 0x3FF) * 4);
-                // 与缓存命中那条路径对称：L2 页表地址越过 32 位就只能报访问错误，
-                // 否则总线会拿截断后的别名地址去读垃圾页表项
-                if (s.mmu_l2_addr > 0xFFFFFFFFULL) {
-                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IAF : (s.mmu_is_write ? RV::EXC_SAF : RV::EXC_LAF), s.mmu_vaddr);
-                    wb_stb = wb_cyc = false;
-                    break;
-                }
-                s.phase = Phase::MMU_WALK_L2;
-                wb_stb = wb_cyc = false; // 本拍拉低，下拍 MMU_WALK_L2 重新断言 stb 上升沿
+                handlePte(s, in.dat);
             }
+            wb_stb = wb_cyc = false;
         }
         break;
 
-    case Phase::MMU_WALK_L2:
-        // 发起 L2 PTE 读请求
-        wb_adr = s.mmu_l2_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
-        s.phase = Phase::WAIT_MMU_L2;
+    case Phase::MMU_WALK_HI:
+        wb_adr = (XLen)(s.mmu_pte_addr + 4); wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        s.phase = Phase::WAIT_MMU_HI;
         break;
 
-    case Phase::WAIT_MMU_L2:
-        wb_adr = s.mmu_l2_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+    case Phase::WAIT_MMU_HI:
+        wb_adr = (XLen)(s.mmu_pte_addr + 4); wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
         if (in.ack) {
-            uint32_t l2e = in.dat;
-            bool fault = !(l2e & 1); // V=0
-            if (!fault) fault = (!(l2e & 2) && (l2e & 4)); // 保留组合: R=0,W=1 非法
-            if (!fault) {
-                if (uint32_t cause = checkPerms(l2e, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus))
-                { takeTrap(s, cause, s.mmu_vaddr);
-                  s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false; break; }
-                // 同 L1 路径：A/D 缺失走 page fault，不由硬件改写页表
-                if (!(l2e & RV::PTE_A) || (s.mmu_pte_is_write && !(l2e & RV::PTE_D))) {
-                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF),
-                             s.mmu_vaddr);
-                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                    break;
-                }
-                // 装填 TLB
-                int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
-                auto &e = s.tlb[idx];
-                e.vpn = s.mmu_vaddr >> 12; e.ppn = (l2e >> 10) & 0x3FFFFF;
-                e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(l2e & 0xFF);
-                e.valid = true; e.global = (l2e >> 5) & 1;
-                // TLB 已装填：取指翻译回 FETCH，数据访问回 EXECUTE 重试原指令
-                s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
-                wb_stb = wb_cyc = false;
-            } else {
-                takeTrap(s, s.mmu_is_write ? RV::EXC_SPF : s.mmu_is_exec ? RV::EXC_IPF : RV::EXC_LPF, s.mmu_vaddr);
-                s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-            }
+            handlePte(s, s.mmu_pte_lo | ((uint64_t)in.dat << 32));
+            wb_stb = wb_cyc = false;
         }
         break;
 
@@ -758,33 +683,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         wb_adr = s.bus_adr; wb_dat = 0; wb_we = false; wb_sel = 0x0F;
         wb_stb = false; wb_cyc = true;
         s.phase = Phase::WAIT_MEM;
-        break;
-    case Phase::MMU_AD_GAP:
-        wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_sel = 0x0F; wb_stb = false; wb_cyc = true;
-        s.phase = Phase::MMU_AD_WRITE;
-        break;
-    case Phase::MMU_AD_WRITE:
-        wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
-        if (in.ack) {
-            // 大页路径同样要查 ppn[0]：页表配错时按规范报 page fault，
-            // 而且不能继续装填 TLB，否则错的映射会被缓存下来
-            if (s.mmu_pte_is_l1 && (s.mmu_pte & 0x000FFC00u)) {
-                takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF), s.mmu_vaddr);
-                s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
-                break;
-            }
-            // 页表已更新，按更新后的 PTE 装填 TLB
-            int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
-            auto &e = s.tlb[idx];
-            e.vpn = s.mmu_vaddr >> 12;
-            e.ppn = s.mmu_pte_is_l1
-                        ? (((s.mmu_pte >> 20) << 10) | ((s.mmu_vaddr >> 12) & 0x3FF))
-                        : ((s.mmu_pte >> 10) & 0x3FFFFF);
-            e.asid = (uint16_t)((s.satp >> 22) & 0x1FF); e.flags = (uint8_t)(s.mmu_pte & 0xFF);
-            e.valid = true; e.global = (s.mmu_pte >> 5) & 1;
-            s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
-            wb_stb = wb_cyc = false;
-        }
         break;
 
     case Phase::HALTED: break;
@@ -2161,6 +2059,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 s.priv = (s.mstatus & RV::MSTATUS_SPP) ? RV::PRIV_S : RV::PRIV_U;
                 s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_SIE) | ((s.mstatus & RV::MSTATUS_SPIE)>>4);
                 s.mstatus |= RV::MSTATUS_SPIE; s.mstatus &= ~(XLen)RV::MSTATUS_SPP;
+                // SRET 的目标只能是 S/U，都低于 M，规范要求这种 xRET 清 MPRV
+                s.mstatus &= ~(XLen)RV::MSTATUS_MPRV;
                 npc = s.sepc;
                 break;
             }
@@ -2407,13 +2307,14 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_STVAL:   s.stval = val; break;
     case RV::CSR_SATP: {
         // RV32 的 mode 是 bit31（Sv32=1）；RV64 是 bit63:60（Sv39=8）。
-        // Sv39 的三级遍历还没实现，这里只接受 bare，写 Sv39 会被忽略并保持 bare，
-        // 而不是把 satp 存下来却按 Sv32 的方式乱翻页表
+        // 只接受已实现的模式：写入 Sv48/Sv57 等未实现的模式会被忽略并保持原值，
+        // 而不是把 satp 存下来却按别的页表格式乱翻页表
         bool accept = false;
         if constexpr (XLEN == 64) {
-            accept = ((val >> 60) == 0);
+            const uint32_t mode = (uint32_t)(val >> 60);
+            accept = (mode == 0 || mode == RV::SATP_MODE_SV39);
         } else {
-            uint32_t mode = val >> 31;
+            const uint32_t mode = val >> 31;
             accept = (mode == 0 || mode == 1);
         }
         if (accept) {
@@ -2492,8 +2393,11 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval
         s.mcause = cause; s.mepc = s.pc; s.mtval = tval;
         uint8_t mie = (s.mstatus & RV::MSTATUS_MIE) ? 1 : 0;
         s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
-        // 规范 3.1.6.3：trap 进入 M 态时 MPRV 必须清零
-        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MIE & ~(XLen)RV::MSTATUS_MPRV);
+        // MPRV 在 trap 入口保持不变：规范里清 MPRV 只有两处——xRET 返回低于 M 的
+        // 特权级时（见 MRET/SRET 的处理），以及系统复位。在 trap 入口清掉会让
+        // "MPRV 下访存出错 → 进 M 态处理 → 返回重试"这条软件路径失去 MPP 语义，
+        // 标准 riscv-tests 的 dirty.S 正是依赖 trap 后 MPRV 仍然有效
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MIE);
         s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPP) | ((uint32_t)s.priv << 11);
         s.priv = RV::PRIV_M;
         s.pc = (is_irq && (s.mtvec & 3) == 1) ? (s.mtvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.mtvec & ~(XLen)3);
@@ -2502,7 +2406,7 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval
 }
 
 // ============================================================
-// Sv32 MMU + TLB
+// Sv32 / Sv39 MMU + TLB
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 uint32_t RiscVCPU<XLEN>::checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t priv, uint32_t mstatus) {
@@ -2518,13 +2422,88 @@ uint32_t RiscVCPU<XLEN>::checkPerms(uint32_t pte, bool is_write, bool is_exec, u
 }
 
 template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::handlePte(CpuState &s, uint64_t pte) {
+    using P = SvParams<XLEN>;
+    // 页错误按访存类型分档；访问错误用于"地址超出总线 32 位能力"这类硬件限制
+    const uint32_t pf_cause = s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF);
+    const uint32_t af_cause = s.mmu_is_exec ? RV::EXC_IAF : (s.mmu_is_write ? RV::EXC_SAF : RV::EXC_LAF);
+    auto fail = [&](uint32_t cause) {
+        takeTrap(s, cause, (XLenOf<XLEN>)s.mmu_vaddr);
+        s.phase = Phase::FETCH;
+        return false;
+    };
+
+    // Sv39 的 PTE[63:54] 是保留位，非零的页表项属于保留编码，规范要求报 page fault
+    if constexpr (XLEN == 64) {
+        if (pte >> 54) return fail(pf_cause);
+    }
+    if (!(pte & RV::PTE_V)) return fail(pf_cause);
+    // 保留编码只有 R=0,W=1（W 必须伴随 R）；R=0,W=0,X=1 是合法的 execute-only 页
+    if (!(pte & RV::PTE_R) && (pte & RV::PTE_W)) return fail(pf_cause);
+
+    const uint64_t ppn = (pte >> 10) & P::root_ppn_mask;
+    const int level = s.mmu_level;
+
+    if (pte & (RV::PTE_R | RV::PTE_W | RV::PTE_X)) {
+        // 叶子。大页要求本级以下的 PPN 位为 0——那些位要接虚拟地址的对应 VPN，
+        // 非零说明页表配错了，规范要求报 page fault 而不是丢掉这些位
+        const uint64_t low_mask = (level == 0) ? 0 : ((1ull << (P::vpn_bits * level)) - 1);
+        if (ppn & low_mask) return fail(pf_cause);
+        if (uint32_t cause = checkPerms((uint32_t)pte, s.mmu_is_write, s.mmu_is_exec, s.mmu_priv, s.mstatus))
+            return fail(cause);
+        // A/D 位按规范有两种合法实现：硬件自动置位（Svadu）或触发 page fault 交给软件。
+        // 标准 riscv-tests 的 dirty.S 两条路径都能过（它的 trap 处理程序会自己补 D 位），
+        // 这里走 page fault 这条路，不在硬件里改写页表
+        if (!(pte & RV::PTE_A) || (s.mmu_pte_is_write && !(pte & RV::PTE_D)))
+            return fail(pf_cause);
+
+        // 大页：把虚拟地址低 level 级的 VPN 接到 PPN 低位
+        const uint64_t pa_ppn = (ppn & ~low_mask) | ((s.mmu_vaddr >> 12) & low_mask);
+        // 总线只有 32 位地址线：物理地址超过 4GB 会被截断成别名，软件完全看不出
+        if (pa_ppn > 0xFFFFFULL) return fail(af_cause);
+
+        int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
+        auto &e = s.tlb[idx];
+        e.vpn = (uint32_t)(s.mmu_vaddr >> 12);
+        e.ppn = (uint32_t)pa_ppn;
+        e.asid = (uint16_t)P::asid((uint64_t)s.satp);
+        e.flags = (uint8_t)(pte & 0xFF);
+        e.valid = true; e.global = (pte >> 5) & 1;
+        // TLB 已装填：取指翻译回 FETCH，数据访问回 EXECUTE 重试原指令
+        s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
+        return true;
+    }
+
+    // 非叶子 PTE：指向下一级页表。已经在叶级还是非叶子，说明页表少了一级
+    if (level == 0) return fail(pf_cause);
+    // 下一级页表的基址同样要落在 32 位地址线能表达的范围内
+    if (ppn > 0xFFFFFULL) return fail(af_cause);
+    const uint64_t next_base = ppn << 12;
+    if (level == P::levels - 1) {
+        // 最高一级的 PTE 缓存下来，同一区域的下一次遍历可以跳过这一级
+        s.l1_cache_tag = s.mmu_vaddr >> (12 + P::vpn_bits * level);
+        s.l1_cache_ppn = ppn;
+        s.l1_cache_valid = true;
+    }
+    const int next_level = level - 1;
+    s.mmu_level = (uint8_t)next_level;
+    s.mmu_next_page = next_base;
+    s.mmu_pte_addr = next_base +
+        (((s.mmu_vaddr >> (12 + P::vpn_bits * next_level)) & P::vpn_field_mask) * P::pte_size);
+    if (s.mmu_pte_addr > 0xFFFFFFFFULL) return fail(af_cause);
+    // 本拍结束后才发起下一级的读，调用方负责拉低 stb
+    s.phase = Phase::MMU_WALK_LO;
+    return false;
+}
+
+template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> &paddr,
                              bool is_write, bool is_exec) {
     // 地址线只有 32 位：高于 4GB 的物理地址会被截断后别名到低 4GB，
     // 软件完全看不出差异，所以在这里显式报访问错误。cause 按访存类型分档
     auto pass_through = [&]() -> bool {
         if constexpr (XLEN == 64) {
-            if ((vaddr >> 32) != 0) {
+            if (((uint64_t)vaddr >> 32) != 0) {
                 uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
                 takeTrap(s, cause, vaddr);
                 return false;
@@ -2543,21 +2522,33 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     }
     if (!pagingEnabled<XLEN>(s.satp)) [[unlikely]] { return pass_through(); }
 
-    uint64_t vpn = (uint64_t) vaddr >> 12;
+    // Sv39 只定义了 39 位虚拟地址：高 25 位必须是 bit38 的符号扩展。
+    // 非 canonical 地址按规范报 page fault——拿去翻页表的话高位会被静默丢弃，形成别名
+    if constexpr (XLEN == 64) {
+        const uint64_t hi = (uint64_t)vaddr >> 39;
+        if (hi != 0 && hi != ((1ull << 25) - 1)) {
+            takeTrap(s, is_exec ? RV::EXC_IPF : (is_write ? RV::EXC_SPF : RV::EXC_LPF), vaddr);
+            return false;
+        }
+    }
+
+    using P = SvParams<XLEN>;
+    const uint32_t asid = P::asid((uint64_t)s.satp);
+    const uint64_t vpn = (uint64_t)vaddr >> 12;
     // TLB 查找
     for (int i = 0; i < RV::TLB_SIZE; i++) {
         auto &e = s.tlb[i];
-        if (e.valid && e.vpn == vpn && (e.global || e.asid == ((s.satp >> 22) & 0x1FF))) [[likely]] {
+        if (e.valid && e.vpn == (uint32_t)vpn && (e.global || e.asid == asid)) [[likely]] {
             if (uint32_t cause = checkPerms(e.flags, is_write, is_exec, priv, s.mstatus))
             { takeTrap(s, cause, vaddr); return false; }
             // 软件会清 A/D 做页老化，所以命中时不能假定它已经置位：
-            // 缺位就走慢路径重新遍历页表，由 MMU_AD_WRITE 把 A/D 写回内存。
+            // 缺位就走慢路径重新遍历页表，由页表项里的 A/D 检查报 page fault。
             // 已置位的常规情况只多两次位测试。
-            if (!(e.flags & 0x40) || (is_write && !(e.flags & 0x80)))
+            if (!(e.flags & RV::PTE_A) || (is_write && !(e.flags & RV::PTE_D)))
                 break;
             {
                 uint64_t pa64 = ((uint64_t) e.ppn << 12) | (uint64_t)(vaddr & 0xFFF);
-                // Sv32 允许 34 位物理地址，但总线只有 32 位地址线：截断后会别名到低 4GB
+                // 总线只有 32 位地址线：截断后会别名到低 4GB
                 if (pa64 > 0xFFFFFFFFULL) {
                     uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
                     takeTrap(s, cause, vaddr);
@@ -2570,32 +2561,34 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     }
 
     // TLB miss → 通过 Wishbone 总线遍历页表
-    s.mmu_vaddr = vaddr;
+    s.mmu_vaddr = (uint64_t)vaddr;
     s.mmu_is_write = is_write;
     s.mmu_pte_is_write = is_write;   // 遍历期间不变，取指不会污染它
     s.mmu_is_exec = is_exec;
     s.mmu_priv = priv; // 遍历相位里做权限检查要用同一个特权级
-    s.mmu_root = ((uint64_t)(s.satp & 0x3FFFFF)) << 12;
 
-    // 查 L1 PTE 缓存（命中→跳过 L1 总线读）
-    uint32_t l1_tag = vaddr >> 22;
-    if (s.l1_cache_valid && s.l1_cache_tag == l1_tag) [[likely]] {
-        s.mmu_l2_addr = ((uint64_t) s.l1_cache_ppn << 12) | (uint64_t)(((vaddr >> 12) & 0x3FF) * 4);
-        // 页表本身也要落在 32 位地址线能表达的范围内，否则遍历读到的是别名的垃圾。
-        // 两条分支各自只设一个地址，检查必须放在分支内：同时看两个会误报
-        if (s.mmu_l2_addr > 0xFFFFFFFFULL) {
-            takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
-            return false;
-        }
-        s.phase = Phase::MMU_WALK_L2;
-    } else {
-        s.mmu_l1_addr = s.mmu_root + ((uint64_t) l1_tag << 2);
-        if (s.mmu_l1_addr > 0xFFFFFFFFULL) {
-            takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
-            return false;
-        }
-        s.phase = Phase::MMU_WALK_L1;
+    // 查最高级 PTE 缓存。缓存的是"最高级非叶子 PTE 的 PPN"，
+    // tag 取最高级 VPN，命中时跳过这一级的总线读
+    constexpr int top = P::levels - 1;
+    const uint64_t tag = (uint64_t)vaddr >> (12 + P::vpn_bits * top);
+    const bool hit = s.l1_cache_valid && s.l1_cache_tag == tag;
+    const int level = hit ? (top - 1) : top;
+    const uint64_t base = hit ? (s.l1_cache_ppn << 12)
+                              : ((uint64_t)(s.satp & P::root_ppn_mask) << 12);
+    // 页表本身也要落在 32 位地址线能表达的范围内，否则遍历读到的是别名的垃圾
+    if (base > 0xFFFFFFFFULL) {
+        takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
+        return false;
     }
+    s.mmu_level = (uint8_t)level;
+    s.mmu_next_page = base;
+    s.mmu_pte_addr = base +
+        (((uint64_t)vaddr >> (12 + P::vpn_bits * level)) & P::vpn_field_mask) * P::pte_size;
+    if (s.mmu_pte_addr > 0xFFFFFFFFULL) {
+        takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
+        return false;
+    }
+    s.phase = Phase::MMU_WALK_LO;
     return false; // 发起 MMU 遍历，原指令稍后重试
 }
 
