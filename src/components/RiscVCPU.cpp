@@ -570,7 +570,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                                  : -std::numeric_limits<float>::infinity();
             // 两个数精确抵消时，IEEE 754 §6.3 只有 roundTowardNegative 给 -0，
             // 其余模式（含 RTZ）都是 +0。C 的加法固定产生 +0，这里补上符号
-            if (exact == 0.0 && !std::signbit(exact) && rmode == 2) {
+            // 不能靠 exact 的符号来判：它是宿主 double 运算的结果，
+            // 宿主被 fesetround 改成 RDN 时抵消的结果已经是 -0了
+            if (exact == 0.0 && rmode == 2) {
                 // 只有"两个同号相减归零"才走这里，由调用方标记
                 if (cancelled_to_zero) return -0.0f;
             }
@@ -805,7 +807,11 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // prod 与 c 精确抵消时零的符号也要按模式定（只有相加形式会抵消）
         // FMADD=prod+c、FMSUB=prod-c、FNMSUB=-prod+c、FNMADD=-prod-c，
         // 抵消条件取决于实际表达式的符号
-        bool fma_cancel = prod != 0.0 && ((op == 0x43 || op == 0x4F) ? c == -prod : c == prod);
+        // 不能用 prod != 0 排除零：(+0)+(-0) 这类也属于精确抵消，
+        // 只有同号零相加才不是抵消
+        bool fma_opposite = (std::signbit(prod) != std::signbit(c));
+        bool fma_cancel = ((op == 0x43 || op == 0x4F) ? c == -prod : c == prod)
+                          && (prod != 0.0 || c != 0.0 || fma_opposite);
         float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3, fma_cancel);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
         // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
