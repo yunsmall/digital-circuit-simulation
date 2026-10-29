@@ -176,6 +176,7 @@ private:
         XLen regs[32], pc;
         // 64 位计数器：RV32 上 cycle/instret 由低高两个 CSR 拼成，硬件内部必须按 64 位递增
         uint64_t cycles, instret;
+        bool instret_written;   // 写 minstret 的那条指令不递增，好让紧接着的读取拿到写入值
         // 浮点寄存器按 IEEE754 位模式存放，避免来回转换。D 扩展要 64 位，
         // F 指令只读写低 32 位
         uint64_t fregs[32];
@@ -191,7 +192,11 @@ private:
         uint8_t priv; // 当前特权级 (0=U, 1=S, 3=M)
 
         // M-mode CSR
-        uint32_t mstatus, mtvec, mepc, mcause, mie, mip, mscratch, mtval;
+        // mstatus 的掩码都落在低 32 位内，用 32 位就够；但 mtvec/mepc/mcause/mtval
+        // 存的是地址、原因和故障值，RV64 下必须是 XLEN 宽——写成 uint32_t 会截掉
+        // mcause 的 bit63 中断位、以及 >4GB 的 PC 和地址
+        uint32_t mstatus, mie, mip, mscratch;
+        XLen mtvec, mepc, mcause, mtval;
         // 决定 S 态能否读 cycle/time/instret（U 态还要再过 scounteren，本核未实现 S 态计数器委派）
         uint32_t mcounteren;
         uint32_t scounteren;
@@ -201,7 +206,8 @@ private:
         uint32_t medeleg, mideleg;
 
         // S-mode CSR
-        uint32_t sstatus, stvec, sepc, scause, stval, sie, sip, sscratch, satp;
+        uint32_t sstatus, sie, sip, sscratch;
+        XLen stvec, sepc, scause, stval, satp;
 
         // Sv32 TLB
         // ASID 在 RV32 是 satp[30:22] 共 9 位，用 uint8_t 会截断高位，导致 TLB 命中错误页表项

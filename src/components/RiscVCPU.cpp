@@ -195,7 +195,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
 
     switch (s.phase) {
     case Phase::FETCH: {
-        if (std::getenv("DCS_PH")) std::fprintf(stderr, "PH-FETCH pc=%llX\n", (unsigned long long) s.pc);
         // 取指同样过 MMU：S/U 态开启 satp 后 pc 是虚拟地址
         XLen fpa=0;
         if (!mmuTranslate(s, s.pc, fpa, false, true)) [[unlikely]] {
@@ -258,7 +257,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         if (in.ack) {
             // 取指按字对齐读，压缩指令可能只占半个字：低 2 位不是 11 就是 16 位指令。
             // fetch_pa 的 bit1 决定取低半还是高半
-            if (std::getenv("DCS_F")) std::fprintf(stderr, "F pa=%llX dat=%08X half=%04X ack=%d\n", (unsigned long long) s.fetch_pa, in.dat, (unsigned)(((s.fetch_pa & 2u) ? (in.dat >> 16) : in.dat) & 0xFFFFu), (int) in.ack);
             const uint32_t lo16 = in.dat & 0xFFFFu;
             const uint32_t hi16 = in.dat >> 16;
             const uint32_t half = (s.fetch_pa & 2u) ? hi16 : lo16;
@@ -325,7 +323,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     case Phase::WAIT_FETCH_HI:
         if (in.ack) {
             // 跨字 32 位指令：低半来自第一个字的高 16 位，高半来自新读到的字
-            if (std::getenv("DCS_HI")) std::fprintf(stderr, "HI pa=%llX hi_adr=%llX w0=%08X dat=%08X\n", (unsigned long long) s.fetch_pa, (unsigned long long) s.fetch_hi_addr, s.fetch_word0, in.dat);
             s.inst = (s.fetch_word0 >> 16) | (in.dat << 16);
             s.inst_len = 4;
             wb_stb = wb_cyc = false;
@@ -336,7 +333,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         break;
 
     case Phase::EXECUTE: {
-        if (std::getenv("DCS_PC")) std::fprintf(stderr, "PC=%llX len=%d inst=%08X\n", (unsigned long long) s.pc, (int) s.inst_len, s.inst);
         XLen trap_cause=0;
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
             takeTrap(s, trap_cause, 0);
@@ -1066,10 +1062,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     }
     case RV::JALR: {
         if(f3!=0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-        // 先看原始目标是否奇数，再清最低位：先清后判的话检查永远为假
-        const XLen raw_tgt = v1 + (XLen)(SXLen)ii;
-        if (raw_tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, raw_tgt); return; }
-        const XLen tgt = raw_tgt & ~(XLen)1;
+        // JALR 的目标 bit0 由硬件清零，规范明确规定不会因为它而 trap——
+        // 软件靠这个特性省掉一条清位指令，所以这里不能检查 bit0
+        const XLen tgt = (v1 + (XLen)(SXLen)ii) & ~(XLen)1;
         s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::BRANCH: { if (f3 == 2 || f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
@@ -1850,7 +1845,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- SYSTEM ----
     case RV::SYSTEM: {
-        if (std::getenv("DCS_CSR")) std::fprintf(stderr, "CSR inst=%08X f3=%u rd=%u rs1=%u csr=%03X pc=%llX\n", inst, f3, rd, rs1, (unsigned)(inst >> 20), (unsigned long long) s.pc);
         if (f3 == 0) {
             uint32_t f12=(inst>>20)&RV::M_F12;
             switch (f12) {
@@ -1960,7 +1954,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     s.regs[0]=0; s.pc=npc;
     // 规范允许"是否把 trap 的指令计入"由实现决定；这里凡是走到尾部收尾的都计，
     // 少数提前 return 的错误路径不计，属于同一取舍下的正常差异
-    s.instret++;
+    // 规范：写入 minstret 的值就是紧接着那条指令读到的值，
+    // 所以写指令本身不能递增
+    if (s.instret_written) s.instret_written = false; else s.instret++;
     if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
 }
 
@@ -2042,6 +2038,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
         else mxl = (XLen) 1 << 30;
         return mxl
                | (1u << 0)   // A
+               | (1u << 2)   // C（支持压缩指令，IALIGN=16）
                | (1u << 3)   // D（只有 RV64 实现，RV32 的 D 要 64 位浮点寄存器）
                | (1u << 5)   // F
                | (1u << 8)   // I
@@ -2086,9 +2083,9 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_MCYCLE: s.cycles = (XLEN == 64) ? (uint64_t) val
                                         : ((s.cycles & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
     case RV::CSR_MCYCLEH: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case RV::CSR_MINSTRET: s.instret = (XLEN == 64) ? (uint64_t) val
+    case RV::CSR_MINSTRET: s.instret_written = true; s.instret = (XLEN == 64) ? (uint64_t) val
                                          : ((s.instret & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
-    case RV::CSR_MINSTRETH: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
+    case RV::CSR_MINSTRETH: s.instret_written = true; s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
     case RV::CSR_MCOUNTEREN: s.mcounteren = (uint32_t) val & 7u;
         break;
     case RV::CSR_SCOUNTEREN: s.scounteren = (uint32_t) val & 7u; break; // 只有 CY/TM/IR 三位有定义

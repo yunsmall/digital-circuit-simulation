@@ -168,3 +168,70 @@ TEST(Rv64Edge, UnalignedLdByteOrder) {
     f.run(1200);
     EXPECT_EQ((uint64_t) f.cpu->reg(3), 0x0807060504030201ULL) << "非对齐 LD 的字节位置错了";
 }
+
+// C 扩展下 IALIGN=16，mret 必须能返回到 4n+2 的地址。
+// 这条是 mepc 掩码写成 & ~3 时踩过的真 bug：返回地址被抹掉 bit1，回到错的指令
+TEST(Rv64Edge, MepcKeepsBit1ForTwoByteAlignment) {
+    Rv64Fixture f;
+    f.load({
+        lui(1, 0x0), addi(1, 1, 0x100), addi(1, 1, 2),
+        csrrw(0, 0x341, 1),        // mepc = 0x102
+        csrrs(2, 0x341, 0),        // x2 = mepc
+        spin(),
+    });
+    f.run(60);
+    // 有 C 扩展时 IALIGN=16，bit1 必须保留；按 IALIGN=32 的 & ~3 会把它抹掉
+    EXPECT_EQ((uint64_t) f.cpu->reg(2), 0x102ULL)
+        << "mepc 把 bit1 抹掉了，mret 会返回到错的指令";
+}
+
+// sepc 同理：sret 也要能返回到 4n+2
+TEST(Rv64Edge, SretReturnsToTwoByteAlignedAddress) {
+    Rv64Fixture f;
+    f.load({
+        lui(1, 0x0), addi(1, 1, 0x100), addi(1, 1, 2),
+        csrrw(0, 0x141, 1),        // sepc = 0x102
+        addi(2, 0, 0),             // 先置 mstatus.MPP=S 需要 mstatus 可写，这里直接从 M 态 sret
+        0x10200073u,               // sret
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ((uint64_t) f.cpu->pc(), 0x102ULL)
+        << "sret 没有返回到 2 字节对齐的地址（sepc 的掩码把 bit1 抹掉了）";
+}
+
+
+// FS=Off 时浮点指令必须报非法指令。rv64si 的 csr 用例 13 就靠这条：
+// 它把 FS 清成 Off 后执行 fsw，期待 trap 而不是真的写内存
+TEST(Rv64Edge, FloatStoreTrapsWhenFsOff) {
+    Rv64Fixture f;
+    // mstatus 复位后 FS=0（Off），所以不用额外设置
+    f.load({
+        enc_i(0x73, 0, 1, 1, 0x305),   // csrrw x0, mtvec, x1（x1=0，handler 在 0）
+        addi(2, 0, 0x40),
+        enc_i(0x53, 0, 2, 2, 0x0),     // fsw f0, 0(x2) —— FS=Off 时必须 trap
+        addi(3, 0, 0x7FF),             // 没 trap 才会执行到这里
+        spin(),
+    });
+    f.run(60);
+    const uint64_t cause = (uint64_t) f.cpu->mcause();
+    EXPECT_EQ(cause & 0x7F, 2ULL) << "FS=Off 时 fsw 没有报非法指令（mcause=" << cause << "）";
+    EXPECT_NE((uint64_t) f.cpu->reg(3), 0x7FFULL) << "fsw 没有 trap，后续指令被执行了";
+}
+
+// csrs/csrc 走的是"读回旧值、改、再写"的路径，如果写掩码把 FS 位过滤掉，
+// 那么 FS 永远设不上也清不掉，依赖它的测试就会误判
+TEST(Rv64Edge, CsrsCsrcCanSetAndClearFsBits) {
+    Rv64Fixture f;
+    f.load({
+        lui(1, 6),                        // x1 = 0x6000 = MSTATUS_FS（addi 只有 12 位立即数装不下）
+        enc_i(0x73, 0, 2, 1, 0x300),      // csrs mstatus, x1  → FS=Dirty
+        enc_i(0x73, 2, 2, 0, 0x300),      // csrrs x2, mstatus, x0 → 读回
+        enc_i(0x73, 0, 3, 1, 0x300),      // csrc mstatus, x1  → FS=Off
+        enc_i(0x73, 3, 2, 0, 0x300),      // csrrs x3, mstatus, x0
+        spin(),
+    });
+    f.run(40);
+    EXPECT_EQ(((uint64_t) f.cpu->reg(2) >> 13) & 3, 3ULL) << "csrs 没能把 FS 置成 Dirty";
+    EXPECT_EQ(((uint64_t) f.cpu->reg(3) >> 13) & 3, 0ULL) << "csrc 没能把 FS 清成 Off";
+}
