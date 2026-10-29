@@ -1556,7 +1556,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     else if (r < 0.0) { s.regs[rd] = 0; s.fcsr |= 0x10; }
                     else s.regs[rd] = (XLen) r;
                 }
-                if (std::isfinite(da) && (double)(int64_t) s.regs[rd] != da && rs2 < 2) s.fcsr |= 0x01;
+                // NX 只在没有饱和时才有意义：饱和路径规范只要求 NV，
+                // 拿回写值和原值比较会把"饱和"误判成"不精确"
+                if (s.fcsr & 0x10) { /* 已置 NV，不再补 NX */ }
+                else if (std::isfinite(da) && r != da) s.fcsr |= 0x01;
                 break;
             }
             case RV::F7_FCVT_S_W: {
