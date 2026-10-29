@@ -8,12 +8,18 @@ namespace dsc {
 namespace {
 constexpr int SLOT = 16;
 enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_RX };
-enum OutIdx { O_DAT = 0, O_ACK, O_TX, O_COUNT };
+enum OutIdx { O_DAT = 0, O_ACK, O_TX, O_IRQ, O_COUNT };
 
-constexpr uint32_t REG_TXDATA = 0x00;
-constexpr uint32_t REG_RXDATA = 0x04;
-constexpr uint32_t REG_STATUS = 0x08;
-constexpr uint32_t REG_CONTROL = 0x0C;
+// 16550A 寄存器（stride 4：设备树里 reg-shift=2、reg-io-width=4）
+constexpr uint32_t REG_RBR_THR = 0x00; // 读 RBR / 写 THR，DLAB=1 时是 DLL
+constexpr uint32_t REG_IER     = 0x04; // DLAB=1 时是 DLM
+constexpr uint32_t REG_IIR_FCR = 0x08;
+constexpr uint32_t REG_LCR     = 0x0C;
+constexpr uint32_t REG_MCR     = 0x10;
+constexpr uint32_t REG_LSR     = 0x14;
+constexpr uint32_t REG_MSR     = 0x18;
+constexpr uint32_t REG_SCR     = 0x1C;
+constexpr uint32_t LCR_DLAB    = 0x80;
 } // namespace
 
 UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "uart"), _baud_div(baud_div) {
@@ -31,6 +37,7 @@ UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "u
     addOutput("wb_dat_o", 32, false, true);
     addOutput("wb_ack_o", 1, false, true);
     addOutput("tx", 1, false, true);
+    addOutput("irq", 1, false, true);
 }
 
 UART::~UART() = default;
@@ -50,7 +57,7 @@ void UART::uartReset(void *state_ptr, int baud_div) {
     std::memset(&s, 0, sizeof(s));
     // 半位 = baud_div/2，取 1 时半位为 0，接收状态机会每 tick 推进一次
     s.baud_div = (uint32_t) (baud_div < 2 ? 2 : baud_div);
-    s.control = 0x3; // 默认收发都使能
+    s.lcr = 0x03;   // 8 位数据、无校验、1 停止位（8N1）
 }
 
 std::string UART::genStateDecl() const {
@@ -79,6 +86,7 @@ std::string UART::genFuncDef_seq() const {
     code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
     code += "    { uint8_t _a=0; dcs_memcpy(&_a,_obuf[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";
     code += "    { uint8_t _t=0; dcs_memcpy(&_t,_obuf[2],1); " + genOutputWrite(O_TX, "_t", 1) + " }\n";
+    code += "    { uint8_t _i=0; dcs_memcpy(&_i,_obuf[3],1); " + genOutputWrite(O_IRQ, "_i", 1) + " }\n";
     code += "}\n";
     return code;
 }
@@ -116,7 +124,7 @@ void UART::uartTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *cons
     // ---- 接收：起始沿 -> 半位确认起始位 -> 每位中点采样 -> 停止位校验 ----
     // 半位确认可以把窄脉冲噪声挡掉，中点采样则让波特率有偏差时仍落在位中央
     if (!s.rx_active) {
-        if (s.prev_rx && !rx && (s.control & 2u)) { // 空闲高转低 = 起始位，且 RX 已使能
+        if (s.prev_rx && !rx) { // 空闲高转低 = 起始位（16550 没有接收使能位，始终接收）
             s.rx_active = true;
             s.rx_confirm = true;
             s.rx_cnt = 0;
@@ -145,35 +153,56 @@ void UART::uartTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *cons
     }
     s.prev_rx = rx;
 
-    // ---- 总线访问 ----
+    // ---- 总线访问（16550A 寄存器）----
     uint32_t dout = 0;
     bool ack = false;
+    const bool dlab = (s.lcr & LCR_DLAB) != 0;
     if (stb_rise) {
-        const uint32_t off = adr & 0x0Fu;
+        // 同时兼容 stride=4（reg-shift=2）和字节地址（reg-shift=0）：0..7 的来源归到 4 字节组
+        const uint32_t off = (adr & 0x1Fu) & ~3u;
         if (!we) {
             switch (off) {
-            case REG_RXDATA:
-                dout = s.rx_data;
-                s.rx_valid = false; // 读走即清
+            case REG_RBR_THR:
+                if (dlab) dout = s.dll;
+                else { dout = s.rx_data; s.rx_valid = false; }   // 读 RBR 清 DR
                 break;
-            case REG_STATUS:
-                dout = (s.tx_busy ? 0u : 1u) | (s.rx_valid ? 2u : 0u);
+            case REG_IER: dout = dlab ? s.dlm : s.ier; break;
+            case REG_IIR_FCR: {
+                // IIR：bit0=1 表示无中断，bit3:1 是最高优先级的中断类型
+                uint32_t iir = 0x1;
+                if (s.rx_valid && (s.ier & 0x01)) iir = 0x4;         // 收到数据
+                else if (!s.tx_busy && (s.ier & 0x02)) iir = 0x2;    // THR 空
+                if (s.fcr & 0x01) iir |= 0xC0;                       // 报告 FIFO 已使能
+                dout = iir;
                 break;
-            case REG_CONTROL: dout = s.control; break;
+            }
+            case REG_LCR: dout = s.lcr; break;
+            case REG_MCR: dout = s.mcr; break;
+            case REG_LSR:
+                // bit0 DR、bit5 THRE、bit6 TEMT；校验/帧错误本实现不产生
+                dout = (s.rx_valid ? 0x01u : 0u) | (!s.tx_busy ? 0x60u : 0u);
+                break;
+            case REG_MSR: dout = 0x30; break;   // CTS | DSR 恒就绪
+            case REG_SCR: dout = s.scr; break;
             default: dout = 0; break;
             }
         } else {
             switch (off) {
-            case REG_TXDATA:
-                if (!s.tx_busy && (s.control & 1u)) { // TX 使能且空闲才接受
+            case REG_RBR_THR:
+                if (dlab) s.dll = wdat & 0xFFu;
+                else if (!s.tx_busy) {          // THR 空才接受新字节
                     s.tx_shift = wdat & 0xFFu;
                     s.tx_busy = true;
                     s.tx_bit = 0;
                     s.tx_cnt = 0;
                 }
                 break;
-            case REG_CONTROL: s.control = wdat & 0x3u; break;
-            default: break;
+            case REG_IER: if (dlab) s.dlm = wdat & 0xFFu; else s.ier = wdat & 0x0Fu; break;
+            case REG_IIR_FCR: s.fcr = wdat & 0xC9u; break;
+            case REG_LCR: s.lcr = wdat & 0xFFu; break;
+            case REG_MCR: s.mcr = wdat & 0x1Fu; break;
+            case REG_SCR: s.scr = wdat & 0xFFu; break;
+            default: break;     // LSR/MSR 只读
             }
         }
         ack = true;
@@ -185,9 +214,12 @@ void UART::uartTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *cons
     if (!active)
         s.latched_dout = 0;
 
+    // 中断线：收到数据（IER.RX）或 THR 变空（IER.TX）时拉高
+    s.irq = (s.rx_valid && (s.ier & 0x01)) || (!s.tx_busy && (s.ier & 0x02));
+
     // 串行输出：起始位为 0，数据位从低到高，停止位为 1
     uint32_t tx_level = 1;
-    if (s.tx_busy && (s.control & 1u)) {
+    if (s.tx_busy) {
         if (s.tx_bit == 0)
             tx_level = 0;
         else if (s.tx_bit <= 8)
@@ -200,6 +232,7 @@ void UART::uartTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *cons
     std::memcpy(outputs[O_DAT], &dout, 4);
     outputs[O_ACK][0] = ack ? 1 : 0;
     outputs[O_TX][0] = (uint8_t) (tx_level & 1u);
+    outputs[O_IRQ][0] = s.irq ? 1 : 0;
 }
 
 } // namespace dsc

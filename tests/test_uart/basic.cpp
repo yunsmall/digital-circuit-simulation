@@ -96,7 +96,7 @@ TEST(UartTest, LoopbackByte) {
     f.write(0x00, 0x5A); // 0101 1010
     for (int i = 0; i < 60; ++i) // 10 位 × 2 tick，留足余量
         f.cycle();
-    EXPECT_EQ(f.read(0x04), 0x5Au) << "回环收到的字节应与发送的一致";
+    EXPECT_EQ(f.read(0x00), 0x5Au) << "回环收到的字节应与发送的一致";
 }
 
 TEST(UartTest, TransmitPullsLineLow) {
@@ -116,9 +116,9 @@ TEST(UartTest, TransmitPullsLineLow) {
 TEST(UartTest, StatusReflectsBusy) {
     Fixture f(2);
     f.compile();
-    EXPECT_EQ(f.read(0x08) & 1u, 1u) << "空闲时 TX 应就绪";
+    EXPECT_EQ(f.read(0x14) & 0x20u, 0x20u) << "空闲时 LSR.THRE 应就绪";
     f.write(0x00, 0x55);
-    EXPECT_EQ(f.read(0x08) & 1u, 0u) << "发送中 TX 应忙";
+    EXPECT_EQ(f.read(0x14) & 0x20u, 0u) << "发送中 LSR.THRE 应为 0";
 }
 
 TEST(UartTest, ReceiveSamplesByte) {
@@ -133,7 +133,7 @@ TEST(UartTest, ReceiveSamplesByte) {
     }
     f.circuit->setWire(f.rx->id(), {1});
     f.cycle();
-    EXPECT_EQ(f.read(0x08) & 2u, 2u) << "应置 RX 有数据";
-    EXPECT_EQ(f.read(0x04), 0x5Au) << "读回收到的字节";
-    EXPECT_EQ(f.read(0x08) & 2u, 0u) << "读走后标志应清除";
+    EXPECT_EQ(f.read(0x14) & 1u, 1u) << "应置 LSR.DR";
+    EXPECT_EQ(f.read(0x00), 0x5Au) << "读回收到的字节";
+    EXPECT_EQ(f.read(0x14) & 1u, 0u) << "读走 RBR 后 DR 应清除";
 }

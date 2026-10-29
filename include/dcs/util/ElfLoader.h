@@ -22,5 +22,7 @@ struct ElfImage {
 // 只接受对应位宽的小端 ELF；失败时 ok=false 并在 error 里说明原因
 ElfImage loadElf32(const std::string &path);
 ElfImage loadElf64(const std::string &path);
+// 按 ELF 头里的 EI_CLASS 自动选 32/64 位解析
+ElfImage loadElf(const std::string &path);
 
 } // namespace dsc

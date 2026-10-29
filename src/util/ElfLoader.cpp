@@ -1,6 +1,7 @@
 #include "dcs/util/ElfLoader.h"
 
 #include <cstring>
+#include <fstream>
 
 #include <elfio/elfio.hpp>
 
@@ -153,4 +154,20 @@ ElfImage loadElf64(const std::string &path) {
     return img;
 }
 
+} // namespace dsc
+
+namespace dsc {
+ElfImage loadElf(const std::string &path) {
+    // EI_CLASS 在 ELF 头偏移 4：1=32 位，2=64 位。先读头再分派，
+    // 免得调用方要自己知道镜像是哪个位宽
+    std::ifstream f(path, std::ios::binary);
+    unsigned char hdr[5] = {0};
+    if (!f.read(reinterpret_cast<char *>(hdr), 5)
+        || hdr[0] != 0x7F || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F') {
+        ElfImage bad;
+        bad.error = "不是 ELF 文件";
+        return bad;
+    }
+    return (hdr[4] == 2) ? loadElf64(path) : loadElf32(path);
+}
 } // namespace dsc

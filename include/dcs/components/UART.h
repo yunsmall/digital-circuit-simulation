@@ -1,13 +1,17 @@
-// UART — 带波特率分频的 8N1 串口
+// UART — 16550A 兼容的 8N1 串口（stride 4，对应设备树 reg-shift=2、reg-io-width=4）
 //
 // Wishbone 从设备，寄存器：
-//   0x00 TXDATA  写：发送一个字节
-//   0x04 RXDATA  读：取走收到的字节（读后清 RX_VALID）
-//   0x08 STATUS  bit0=TX 空闲, bit1=RX 有数据
-//   0x0C CONTROL bit0=TX 使能, bit1=RX 使能
+//   0x00 RBR(读)/THR(写)/DLL   LCR.DLAB=1 时访问 DLL
+//   0x04 IER/DLM               LCR.DLAB=1 时访问 DLM
+//   0x08 IIR(读)/FCR(写)
+//   0x0C LCR
+//   0x10 MCR
+//   0x14 LSR                   bit0=DR（收到数据） bit5=THRE bit6=TEMT
+//   0x18 MSR
+//   0x1C SCR
 //
 // tx/rx 是串行线，按 baud_div 个 tick 一位输出/采样，与真实 UART 的时序关系一致，
-// 只是这里的"时间单位"是仿真 tick。
+// 只是这里的"时间单位"是仿真 tick。DLL/DLM 只保存不影响分频（分频由构造参数固定）。
 #pragma once
 #include <cstdint>
 #include <string>
@@ -49,9 +53,11 @@ private:
         bool rx_valid;
         bool prev_rx;
         // 控制与总线
-        uint32_t control;
+        uint32_t ier, lcr, mcr, fcr, scr;   // 16550 的配置寄存器
+        uint32_t dll, dlm;                  // 波特率分频（只保存，分频由构造参数决定）
         uint32_t latched_dout;
         bool prev_stb;
+        bool irq;                           // 有中断待处理
     };
     UartState _state;
     int _baud_div = 8;

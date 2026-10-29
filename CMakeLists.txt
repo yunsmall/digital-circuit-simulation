@@ -126,6 +126,8 @@ find_package(elfio CONFIG REQUIRED)
 
 # ---- 库（src/ 中所有 .cpp）----
 file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/components/*.cpp" "src/util/*.cpp")
+# 可执行入口不能进库：测试目标链接 gtest_main，库里再来一个 main 会在链接时抢掉它
+list(REMOVE_ITEM DCS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 add_library(dcs_lib STATIC ${DCS_SOURCES})
 target_include_directories(dcs_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -154,7 +156,7 @@ add_custom_command(TARGET dcs_lib POST_BUILD ${_COPY_CMDS})
 # ---- 主程序（合并 simulator + tool）----
 if(DCS_BUILD_EXECUTABLE)
     find_package(cxxopts CONFIG REQUIRED)
-    add_executable(dcs main.cpp)
+    add_executable(dcs src/main.cpp)
     target_link_libraries(dcs PRIVATE dcs_lib cxxopts::cxxopts)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs PRIVATE DCS_USE_TCC)

@@ -539,7 +539,7 @@ struct InitAllComponents {
             return std::make_unique<dsc::SPI>(n, _gi(p, "clkdiv", 4));
         });
 
-        f.registerType({"uart", {{"baud_div", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx"}, dsc::ComponentCategory::Misc, "UART 8N1 串口，按 baud_div 个 tick 一位"}, [&](const std::string &n, const Params &p) -> C {
+        f.registerType({"uart", {{"baud_div", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx", "irq"}, dsc::ComponentCategory::Misc, "16550A 兼容 8N1 串口（reg-shift=2），按 baud_div 个 tick 一位"}, [&](const std::string &n, const Params &p) -> C {
             return std::make_unique<dsc::UART>(n, _gi(p, "baud_div", 8));
         });
 

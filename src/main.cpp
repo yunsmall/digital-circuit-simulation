@@ -11,6 +11,7 @@
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
+#include <dcs/components/RiscVCPU.h>
 #include <dcs/components/WishboneMemory.h>
 #include <dcs/dll_interface.h>
 #include <dcs/util/ElfLoader.h>
@@ -217,18 +218,26 @@ int simulate(const std::string &path, int ticks, int delay_ms, bool monitor, con
             std::cerr << "错误: 电路里没有 WishboneMemory，无法加载 ELF\n";
             return 1;
         }
-        auto img = dsc::loadElf32(elf_path);
+        auto img = dsc::loadElf(elf_path);
         if (!img.ok) {
             std::cerr << std::format("ELF 错误: {}\n", img.error);
             return 1;
         }
         const size_t cap = mem->memSize();
-        if (size_t(img.base) + img.data.size() > cap) {
+        // 镜像可以链接在 DRAM_BASE(0x80000000) 这类高地址：存储器只有低 addr_width 根
+        // 地址线，高位在硬件上就是别名回来，装载偏移取容量低位
+        const size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
+        if (load_off + img.data.size() > cap) {
             std::cerr << std::format("错误: 映像 {} 字节超出存储器容量 {}\n", img.data.size(), cap);
             return 1;
         }
-        std::memcpy(mem->writableMemPtr() + img.base, img.data.data(), img.data.size());
-        tohost_addr = img.tohost;
+        std::memcpy(mem->writableMemPtr() + load_off, img.data.data(), img.data.size());
+        // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
+        for (auto &c: circuit->components()) {
+            if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) { c32->setPc((uint32_t) img.entry); break; }
+            if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) { c64->setPc(img.entry); break; }
+        }
+        tohost_addr = static_cast<uint32_t>(img.tohost & (cap - 1));
         std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
                                  img.entry, img.tohost);
     }

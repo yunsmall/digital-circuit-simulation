@@ -1,5 +1,6 @@
 // FloatPoint — IEEE 754 浮点运算元件实现
 #include "dcs/components/FloatPoint.h"
+#include <cmath>
 #include <format>
 #include <stdexcept>
 
