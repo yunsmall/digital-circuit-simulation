@@ -831,7 +831,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
         }
         
-        if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
+        if (_paging_active && ((va & 0xFFF) + n > 0x1000)) {
             // 跨页时第二个字不属于同一个物理页，需要第二次翻译（当前状态机不支持），
             // 按规范允许的做法触发 misaligned load。必须在置 need_mem 之前返回，
             // 否则 EXECUTE 之后仍会按残留的 need_mem 发起一次错误访存。
@@ -876,7 +876,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
         }
         
-        if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
+        if (_paging_active && ((va & 0xFFF) + n > 0x1000)) {
             s.acc_stage = 0;
             takeTrap(s, RV::EXC_SAM, va); // 跨页非对齐写同上，只能报错
             return;
@@ -1165,7 +1165,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 // r 已经是舍入后的整数值，只要为负就饱和到 0。
                 // 写成 <= -1 会漏掉 (-1,0) 区间，那里 (uint32_t)负数是 UB
                 else if (r < 0.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)0u; s.fcsr |= 0x10; }
-                else s.regs[rd] = (XLen)(uint32_t)r;
+                else s.regs[rd] = (XLen)(uint32_t)r;  // WU 结果是无符号 32 位，RV64 下零扩展（只有 FCVT.W 才符号扩展）
             }
             break;
         }
@@ -1468,7 +1468,7 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
-    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu;  // UXL/SXL 只读，不在掩码里 break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
+    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu; break; // UXL/SXL 只读，不在掩码里  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
     // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
     case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
