@@ -1246,6 +1246,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 s.priv = (mpp==0)?RV::PRIV_U:(mpp==1)?RV::PRIV_S:RV::PRIV_M;
                 s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MIE) | ((s.mstatus & RV::MSTATUS_MPIE)>>4);
                 s.mstatus |= RV::MSTATUS_MPIE; s.mstatus &= ~(XLen)RV::MSTATUS_MPP;
+                // MPP≠M 时规范要求清 MPRV：留着的话返回后 M 态的数据访存会按旧特权级
+                // 翻译，地址空间和预期不一致
+                if (mpp != RV::PRIV_M) s.mstatus &= ~(XLen)RV::MSTATUS_MPRV;
                 npc = s.mepc;
                 break;
             }
@@ -1529,7 +1532,10 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
     // 全局使能位只约束本级：当前特权级低于目标级时，中断总是使能
     bool m_on = (s.priv < RV::PRIV_M) || (s.mstatus & RV::MSTATUS_MIE);
     // M 态不会被更低优先级的 S 中断打断
-    bool s_on = (s.priv != RV::PRIV_M) && ((s.priv < RV::PRIV_S) || (s.mstatus & RV::MSTATUS_SIE));
+    // M 态里挂起的委托中断按 M 态中断处理：直接丢弃的话，M 态常驻时
+    // 已委托给 S 的中断永远得不到响应
+    bool s_deleg_in_m = (s.priv == RV::PRIV_M);
+    bool s_on = s_deleg_in_m || (s.priv < RV::PRIV_S) || (s.mstatus & RV::MSTATUS_SIE);
 
     // 优先级: MEI > MSI > MTI > SEI > SSI > STI
     if (m_on && pend_m) {
@@ -1540,7 +1546,7 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
         if (pend_m & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
         if (pend_m & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }
     }
-    if (s_on && pend_s) {
+    if ((s_deleg_in_m ? m_on : s_on) && pend_s) {
         if (pend_s & RV::IRQ_SEI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 9; return true; }
         if (pend_s & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
         if (pend_s & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }
