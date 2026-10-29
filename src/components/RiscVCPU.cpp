@@ -914,6 +914,73 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if (f3 == RV::F3_SLLI && f7 != 0) bad_enc = true;
             if (f3 == RV::F3_SRLI && f7 != 0 && (uint32_t) f7 != RV::F7_SUB_SRA) bad_enc = true;
         }
+        // ---- Zbb / Zbs 的 OP-IMM 形式 ----
+        // 这些指令的 funct7 与基础 OP-IMM 不同，必须在 bad_enc 之前分流，
+        // 否则会被当成保留编码。RV64 的 shamt 占 6 位，第 6 位落在 f7 的最低位，
+        // 所以用 (f7 & ~1) 比较、shamt 从 inst[25:20] 取
+        {
+            const uint32_t shamt6 = ((f7 & 1u) << 5) | (rs2 & 0x1Fu);
+            const uint32_t f7b = f7 & ~1u;
+            // OP-IMM 里对 addi/xori 这些非移位指令，inst[31:25] 是立即数高位、不是 funct7。
+            // 只有 f3 落在 1/2/3/5（移位与位操作编码位）时才可能是 Z 扩展，
+            // 否则必须完全跳过，否则 addi ra, ra, 700 这种会被误判
+            const bool z_imm_f3 = (f3 == 1 || f3 == 2 || f3 == 3 || f3 == 5);
+            if (z_imm_f3 && f7b == 0x30u) {
+                // f3=1: clz/ctz/cpop/sext.b/sext.h；f3=5: rori
+                if (f3 == 1) {
+                    switch (rs2 & 0x1F) {
+                    case 0: {   // clz
+                        uint32_t n = 0; for (int b = XLEN - 1; b >= 0; --b) { if ((v1 >> b) & 1) break; ++n; }
+                        s.regs[rd] = n; break;
+                    }
+                    case 1: {   // ctz
+                        uint32_t n = 0; for (int b = 0; b < XLEN; ++b) { if ((v1 >> b) & 1) break; ++n; }
+                        s.regs[rd] = n; break;
+                    }
+                    case 2: {   // cpop
+                        uint32_t n = 0; for (int b = 0; b < XLEN; ++b) n += (uint32_t)((v1 >> b) & 1);
+                        s.regs[rd] = n; break;
+                    }
+                    case 4: s.regs[rd] = (XLen)(SXLen)(int8_t)(v1 & 0xFF); break;    // sext.b
+                    case 5: s.regs[rd] = (XLen)(SXLen)(int16_t)(v1 & 0xFFFF); break;  // sext.h
+                    default: [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                    }
+                    break;
+                }
+                if (f3 == 5) {   // rori
+                    const uint32_t sh = shamt6 & (XLEN - 1);
+                    s.regs[rd] = (XLen)(((uint64_t)v1 >> sh) | (XLen)(v1 << ((XLEN - sh) & (XLEN - 1))));
+                    break;
+                }
+            }
+            if (z_imm_f3 && f7b == 0x14u) {
+                // f3=1/2/3/5: bseti/bclri/binvi/bexti；f3=5 且 rs2=7 是 orc.b
+                if (f3 == 5 && (rs2 & 0x1F) == 7) {   // orc.b
+                    XLen r = 0;
+                    for (int b = 0; b < XLEN; b += 8)
+                        if ((v1 >> b) & 0xFF) r |= (XLen)((XLen)0xFF << b);
+                    s.regs[rd] = r; break;
+                }
+                const XLen m = (XLen)1 << (shamt6 & (XLEN - 1));
+                switch (f3) {
+                case 1: s.regs[rd] = v1 | m; break;
+                case 2: s.regs[rd] = v1 & ~m; break;
+                case 3: s.regs[rd] = v1 ^ m; break;
+                case 5: s.regs[rd] = (v1 >> (shamt6 & (XLEN - 1))) & 1; break;
+                default: [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                }
+                break;
+            }
+            // rev8：RV64 的 shamt 是 56，f7 因此是 0x35；RV32 是 0x34
+            if (f3 == 5 && (f7 == 0x35u || (XLEN == 32 && f7 == 0x34u))) {   // rev8（f3=5 与 SRLI 同编码）
+                XLen r = 0;
+                for (int b = 0; b < XLEN; b += 8) {
+                    int src = XLEN - 8 - b;
+                    r |= (XLen)(((v1 >> src) & 0xFF) << b);
+                }
+                s.regs[rd] = r; break;
+            }
+        }
         if (bad_enc) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         // 立即数一律按有符号扩展到 XLEN：RV64 下负立即数不能零扩展
         const XLen imm = (XLen) ii;
@@ -931,6 +998,55 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     case RV::LUI: s.regs[rd]=(XLen)(SXLen)iu; break;
     case RV::AUIPC: s.regs[rd]=s.pc+(XLen)(SXLen)iu; break;
     case RV::OP: {
+    // ---- Zba / Zbb / Zbs：funct7 与基础运算不同，先在这里分流 ----
+    // 这些扩展的编码复用 OP，靠 funct7 区分，必须在下面的 funct7 白名单之前处理
+    if (f7 == 0x05) {          // MAX/MAXU/MIN/MINU
+        const bool sg = (f3 == 6 || f3 == 4);
+        if (sg) {
+            if (f3 == 6) s.regs[rd] = ((SXLen)v1 > (SXLen)v2) ? v1 : v2;   // MAX
+            else         s.regs[rd] = ((SXLen)v1 < (SXLen)v2) ? v1 : v2;   // MIN
+        } else {
+            if (f3 == 7) s.regs[rd] = (v1 > v2) ? v1 : v2;                 // MAXU
+            else if (f3 == 5) s.regs[rd] = (v1 < v2) ? v1 : v2;            // MINU
+            else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        }
+        break;
+    }
+    if (f7 == 0x10) {          // Zba：sh1add / sh2add / sh3add
+        switch (f3) {
+        case 2: s.regs[rd] = (XLen)(v1 << 1) + v2; break;
+        case 4: s.regs[rd] = (XLen)(v1 << 2) + v2; break;
+        case 6: s.regs[rd] = (XLen)(v1 << 3) + v2; break;
+        default: [[unlikely]] takeTrap(s, RV::EXC_II, inst); return;
+        }
+        break;
+    }
+    if (f7 == 0x14) {          // Zbs：bset/bclr/binv/bext（寄存器形式）
+        const XLen m = (XLen)1 << (v2 & (XLEN - 1));
+        switch (f3) {
+        case 1: s.regs[rd] = v1 | m; break;
+        case 2: s.regs[rd] = v1 & ~m; break;
+        case 3: s.regs[rd] = v1 ^ m; break;
+        case 5: s.regs[rd] = (v1 >> (v2 & (XLEN - 1))) & 1; break;
+        default: [[unlikely]] takeTrap(s, RV::EXC_II, inst); return;
+        }
+        break;
+    }
+    // Zbb：andn/orn/xnor。funct7=0x20 同时是标准 SUB/SRA 的编码（f3=0/5），
+    // 所以这里只处理 f3=4/6/7，其余必须落回下面的基础逻辑，不能 trap
+    if (f7 == 0x20 && (f3 == 7 || f3 == 6 || f3 == 4)) {
+        if (f3 == 7) s.regs[rd] = v1 & ~v2;        // andn
+        else if (f3 == 6) s.regs[rd] = v1 | ~v2;   // orn
+        else s.regs[rd] = ~(v1 ^ v2);              // xnor
+        break;
+    }
+    if (f7 == 0x30) {          // Zbb：rol / ror
+        const uint32_t sh = (uint32_t)(v2 & (XLEN - 1));
+        if (f3 == 1) s.regs[rd] = (XLen)((v1 << sh) | (XLen)((uint64_t)v1 >> ((XLEN - sh) & (XLEN - 1))));
+        else if (f3 == 5) s.regs[rd] = (XLen)(((uint64_t)v1 >> sh) | (XLen)(v1 << ((XLEN - sh) & (XLEN - 1))));
+        else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        break;
+    }
     // funct7 的合法值取决于 funct3，必须在 switch 之前统一判断：
     // f3=0 是 ADD/SUB（0x00/0x20）、f3=5 是 SRL/SRA（0x00/0x20）、
     // f3=1 是 SLL（只能 0x00）、其余 funct3 只能 0x00。
@@ -1002,6 +1118,29 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         else {
             const uint32_t lo1 = (uint32_t) v1;
             const uint32_t sh = rs2 & 0x1F;
+            // ---- Zba/Zbb 的 W 形式：funct7 与基础 OP-IMM-32 不同，先分流 ----
+            if (f7 == 0x02) {   // slli.uw：把 32 位零扩展后左移
+                if (f3 != 1) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                s.regs[rd] = (XLen) lo1 << (rs2 & 0x1F);
+                break;
+            }
+            if ((f7 & ~1u) == 0x30u) {
+                if (f3 == 1) {
+                    switch (rs2 & 0x1F) {
+                    case 0: { uint32_t n = 0; for (int b = 31; b >= 0; --b) { if ((lo1 >> b) & 1) break; ++n; } s.regs[rd] = n; break; }   // clzw
+                    case 1: { uint32_t n = 0; for (int b = 0; b < 32; ++b) { if ((lo1 >> b) & 1) break; ++n; } s.regs[rd] = n; break; }    // ctzw
+                    case 2: { uint32_t n = 0; for (int b = 0; b < 32; ++b) n += (lo1 >> b) & 1; s.regs[rd] = n; break; }                    // cpopw
+                    default: [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                    }
+                    break;
+                }
+                if (f3 == 5) {   // roriw
+                    const uint32_t sh2 = rs2 & 0x1F;
+                    const uint32_t r = (lo1 >> sh2) | (lo1 << ((32 - sh2) & 31));
+                    s.regs[rd] = (XLen)(SXLen)(int32_t) r;
+                    break;
+                }
+            }
             if ((f3 == RV::F3_SLLI || f3 == RV::F3_SRLI) && f7 != 0 && f7 != 0x20) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); return; }
             switch (f3) {
@@ -1021,7 +1160,29 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         else {
             const bool sub = (f7 == RV::F7_SUB_SRA);
             const uint32_t lo1 = (uint32_t) v1, lo2 = (uint32_t) v2;
-            // M 扩展的 W 系列（mulw/divw/…）也用 0x3B，靠 funct7=0x01 区分
+            // ---- Zba/Zbb 的 W 形式 ----
+            if (f7 == 0x04) {   // add.uw：rs1 低 32 位零扩展后加 rs2
+                if (f3 != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                s.regs[rd] = (XLen)(uint32_t) v1 + v2;
+                break;
+            }
+            if ((f7 & ~1u) == 0x10u) {   // sh1add.uw / sh2add.uw / sh3add.uw
+                const XLen base = (XLen)(uint32_t) v1;
+                if (f3 == 2) s.regs[rd] = (XLen)(base << 1) + v2;
+                else if (f3 == 4) s.regs[rd] = (XLen)(base << 2) + v2;
+                else if (f3 == 6) s.regs[rd] = (XLen)(base << 3) + v2;
+                else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                break;
+            }
+            if (f7 == 0x30) {   // rolw / rorw
+                const uint32_t sh2 = (uint32_t)(v2 & 31);
+                uint32_t r;
+                if (f3 == 1) r = (lo1 << sh2) | (lo1 >> ((32 - sh2) & 31));
+                else if (f3 == 5) r = (lo1 >> sh2) | (lo1 << ((32 - sh2) & 31));
+                else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                s.regs[rd] = (XLen)(SXLen)(int32_t) r;
+                break;
+            }
             if (f7 == 0x01) {
                 const int32_t sl1 = (int32_t) lo1, sl2 = (int32_t) lo2;
                 switch (f3) {
@@ -2233,6 +2394,7 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval
         s.pc = (is_irq && (s.stvec & 3) == 1) ? (s.stvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.stvec & ~(XLen)3);
     } else {
         s.mcause = cause; s.mepc = s.pc; s.mtval = tval;
+    if (std::getenv("DCS_Z")) std::fprintf(stderr, "TRAP pc=%08llX cause=%llX tval=%llX inst=%08X\n", (unsigned long long) s.pc, (unsigned long long) cause, (unsigned long long) tval, s.inst);
         uint8_t mie = (s.mstatus & RV::MSTATUS_MIE) ? 1 : 0;
         s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
         // 规范 3.1.6.3：trap 进入 M 态时 MPRV 必须清零
