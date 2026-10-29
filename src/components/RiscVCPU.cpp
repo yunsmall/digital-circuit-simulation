@@ -465,7 +465,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 wb_stb = wb_cyc = false;
             } else {
                 // 非叶子 PTE（R=W=X=0）：指向 L2 页表
-                s.mmu_l2_addr = ((l1e >> 10) << 12) | ((s.mmu_vaddr >> 12) & 0x3FF) * 4;
+                s.mmu_l2_addr = ((uint64_t)((l1e >> 10) << 12)) | (uint64_t)(((s.mmu_vaddr >> 12) & 0x3FF) * 4);
                 s.phase = Phase::MMU_WALK_L2;
                 wb_stb = wb_cyc = false; // 本拍拉低，下拍 MMU_WALK_L2 重新断言 stb 上升沿
             }
@@ -1635,8 +1635,17 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
             // 已置位的常规情况只多两次位测试。
             if (!(e.flags & 0x40) || (is_write && !(e.flags & 0x80)))
                 break;
-            paddr = (e.ppn << 12) | (vaddr & 0xFFF);
-            return true;
+            {
+                uint64_t pa64 = ((uint64_t) e.ppn << 12) | (uint64_t)(vaddr & 0xFFF);
+                // Sv32 允许 34 位物理地址，但总线只有 32 位地址线：截断后会别名到低 4GB
+                if (pa64 > 0xFFFFFFFFULL) {
+                    uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
+                    takeTrap(s, cause, vaddr);
+                    return false;
+                }
+                paddr = (XLen) pa64;
+                return true;
+            }
         }
     }
 
@@ -1645,12 +1654,12 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     s.mmu_is_write = is_write;
     s.mmu_is_exec = is_exec;
     s.mmu_priv = priv; // 遍历相位里做权限检查要用同一个特权级
-    s.mmu_root = (s.satp & 0x3FFFFF) << 12;
+    s.mmu_root = ((uint64_t)(s.satp & 0x3FFFFF)) << 12;
 
     // 查 L1 PTE 缓存（命中→跳过 L1 总线读）
     uint32_t l1_tag = vaddr >> 22;
     if (s.l1_cache_valid && s.l1_cache_tag == l1_tag) [[likely]] {
-        s.mmu_l2_addr = (s.l1_cache_ppn << 12) | ((vaddr >> 12) & 0x3FF) * 4;
+        s.mmu_l2_addr = ((uint64_t) s.l1_cache_ppn << 12) | (uint64_t)(((vaddr >> 12) & 0x3FF) * 4);
         s.phase = Phase::MMU_WALK_L2;
     } else {
         s.mmu_l1_addr = s.mmu_root + (l1_tag << 2);

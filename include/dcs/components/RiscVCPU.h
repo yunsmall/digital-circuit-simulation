@@ -198,9 +198,9 @@ private:
         uint32_t mmu_vaddr;      // 虚地址
         bool mmu_is_write;
         bool mmu_is_exec;
-        XLen mmu_root;           // satp 根页表物理地址（Sv32 就有 34 位，32 位存不下）
-        XLen mmu_l1_addr;        // L1 PTE 总线地址
-        XLen mmu_l2_addr;        // L2 PTE 总线地址
+        uint64_t mmu_root;       // satp 根页表物理地址：Sv32 就有 34 位，32 位装不下
+        uint64_t mmu_l1_addr;    // L1 PTE 总线地址
+        uint64_t mmu_l2_addr;    // L2 PTE 总线地址
 
         // LR/SC 保留地址
         uint32_t lr_addr;
