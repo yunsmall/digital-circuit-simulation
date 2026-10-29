@@ -233,7 +233,9 @@ private:
 
 // 实现全在 .cpp 里并显式实例化，这里只抑制隐式实例化，
 // 免得每个包含者都去编译上千行模板代码
+// 目前只实例化 RV32。<64> 的指令语义（ADDW/LD/SD/LWU、6 位 shamt、64 位 CSR、
+// Sv39、PC>4G 的地址路径）尚未实现，暴露出去只会得到"能编译但静默算错"的实例，
+// 那比明确不给更难查。等语义补齐后再打开这一行。
 extern template class RiscVCPU<32>;
-extern template class RiscVCPU<64>;
 
 } // namespace dsc

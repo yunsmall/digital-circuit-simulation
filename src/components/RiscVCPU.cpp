@@ -1469,6 +1469,6 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
 // 两份实现都编进这个 .cpp：RV32 是默认，RV64 供 OpenSBI/Linux 用。
 // 放在这里而不是头文件，是为了让其它翻译单元只看到声明
 template class RiscVCPU<32>;
-template class RiscVCPU<64>;
+// template class RiscVCPU<64>;  // 语义补齐后再打开，见头文件同一处的说明
 
 } // namespace dsc
