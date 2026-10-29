@@ -169,16 +169,7 @@ TEST(RiscV64Official, AllElf) {
             skipped++;
             continue;
         }
-        // AMO.D / LR.D / SC.D 需要 8 字节的读-改-写。当前 AMO 状态机只做单次 32 位
-        // 事务（读 → GAP → 写），扩到 8 字节要把读和写各拆两段，是独立的一轮改动。
-        // 本核目前对 .D 编码报非法指令，不是静默算错
-        if (p.filename().string().find("_d.elf") != std::string::npos &&
-            p.filename().string().find("rv64ua") != std::string::npos) {
-            std::fprintf(stderr, "[skip] %s: AMO.D 未实现（状态机只支持单次 32 位事务）\n",
-                         p.filename().string().c_str());
-            skipped++;
-            continue;
-        }
+
         std::string err;
         uint32_t v = runElf(p.string(), err);
         if (!err.empty()) {

@@ -161,7 +161,10 @@ private:
         // 再重新发起写事务，不能靠"事务中途把 we 翻成 1"——不是所有从设备都认这个语义
         // GAP 是"结束上一笔事务的空拍"：真实硬件完成一次读事务（ack）后必须先拉低 stb，
         // 再重新发起写事务，不能在事务中途翻转 we——那不是 Wishbone 的语义
-        AMO_GAP, AMO_WRITE, MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_GAP, MMU_AD_WRITE
+        AMO_GAP, AMO_WRITE, MMU_WALK_L1, WAIT_MMU_L1, MMU_WALK_L2, WAIT_MMU_L2, MMU_AD_GAP, MMU_AD_WRITE,
+        // RV64 的 .D 原子操作要读写各两段（总线只有 32 位）：
+        // 读完低半再读高半、写低半再写高半，中间都隔一个 GAP 结束事务
+        AMO_READ_HI, AMO_GAP_HI, AMO_WRITE_HI
     };
 
     struct CpuState {
@@ -217,6 +220,13 @@ private:
         uint32_t bus_adr, bus_wdat;
         bool bus_we, bus_amo;
         uint8_t bus_sel, bus_funct3, bus_rd, bus_amo_f5;
+        // 原子操作的 64 位拆分：总线只有 32 位，.D 要分两段读、两段写
+        uint32_t amo_lo;      // 读阶段先到的低半
+        uint32_t amo_hi;      // 写阶段要写的高半
+        uint64_t amo_rs2;     // 完整的 rs2：bus_wdat 只有 32 位，.D 必须单独存
+        bool amo_is_d;        // 本次原子操作是 .D
+        bool amo_hi_done;     // .D 的高半已经读过
+        bool amo_hi_write;    // 当前这笔写是 .D 的高半
         uint8_t bus_fp; // 访存结果写浮点寄存器（FLW）而不是整数寄存器
         bool wfi_halted; // 已执行 WFI，等待中断唤醒
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc

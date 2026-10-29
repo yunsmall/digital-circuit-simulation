@@ -308,37 +308,97 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 // 读响应
                 uint32_t raw=in.dat;
                 if (s.bus_amo) [[unlikely]] {
-                    // AMO: 计算写回值，发起写请求
-                    // RV64 的 LR.W/AMO*.W 是把 32 位值符号扩展到 XLEN 写回 rd
-                    uint32_t ld_val=raw, new_val=0, f5=s.bus_amo_f5;
-                    uint32_t rs2_val=s.bus_wdat;
-                    switch (f5) {
-                    case RV::F5_LR:      s.lr_addr=s.bus_adr; s.lr_valid=true; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; // LR: 像普通 LW 一样返回
-                                         wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.bus_amo=false; s.phase=Phase::FETCH; break;
-                    case RV::F5_SC:      if(s.lr_valid && s.lr_addr==s.bus_adr) { s.regs[s.bus_rd]=0; new_val=rs2_val; s.lr_valid=false; }
-                                         else { s.regs[s.bus_rd]=1; s.lr_valid=false; s.bus_amo=false; wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH; break; }
-                                         goto amo_write;
-                    // AMO 算术: 先保存旧值到 rd，然后 goto amo_write 写回新值
-                    case RV::F5_AMOSWAP: new_val=rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOADD:  new_val=ld_val+rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOXOR:  new_val=ld_val^rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOAND:  new_val=ld_val&rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOOR:   new_val=ld_val|rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOMIN:  new_val=((int32_t)ld_val<(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOMAX:  new_val=((int32_t)ld_val>(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOMINU: new_val=(ld_val<rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    case RV::F5_AMOMAXU: new_val=(ld_val>rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
-                    default: s.bus_amo=false; wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH; break;
+                    // .D 要先把 8 字节读齐：总线只有 32 位，读完低半再读高半
+                    if (s.amo_is_d && !s.amo_hi_done) {
+                        s.amo_lo = raw;
+                        s.amo_hi_done = true;
+                        XLen hi_adr = (s.bus_adr & ~(XLen)7) + 4;
+                        // 必须先把 stb 拉低：一直保持高电平，从设备看不到事务边界，
+                        // 不会给新的 ack
+                        wb_adr = hi_adr; wb_dat = 0; wb_we = false; wb_sel = 0x0F;
+                        wb_stb = wb_cyc = false;
+                        s.bus_adr = hi_adr;
+                        s.phase = Phase::AMO_READ_HI;
+                        break;
+                    }
+
+                    // 完整的旧值和 rs2：.D 用 64 位，.W 只取低 32 位
+                    const uint64_t old_val = s.amo_is_d
+                        ? (((uint64_t) raw << 32) | (uint64_t) s.amo_lo)
+                        : (uint64_t) raw;
+                    const uint64_t rs2_64 = s.amo_is_d ? s.amo_rs2 : (uint64_t) s.bus_wdat;
+                    const uint32_t f5 = s.bus_amo_f5;
+                    const uint32_t lo_old = (uint32_t) old_val, lo_rs2 = (uint32_t) rs2_64;
+
+                    // 先算出新值；LR 和失败的 SC 不需要写回，用 need_write 统一收尾
+                    uint64_t new_val = 0;
+                    bool need_write = true;
+                    if (f5 == RV::F5_LR) {
+                        need_write = false;
+                        // .D 读完高半后 bus_adr 停在 +4，保留地址要按 8 字节对齐存，
+                        // 否则随后的 SC 拿原始地址来比会永远不匹配
+                        s.lr_addr = s.amo_is_d ? (s.bus_adr & ~(XLen)7) : s.bus_adr;
+                        s.lr_valid = true;
+                    } else if (f5 == RV::F5_SC) {
+                        const XLen sc_adr = s.amo_is_d ? (s.bus_adr & ~(XLen)7) : s.bus_adr;
+                        if (s.lr_valid && s.lr_addr == sc_adr) { s.lr_valid = false; new_val = rs2_64; }
+                        else { s.lr_valid = false; need_write = false; }
+                    } else if (s.amo_is_d) {
+                        // .D 按 64 位算：.W 那套 32 位运算直接升宽会让 AMOMIN/MAX 的比较错位
+                        switch (f5) {
+                        case RV::F5_AMOSWAP: new_val = rs2_64; break;
+                        case RV::F5_AMOADD:  new_val = old_val + rs2_64; break;
+                        case RV::F5_AMOXOR:  new_val = old_val ^ rs2_64; break;
+                        case RV::F5_AMOAND:  new_val = old_val & rs2_64; break;
+                        case RV::F5_AMOOR:   new_val = old_val | rs2_64; break;
+                        case RV::F5_AMOMIN:  new_val = ((int64_t) old_val < (int64_t) rs2_64) ? old_val : rs2_64; break;
+                        case RV::F5_AMOMAX:  new_val = ((int64_t) old_val > (int64_t) rs2_64) ? old_val : rs2_64; break;
+                        case RV::F5_AMOMINU: new_val = (old_val < rs2_64) ? old_val : rs2_64; break;
+                        case RV::F5_AMOMAXU: new_val = (old_val > rs2_64) ? old_val : rs2_64; break;
+                        default: need_write = false; break;
+                        }
+                    } else {
+                        uint32_t nv = 0;
+                        switch (f5) {
+                        case RV::F5_AMOSWAP: nv = lo_rs2; break;
+                        case RV::F5_AMOADD:  nv = lo_old + lo_rs2; break;
+                        case RV::F5_AMOXOR:  nv = lo_old ^ lo_rs2; break;
+                        case RV::F5_AMOAND:  nv = lo_old & lo_rs2; break;
+                        case RV::F5_AMOOR:   nv = lo_old | lo_rs2; break;
+                        case RV::F5_AMOMIN:  nv = ((int32_t) lo_old < (int32_t) lo_rs2) ? lo_old : lo_rs2; break;
+                        case RV::F5_AMOMAX:  nv = ((int32_t) lo_old > (int32_t) lo_rs2) ? lo_old : lo_rs2; break;
+                        case RV::F5_AMOMINU: nv = (lo_old < lo_rs2) ? lo_old : lo_rs2; break;
+                        case RV::F5_AMOMAXU: nv = (lo_old > lo_rs2) ? lo_old : lo_rs2; break;
+                        default: need_write = false; break;
+                        }
+                        // .W 的结果要按 32 位截断后再符号/零扩展到 XLEN，见下面的写回
+                        new_val = (uint64_t) nv;
+                    }
+
+                    // 单一收尾：LR/SC 的返回值、普通 AMO 的旧值、以及要不要写回都在这里决定。
+                    // .W 的旧值符号扩展到 XLEN（与 LW 一致），.D 直接用完整 64 位
+                    const XLen old_to_rd = s.amo_is_d ? (XLen) old_val : (XLen)(SXLen)(int32_t) lo_old;
+                    // SC 成功返 0、失败返 1；LR 和普通 AMO 返回旧值
+                    s.regs[s.bus_rd] = need_write
+                        ? (f5 == RV::F5_SC ? (XLen) 0 : old_to_rd)
+                        : (f5 == RV::F5_LR ? old_to_rd : (f5 == RV::F5_SC ? (XLen) 1 : 0));
+                    if (need_write) {
+                        if (s.amo_is_d) {
+                            s.amo_hi = (uint32_t)(new_val >> 32);
+                            s.bus_wdat = (uint32_t) new_val;
+                            s.bus_adr &= ~(XLen)7;   // 读高半时地址停在 +4，退回低半
+                        } else {
+                            s.bus_wdat = (uint32_t) new_val;
+                        }
+                        s.bus_we = true;
+                        s.phase = Phase::AMO_GAP;
+                    } else {
+                        s.bus_amo = false;
+                        wb_dat = 0; wb_we = false; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                        s.phase = Phase::FETCH;
                     }
                     break;
-                // SC 的 reg[rd] 已在 case 中设置(0或1)，跳到此时不覆盖
-                amo_write:
-                    if (s.lr_valid && s.lr_addr == (s.bus_adr & ~(XLen)3)) s.lr_valid = false; // AMO 写也算覆盖保留字
-                    s.bus_wdat=new_val; s.bus_we=true;
-                    // 读事务到此结束，先空一拍拉低 stb，下一拍再发独立的写事务
-                    s.phase = Phase::AMO_GAP;
-                    break;
-                } else {
+                }
                     // 普通读；跨字非对齐访问要再读一个字，与第一次读回的内容拼接
                     if (s.acc_stage == 1) {
                         s.acc_raw = raw;
@@ -386,7 +446,6 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     if (s.bus_fp) s.fregs[s.bus_rd]=value; // FLW：结果进 f 寄存器
                     else s.regs[s.bus_rd]=result;
                     wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
-                }
             } else {
                 // 写响应；跨字非对齐写在这里补写高出字的那几个字节
                 if (!s.bus_amo && s.acc_stage == 1) { // AMO 的写确认不能被当成跨字写的第一段
@@ -538,12 +597,28 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     case Phase::AMO_WRITE:
         wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
         if (in.ack) {
+            // .D 的低半写完了，还要写高半。复用 AMO_GAP → AMO_WRITE 这条已验证的
+            // 路径，只把地址和数据换成高半，比自己再造一套相位可靠
+            if (s.amo_is_d && !s.amo_hi_write) {
+                s.amo_hi_write = true;
+                s.bus_adr = (s.bus_adr & ~(XLen)7) + 4;
+                s.bus_wdat = s.amo_hi;
+                wb_stb = false;
+                s.phase = Phase::AMO_GAP;
+                break;
+            }
             // 与普通写完成后的收尾保持一致：清 AMO 标志、复位访问阶段、结束事务
             s.bus_amo = false;
             s.acc_stage = 0;
             wb_stb = wb_cyc = false;
             s.phase = Phase::FETCH;
         }
+        break;
+    // .D 的读高半：这一拍保持 stb 低，下一拍交给 WAIT_MEM 重新断言发起读
+    case Phase::AMO_READ_HI:
+        wb_adr = s.bus_adr; wb_dat = 0; wb_we = false; wb_sel = 0x0F;
+        wb_stb = false; wb_cyc = true;
+        s.phase = Phase::WAIT_MEM;
         break;
     case Phase::MMU_AD_GAP:
         wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_sel = 0x0F; wb_stb = false; wb_cyc = true;
@@ -956,7 +1031,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     case RV::AMO: {
         s.acc_stage = 0; // AMO 是单次对齐事务，不能继承上一次非对齐访存的拆分级数
         s.bus_fp = 0;    // 清掉可能残留的浮点访存标志，否则读响应会写进 fregs
-        if (f3 != 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 仅支持 .W
+        // .W 是 funct3=2，.D 是 funct3=3（只有 RV64 有）
+        if (f3 != 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
         switch ((inst >> 27) & 0x1F) { // 未实现的 AMO 编码必须报非法指令，不能静默完成
         case RV::F5_LR: case RV::F5_SC: case RV::F5_AMOSWAP: case RV::F5_AMOADD:
         case RV::F5_AMOXOR: case RV::F5_AMOAND: case RV::F5_AMOOR:
@@ -967,7 +1044,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // AMO/LR/SC 属于 store/AMO 类，misaligned 的 cause 是 6 不是 4
         // LR 是 load 类（cause 4），SC 和其余 AMO 才是 store/AMO 类（cause 6）
         bool amo_is_load = (((inst >> 27) & 0x1F) == RV::F5_LR);
-        if (v1 & 3) [[unlikely]] { takeTrap(s, amo_is_load ? RV::EXC_LAM : RV::EXC_SAM, v1); return; }
+        const bool is_d = (f3 == 3);
+        // .D 要求 8 字节对齐
+        const XLen amo_align = is_d ? (XLen) 7 : (XLen) 3;
+        if (v1 & amo_align) [[unlikely]]
+        { takeTrap(s, amo_is_load ? RV::EXC_LAM : RV::EXC_SAM, v1); return; }
         XLen va=v1, pa;
         // LR 只读，只要求页有 R；SC 与其余 AMO 要写，要求 W
         bool amo_write = (((inst >> 27) & 0x1F) != RV::F5_LR);
@@ -978,7 +1059,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         s.bus_adr=pa; s.bus_funct3=f3; s.bus_rd=rd;
         s.bus_sel=0x0F; s.bus_we=false; s.bus_amo=true;
         s.bus_amo_f5=(uint8_t)((inst>>27)&0x1F); // funct5
-        s.bus_wdat=v2; // rs2 值用于 AMO 计算
+        s.bus_wdat=v2;      // 低 32 位，.W 用它
+        s.amo_rs2 = v2;     // bus_wdat 装不下 64 位，.D 的 rs2 从这里取
+        s.amo_is_d = is_d;  // .D 要分两段读、两段写
+        s.amo_hi = 0;
+        s.amo_hi_done = false;
+        s.amo_hi_write = false;
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
     // ---- 浮点访存（FLW / FSW，自然对齐；非对齐按规范触发异常）----
