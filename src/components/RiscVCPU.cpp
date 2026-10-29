@@ -465,7 +465,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 wb_stb = wb_cyc = false;
             } else {
                 // 非叶子 PTE（R=W=X=0）：指向 L2 页表
-                s.mmu_l2_addr = ((uint64_t)((l1e >> 10) << 12)) | (uint64_t)(((s.mmu_vaddr >> 12) & 0x3FF) * 4);
+                s.mmu_l2_addr = (((uint64_t)(l1e >> 10)) << 12) | (uint64_t)(((s.mmu_vaddr >> 12) & 0x3FF) * 4);
                 s.phase = Phase::MMU_WALK_L2;
                 wb_stb = wb_cyc = false; // 本拍拉低，下拍 MMU_WALK_L2 重新断言 stb 上升沿
             }
@@ -929,7 +929,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
         if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
         wb_adr=pa; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
-        s.bus_adr=pa; s.bus_funct3=2; s.bus_rd=(uint8_t)rd; s.bus_fp=1; s.acc_stage=0;
+        s.bus_adr=pa; s.bus_funct3=2; s.bus_rd=(uint8_t)rd; s.bus_fp=1;
+        // 读响应按 acc_va 的低两位移位，不记就会用上一条访存的残留偏移
+        s.acc_va=pa; s.acc_stage=0;
         s.mstatus |= (3u << 13); // FLW 写 freg，FS 置 Dirty
         } break;
 
@@ -1665,6 +1667,12 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
         s.mmu_l1_addr = s.mmu_root + (l1_tag << 2);
         s.phase = Phase::MMU_WALK_L1;
     }
+            // 页表本身也必须落在 32 位地址线能表达的范围内，否则遍历会读到别名的垃圾
+        if (s.mmu_l1_addr > 0xFFFFFFFFULL || s.mmu_l2_addr > 0xFFFFFFFFULL) {
+            uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
+            takeTrap(s, cause, vaddr);
+            return false;
+        }
     return false; // 发起 MMU 遍历，原指令稍后重试
 }
 
