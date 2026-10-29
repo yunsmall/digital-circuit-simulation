@@ -67,6 +67,7 @@ namespace RV {
     constexpr uint32_t IRQ_SEI=1u<<9, IRQ_MEI=1u<<11;
 
     // ---- mcause ----
+    // 中断位是 XLEN 的最高位：RV32 在 bit31、RV64 在 bit63，由调用方按 XLEN 取
     constexpr uint32_t MCAUSE_IRQ=1u<<31;
     constexpr uint32_t EXC_IAM=0, EXC_IAF=1, EXC_II=2, EXC_BP=3, EXC_LAM=4, EXC_LAF=5;
     constexpr uint32_t EXC_SAM=6, EXC_SAF=7, EXC_ECALL_U=8, EXC_ECALL_S=9, EXC_ECALL_M=11;
@@ -227,8 +228,8 @@ private:
                         bool &need_mem);
     static XLen csrRead(const CpuState &s, uint32_t addr);
     static void csrWrite(CpuState &s, uint32_t addr, XLen val);
-    static bool takeInterrupt(CpuState &s, uint32_t &trap_cause);
-    static bool takeTrap(CpuState &s, uint32_t cause, XLen tval);
+    static bool takeInterrupt(CpuState &s, XLen &trap_cause);
+    static bool takeTrap(CpuState &s, XLen cause, XLen tval);
     static bool mmuTranslate(CpuState &s, XLen vaddr, XLen &paddr,
                              bool is_write, bool is_exec);
     // 返回 0 表示放行，否则返回应触发的页错误 cause。

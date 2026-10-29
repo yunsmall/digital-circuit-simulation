@@ -233,7 +233,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         break;
 
     case Phase::EXECUTE: {
-        uint32_t trap_cause=0;
+        XLen trap_cause=0;
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
             takeTrap(s, trap_cause, 0);
             s.phase=Phase::FETCH; wb_sel=0x0F; wb_stb=wb_cyc=false;
@@ -338,6 +338,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     }
                     XLen value;
                     if (s.acc_stage >= 6) {
+                        if constexpr (XLEN == 64) {
                         if ((s.acc_va & 3) == 0) {
                             // 对齐但要读 8 字节（LD）：两次 32 位事务在高位拼，
                             // 不能走下面的跨字移位——那里 va&3 为 0 时会出现 raw << 32
@@ -345,6 +346,11 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                         } else {
                             XLen sh = 8 * (s.acc_va & 3);
                             value = ((XLen) s.acc_raw >> sh) | ((XLen) raw << (32 - sh));
+                        }
+                        } else {
+                            // RV32 的拼接只能按 32 位写，否则 (uint32_t)raw << 32 是未定义行为
+                            uint64_t sh = 8 * (s.acc_va & 3);
+                            value = (XLen)(uint32_t)((s.acc_raw >> sh) | ((uint64_t) raw << (32 - sh)));
                         }
                         s.acc_stage = 0;
                     } else {
@@ -1336,7 +1342,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
     // SD 是只读汇总位：FS 或 XS 非 0 时必须为 1，软件靠它判断是否需要保存浮点上下文
-    case RV::CSR_MSTATUS: return s.mstatus | ((((s.mstatus >> 13) & 3u) != 0) ? (1u << 31) : 0u);
+    case RV::CSR_MSTATUS: return s.mstatus | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen)1 << (XLEN - 1)) : 0u);
     // MXL=1(RV32) | I(8) | M(12) | A(0) | F(5) | S(18) | U(20) —— 与实现的指令集和特权级一一对应
     // MXL 字段必须反映实际位宽：RV32 是 1、RV64 是 2。
     // 后面两个位是 A 和 F 扩展
@@ -1358,7 +1364,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_MTVAL:   return s.mtval;
     case RV::CSR_MIP:     return s.mip;
     // SIE/SPIE/SPP/FS/XS/SUM/MXR 可读，SD 由 FS/XS 汇总而来，不含 M 级字段
-    case RV::CSR_SSTATUS: return (s.mstatus & 0x000DE122u) | ((((s.mstatus >> 13) & 3u) != 0) ? (1u << 31) : 0u);
+    case RV::CSR_SSTATUS: return (s.mstatus & 0x000DE122u) | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen)1 << (XLEN - 1)) : 0u);
     case RV::CSR_SIE:     return s.mie & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI);
     case RV::CSR_STVEC:   return s.stvec;
     case RV::CSR_SSCRATCH:return s.sscratch;
@@ -1379,9 +1385,12 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case 0x3B8: case 0x3B9: case 0x3BA: case 0x3BB: case 0x3BC: case 0x3BD: case 0x3BE: case 0x3BF:
         s.pmpaddr[addr - 0x3B0] = val; break;
     // mcycle/minstret 是 R/W：软件常用写它们重置计时基准
-    case 0xB00: s.cycles = (s.cycles & 0xFFFFFFFF00000000ULL) | val; break;
+    // RV32 只有低 32 位可写；RV64 是完整 64 位 CSR，OR 进去会把高半写坏
+    case 0xB00: s.cycles = (XLEN == 64) ? (uint64_t) val
+                                        : ((s.cycles & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
     case 0xB80: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case 0xB02: s.instret = (s.instret & 0xFFFFFFFF00000000ULL) | val; break;
+    case 0xB02: s.instret = (XLEN == 64) ? (uint64_t) val
+                                         : ((s.instret & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
     case 0xB82: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
     case 0x306: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
@@ -1437,7 +1446,7 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
 // 中断裁决（考虑委托）
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
-bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
+bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
     uint32_t pending = s.mie & s.mip;
     if (!pending) [[likely]] return false; // 绝大多数时候无中断等待
 
@@ -1453,17 +1462,17 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
 
     // 优先级: MEI > MSI > MTI > SEI > SSI > STI
     if (m_on && pend_m) {
-        if (pend_m & RV::IRQ_MEI) { trap_cause = RV::MCAUSE_IRQ | 11; return true; }
-        if (pend_m & RV::IRQ_MSI) { trap_cause = RV::MCAUSE_IRQ | 3; return true; }
-        if (pend_m & RV::IRQ_MTI) { trap_cause = RV::MCAUSE_IRQ | 7; return true; }
-        if (pend_m & RV::IRQ_SEI) { trap_cause = RV::MCAUSE_IRQ | 9; return true; }
-        if (pend_m & RV::IRQ_SSI) { trap_cause = RV::MCAUSE_IRQ | 1; return true; }
-        if (pend_m & RV::IRQ_STI) { trap_cause = RV::MCAUSE_IRQ | 5; return true; }
+        if (pend_m & RV::IRQ_MEI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 11; return true; }
+        if (pend_m & RV::IRQ_MSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 3; return true; }
+        if (pend_m & RV::IRQ_MTI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 7; return true; }
+        if (pend_m & RV::IRQ_SEI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 9; return true; }
+        if (pend_m & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
+        if (pend_m & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }
     }
     if (s_on && pend_s) {
-        if (pend_s & RV::IRQ_SEI) { trap_cause = RV::MCAUSE_IRQ | 9; return true; }
-        if (pend_s & RV::IRQ_SSI) { trap_cause = RV::MCAUSE_IRQ | 1; return true; }
-        if (pend_s & RV::IRQ_STI) { trap_cause = RV::MCAUSE_IRQ | 5; return true; }
+        if (pend_s & RV::IRQ_SEI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 9; return true; }
+        if (pend_s & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
+        if (pend_s & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }
     }
     return false;
 }
@@ -1472,8 +1481,8 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
 // 同步异常陷阱入口
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
-bool RiscVCPU<XLEN>::takeTrap(CpuState &s, uint32_t cause, XLenOf<XLEN> tval) {
-    bool is_irq = (cause >> 31) != 0;
+bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval) {
+    bool is_irq = (cause >> (XLEN - 1)) != 0;
     uint8_t target_priv = RV::PRIV_M;
 
     // 检查委托
