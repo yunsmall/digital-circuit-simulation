@@ -270,7 +270,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             }
             if (s.acc_stage == 4) { // 发起第二次事务
                 uint32_t p = s.acc_va & 3;
-                uint32_t a2 = (s.acc_va & ~3u) + 4;
+                uint32_t a2 = (s.acc_va & ~(XLen)3) + 4;
                 uint32_t dat = 0;
                 uint8_t sel = 0x0F;
                 if (s.bus_we) {
@@ -321,7 +321,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     break;
                 // SC 的 reg[rd] 已在 case 中设置(0或1)，跳到此时不覆盖
                 amo_write:
-                    if (s.lr_valid && s.lr_addr == (s.bus_adr & ~3u)) s.lr_valid = false; // AMO 写也算覆盖保留字
+                    if (s.lr_valid && s.lr_addr == (s.bus_adr & ~(XLen)3)) s.lr_valid = false; // AMO 写也算覆盖保留字
                     s.bus_wdat=new_val; s.bus_we=true;
                     // 读事务到此结束，先空一拍拉低 stb，下一拍再发独立的写事务
                     s.phase = Phase::AMO_GAP;
@@ -641,7 +641,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         bool is_srai = false;
         bool bad_enc = false;
         if constexpr (XLEN == 64) {
-            shamt = rs2 & 0x3Fu;
+            // rs2 只取到 inst[24:20]，第 6 位在 inst[25]（funct6 把它移出去了）
+            shamt = ((f7 & 1) << 5) | (rs2 & 0x1Fu);
             const uint32_t funct6 = f7 >> 1;
             is_srai = (funct6 == 0x10);
             if (f3 == RV::F3_SLLI && funct6 != 0) bad_enc = true;
@@ -722,11 +723,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     }
     switch(f3){
         case RV::F3_ADD:s.regs[rd]=(f7==RV::F7_SUB_SRA)?v1-v2:v1+v2; break;
-        case RV::F3_SLL:s.regs[rd]=v1<<(v2&0x1F); break;
+        case RV::F3_SLL:s.regs[rd]=v1<<(v2&(XLen)(XLEN-1)); break;
         case RV::F3_SLT:s.regs[rd]=(s1<s2)?1:0; break;
         case RV::F3_SLTU:s.regs[rd]=(v1<v2)?1:0; break;
         case RV::F3_XOR:s.regs[rd]=v1^v2; break;
-        case RV::F3_SRL:s.regs[rd]=(f7==RV::F7_SUB_SRA)?(uint32_t)(s1>>(v2&0x1F)):v1>>(v2&0x1F); break;
+        // RV64 的移位量是 6 位；SRA 结果不能再强转 uint32_t，否则高位符号位会被清掉
+        case RV::F3_SRL:s.regs[rd]=(f7==RV::F7_SUB_SRA)?(XLen)(s1>>(v2&(XLen)(XLEN-1))):v1>>(v2&(XLen)(XLEN-1)); break;
         case RV::F3_OR:s.regs[rd]=v1|v2; break;
         case RV::F3_AND:s.regs[rd]=v1&v2; break;
         } break;
@@ -776,7 +778,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return; // 缺页已 trap
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
         uint32_t p=pa&3;
-        uint32_t n=(f3==RV::F3_LH||f3==RV::F3_LHU)?2:(f3==RV::F3_LB||f3==RV::F3_LBU)?1:4;
+        uint32_t n=(f3==RV::F3_LH||f3==RV::F3_LHU)?2:(f3==RV::F3_LB||f3==RV::F3_LBU)?1:(f3==3)?8:4;
         // MPRV 下 M 态的数据访问同样走分页，此时跨页检查不能因为 priv==M 就跳过，
         // 否则非对齐拆分会对第二个字直接用物理地址，跳过了另外一页的翻译
         bool _paging_active = (s.satp & RV::SATP_MODE) &&
@@ -821,7 +823,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         wb_sel=(uint8_t)(((1u<<first)-1u)<<p); wb_dat=v2<<(8*p);
         s.acc_va=pa; s.acc_raw=v2; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((n>first)?1:0);
         if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效
-            uint32_t w0 = pa & ~3u;
+            uint32_t w0 = pa & ~(XLen)3;
             if (s.lr_addr == w0 || (s.acc_stage == 1 && s.lr_addr == w0 + 4)) s.lr_valid = false;
         }
         wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~3u; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
@@ -875,7 +877,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
         if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
-        if (s.lr_valid && s.lr_addr == (pa & ~3u)) s.lr_valid = false;
+        if (s.lr_valid && s.lr_addr == (pa & ~(XLen)3)) s.lr_valid = false;
         wb_adr=pa; wb_we=true; wb_sel=0x0F; wb_dat=s.fregs[rs2]; wb_stb=wb_cyc=true; need_mem=true;
         s.bus_adr=pa; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=0x0F; s.bus_fp=0; s.acc_stage=0;
         } break;
@@ -1088,9 +1090,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             }
             if (std::isfinite(a) && std::isfinite(r) && r != a) s.fcsr |= 0x01; // 截掉小数部分即不精确
             if (rs2 == 0) { // FCVT.W.S
-                if (std::isnan(r) || r >= 2147483648.0f) { s.regs[rd] = 0x7FFFFFFFu; s.fcsr |= 0x10; }
-                else if (r < -2147483648.0f) { s.regs[rd] = 0x80000000u; s.fcsr |= 0x10; }
-                else s.regs[rd] = (uint32_t)(int32_t)r;
+                // RV64 的 FCVT.W.S 要把 32 位结果符号扩展到 XLEN，负值不能零扩展
+                XLen out;
+                if (std::isnan(r) || r >= 2147483648.0f) { out = (XLen)(SXLen)0x7FFFFFFF; s.fcsr |= 0x10; }
+                else if (r < -2147483648.0f) { out = (XLen)(SXLen)(int32_t)0x80000000; s.fcsr |= 0x10; }
+                else out = (XLen)(SXLen)(int32_t)r;
+                s.regs[rd] = out;
             } else { // FCVT.WU.S
                 if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = 0xFFFFFFFFu; s.fcsr |= 0x10; }
                 // r 已经是舍入后的整数值，只要为负就饱和到 0。
@@ -1104,7 +1109,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
             if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; } // 5/6 保留
             // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX，并且按 rm 舍入
-            double d = rs2 == 0 ? (double) (int32_t) v1 : (double) v1;
+            double d = rs2 == 0 ? (double) (int32_t) v1 : (double) (uint32_t) v1; // WU 只看低 32 位
             float f = round_to_float(d, cur_rm);
             if ((double) f != d) s.fcsr |= 0x01;
             setf(f);
@@ -1112,7 +1117,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         case RV::F7_FMV_X_W:
             if (f3 == 0) { // FMV.X.W
-                s.regs[rd] = s.fregs[rs1];
+                // RV64 下要把低 32 位符号扩展到 XLEN，否则负的位模式会变成大正数
+                s.regs[rd] = (XLen)(SXLen)(int32_t) s.fregs[rs1];
             } else if (f3 == 1) { // FCLASS.S（f3 >= 2 是保留编码）
                 uint32_t u = s.fregs[rs1], cls = 0;
                 bool sign = (u >> 31) != 0;
@@ -1173,8 +1179,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 if (s.priv != RV::PRIV_M) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 uint8_t mpp=(s.mstatus>>11)&3;
                 s.priv = (mpp==0)?RV::PRIV_U:(mpp==1)?RV::PRIV_S:RV::PRIV_M;
-                s.mstatus = (s.mstatus & ~RV::MSTATUS_MIE) | ((s.mstatus & RV::MSTATUS_MPIE)>>4);
-                s.mstatus |= RV::MSTATUS_MPIE; s.mstatus &= ~RV::MSTATUS_MPP;
+                s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MIE) | ((s.mstatus & RV::MSTATUS_MPIE)>>4);
+                s.mstatus |= RV::MSTATUS_MPIE; s.mstatus &= ~(XLen)RV::MSTATUS_MPP;
                 npc = s.mepc;
                 break;
             }
@@ -1184,8 +1190,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 if (s.priv == RV::PRIV_U) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 s.priv = (s.mstatus & RV::MSTATUS_SPP) ? RV::PRIV_S : RV::PRIV_U;
-                s.mstatus = (s.mstatus & ~RV::MSTATUS_SIE) | ((s.mstatus & RV::MSTATUS_SPIE)>>4);
-                s.mstatus |= RV::MSTATUS_SPIE; s.mstatus &= ~RV::MSTATUS_SPP;
+                s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_SIE) | ((s.mstatus & RV::MSTATUS_SPIE)>>4);
+                s.mstatus |= RV::MSTATUS_SPIE; s.mstatus &= ~(XLen)RV::MSTATUS_SPP;
                 npc = s.sepc;
                 break;
             }
@@ -1323,7 +1329,13 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     // MXL 字段必须反映实际位宽：RV32 是 1、RV64 是 2。
     // 后面两个位是 A 和 F 扩展
     case RV::CSR_MISA:
-        return ((XLEN == 64) ? (XLen) 2 << 62 : (XLen) 1 << 30) | (1u << 0) | (1u << 5);
+        return ((XLEN == 64) ? (XLen) 2 << 62 : (XLen) 1 << 30)
+               | (1u << 0)   // A
+               | (1u << 5)   // F
+               | (1u << 8)   // I
+               | (1u << 12)  // M
+               | (1u << 18)  // S
+               | (1u << 20); // U
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;
     case RV::CSR_MIE:     return s.mie;
@@ -1365,26 +1377,26 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
-    case RV::CSR_MSTATUS: s.mstatus = val & 0x007E79AAu; break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
+    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu; break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
     // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
     case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
-    case RV::CSR_MTVEC:   s.mtvec = val & ~2u; break; // 保留 bit0（MODE），只清保留位 bit1
+    case RV::CSR_MTVEC:   s.mtvec = val & ~(XLen)2; break; // 保留 bit0（MODE），只清保留位 bit1
     case RV::CSR_MSCRATCH:s.mscratch = val; break;
-    case RV::CSR_MEPC:    s.mepc = val & ~3u; break; // IALIGN=32，低两位恒为 0
+    case RV::CSR_MEPC:    s.mepc = val & ~(XLen)3; break; // IALIGN=32，低两位恒为 0
     case RV::CSR_MCAUSE:  s.mcause = val; break;
     case RV::CSR_MTVAL:   s.mtval = val; break;
-    case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~0x000C6122u) | (val & 0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
+    case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~(XLen)0x000C6122u) | (val & (XLen)0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
     case RV::CSR_SIE:     s.mie = (s.mie & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
     // 软件能改的挂起位只有 SSIP。MSIP/STIP/SEIP 都由外部源驱动
     //（CLINT 的 msip/mtimecmp、PLIC 的 SEIP），每个 tick 会被输入信号覆盖，
     // 这里允许写入只会让软件以为写成功了
     case RV::CSR_MIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break;
     case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break; // 只允许改 SSIP
-    case RV::CSR_STVEC:   s.stvec = val & ~2u; break;
+    case RV::CSR_STVEC:   s.stvec = val & ~(XLen)2; break;
     case RV::CSR_SSCRATCH:s.sscratch = val; break;
-    case RV::CSR_SEPC:    s.sepc = val & ~3u; break;
+    case RV::CSR_SEPC:    s.sepc = val & ~(XLen)3; break;
     case RV::CSR_SCAUSE:  s.scause = val; break;
     case RV::CSR_STVAL:   s.stval = val; break;
     case RV::CSR_SATP: {
@@ -1461,21 +1473,21 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, uint32_t cause, XLenOf<XLEN> tval) {
     if (target_priv == RV::PRIV_S) {
         s.scause = cause; s.sepc = s.pc; s.stval = tval;
         uint8_t sie = (s.mstatus & RV::MSTATUS_SIE) ? 1 : 0;
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_SPIE) | (sie ? RV::MSTATUS_SPIE : 0);
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_SIE);
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_SPP) | ((s.priv == RV::PRIV_S) ? RV::MSTATUS_SPP : 0);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_SPIE) | (sie ? RV::MSTATUS_SPIE : 0);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_SIE);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_SPP) | ((s.priv == RV::PRIV_S) ? RV::MSTATUS_SPP : 0);
         s.priv = RV::PRIV_S;
         // MODE=1 时中断走向量表（BASE + 4*cause），同步异常仍进 BASE
-        s.pc = (is_irq && (s.stvec & 3) == 1) ? (s.stvec & ~3u) + 4u * (cause & 0x1F) : (s.stvec & ~3u);
+        s.pc = (is_irq && (s.stvec & 3) == 1) ? (s.stvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.stvec & ~(XLen)3);
     } else {
         s.mcause = cause; s.mepc = s.pc; s.mtval = tval;
         uint8_t mie = (s.mstatus & RV::MSTATUS_MIE) ? 1 : 0;
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
         // 规范 3.1.6.3：trap 进入 M 态时 MPRV 必须清零
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_MIE & ~RV::MSTATUS_MPRV);
-        s.mstatus = (s.mstatus & ~RV::MSTATUS_MPP) | ((uint32_t)s.priv << 11);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MIE & ~(XLen)RV::MSTATUS_MPRV);
+        s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPP) | ((uint32_t)s.priv << 11);
         s.priv = RV::PRIV_M;
-        s.pc = (is_irq && (s.mtvec & 3) == 1) ? (s.mtvec & ~3u) + 4u * (cause & 0x1F) : (s.mtvec & ~3u);
+        s.pc = (is_irq && (s.mtvec & 3) == 1) ? (s.mtvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.mtvec & ~(XLen)3);
     }
     return true;
 }

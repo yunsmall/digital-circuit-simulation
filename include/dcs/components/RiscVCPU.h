@@ -182,9 +182,9 @@ private:
         uint32_t mmu_vaddr;      // 虚地址
         bool mmu_is_write;
         bool mmu_is_exec;
-        uint32_t mmu_root;       // satp 根页表物理地址
-        uint32_t mmu_l1_addr;    // L1 PTE 总线地址
-        uint32_t mmu_l2_addr;    // L2 PTE 总线地址
+        XLen mmu_root;           // satp 根页表物理地址（Sv32 就有 34 位，32 位存不下）
+        XLen mmu_l1_addr;        // L1 PTE 总线地址
+        XLen mmu_l2_addr;        // L2 PTE 总线地址
 
         // LR/SC 保留地址
         uint32_t lr_addr;
@@ -209,8 +209,9 @@ private:
 
         // 非对齐访存拆成两次对齐事务时的中间状态。真实从设备只接受字对齐地址 +
         // 字节使能，跨字访问必须由主设备自己拆开，不能改总线语义去迁就 CPU。
-        uint32_t acc_va;    // 原始（可能未对齐）物理地址
-        uint32_t acc_raw;   // 第一次读回的字；写操作时是待写数据
+        XLen acc_va;        // 原始（可能未对齐）物理地址
+        // 存两次事务的拼接结果：SD 要 64 位，32 位会让 >>32 成为未定义行为
+        uint64_t acc_raw;   // 第一次读回的字；写操作时是待写数据
         uint8_t acc_f3;     // funct3，决定访问宽度
         uint8_t acc_stage;  // 0=单次事务, 1=第二次事务已发起, 2=第二次事务完成
     };
