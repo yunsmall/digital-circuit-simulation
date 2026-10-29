@@ -1192,7 +1192,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             break;
         }
         case RV::F7_FCVT_W_S: {
-            if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
+            // rs2 选目标宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有）
+            if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
             // rm=7 表示用 fcsr.frm；5/6 是保留编码，必须报非法指令而不是当成 RNE
             uint32_t eff_rm = rm == 7 ? ((s.fcsr >> 5) & 7u) : rm;
             if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
@@ -1221,20 +1222,36 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 else if (r < -2147483648.0f) { out = (XLen)(SXLen)(int32_t)0x80000000; s.fcsr |= 0x10; }
                 else out = (XLen)(SXLen)(int32_t)r;
                 s.regs[rd] = out;
-            } else { // FCVT.WU.S
-                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = (XLen)(uint32_t)0xFFFFFFFFu; s.fcsr |= 0x10; }
+            } else if (rs2 == 1) { // FCVT.WU.S
+                // 规范：RV64 下 FCVT.W.S 和 FCVT.WU.S 的 32 位结果都符号扩展到 XLEN，
+                // 零扩展的只有 LWU。这一点被误改过两次（RV64 官方 fcvt_w 用例会红）
+                if (std::isnan(r) || r >= 4294967296.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t) 0xFFFFFFFFu; s.fcsr |= 0x10; }
                 // r 已经是舍入后的整数值，只要为负就饱和到 0。
                 // 写成 <= -1 会漏掉 (-1,0) 区间，那里 (uint32_t)负数是 UB
-                else if (r < 0.0f) { s.regs[rd] = (XLen)(SXLen)(int32_t)0u; s.fcsr |= 0x10; }
-                else s.regs[rd] = (XLen)(uint32_t)r;  // WU 结果是无符号 32 位，RV64 下零扩展（只有 FCVT.W 才符号扩展）
+                else if (r < 0.0f) { s.regs[rd] = 0; s.fcsr |= 0x10; }
+                else s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t) r;
+            } else if (rs2 == 2) { // FCVT.L.S：转 64 位有符号，饱和边界是 2^63
+                if (std::isnan(r) || r >= 9223372036854775808.0f) { s.regs[rd] = (XLen) 0x7FFFFFFFFFFFFFFFULL; s.fcsr |= 0x10; }
+                else if (r < -9223372036854775808.0f) { s.regs[rd] = (XLen) 0x8000000000000000ULL; s.fcsr |= 0x10; }
+                else s.regs[rd] = (XLen)(SXLen) r;
+            } else { // FCVT.LU.S：转 64 位无符号，负值饱和到 0
+                if (std::isnan(r) || r >= 18446744073709551616.0f) { s.regs[rd] = (XLen) 0xFFFFFFFFFFFFFFFFULL; s.fcsr |= 0x10; }
+                else if (r < 0.0f) { s.regs[rd] = 0; s.fcsr |= 0x10; }
+                else s.regs[rd] = (XLen) r;
             }
             break;
         }
         case RV::F7_FCVT_S_W: {
-            if (rs2 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // rs2 >= 2 是保留编码
+            // rs2 选源宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有）
+            if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
             if ((rm == 7 ? ((s.fcsr >> 5) & 7u) : rm) > 4) { takeTrap(s, RV::EXC_II, inst); return; } // 5/6 保留
             // uint32 → float 会丢精度（如 0xFFFFFFFF），规范要求此时设 NX，并且按 rm 舍入
-            double d = rs2 == 0 ? (double) (int32_t) v1 : (double) (uint32_t) v1; // WU 只看低 32 位
+            // W/WU 只看低 32 位；L/LU 用整个 64 位
+            double d;
+            if (rs2 == 0) d = (double)(int32_t) v1;
+            else if (rs2 == 1) d = (double)(uint32_t) v1;
+            else if (rs2 == 2) d = (double)(int64_t) v1;
+            else d = (double)(uint64_t) v1;
             float f = round_to_float(d, cur_rm);
             if ((double) f != d) s.fcsr |= 0x01;
             setf(f);
