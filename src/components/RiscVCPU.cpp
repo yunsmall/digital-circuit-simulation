@@ -941,15 +941,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
         XLen va=v1+(XLen)(SXLen)ii, pa;
 
-        // RV64 的 LD 要 8 字节对齐：非对齐时要拆三段事务，当前状态机只拆两段，
-
-        // 拼出来的值会缺字节、字节选通还会越界，按规范报 misaligned
-
-        if constexpr (XLEN == 64) {
-
-            if (f3 == 3 && (va & 7)) { takeTrap(s, RV::EXC_LAM, va); return; }
-
-        }
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return; // 缺页已 trap
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
         uint32_t p=pa&3;
