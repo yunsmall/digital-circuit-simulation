@@ -195,7 +195,10 @@ if(GTest_FOUND)
     add_dcs_test(test_prienc      tests/test_prienc/*.cpp)
     add_dcs_test(test_mpram       tests/test_mpram/*.cpp)
     add_dcs_test(test_fifo        tests/test_fifo/*.cpp)
-    add_dcs_test(test_riscv      tests/test_riscv/*.cpp)
+    add_dcs_test(test_riscv       tests/test_riscv/*.cpp)
+    add_dcs_test(test_riscv64     tests/test_riscv64/*.cpp)
+    set_tests_properties(test_riscv64 PROPERTIES ENVIRONMENT
+        "DCS_RISCV64_ELF_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-official/out64")
     # 官方 riscv-tests 的 ELF 目录必须传给测试：默认值是相对路径，
     # 从构建目录运行时找不到，official.cpp 会静默 GTEST_SKIP()，
     # 结果看起来全绿、实际上没验证任何指令

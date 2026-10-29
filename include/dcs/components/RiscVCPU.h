@@ -10,7 +10,10 @@ namespace dsc {
 
 namespace RV {
     // ---- Opcode ----
-    constexpr uint32_t OP_IMM = 0x13, LUI = 0x37, AUIPC = 0x17, OP = 0x33, OP_32 = 0x3B;
+    constexpr uint32_t OP_IMM = 0x13, LUI = 0x37, AUIPC = 0x17, OP = 0x33;
+    // RV64 的两组 32 位运算：0x1B 是 I 型（addiw 等，imm[11:5] 不是 funct7），
+    // 0x3B 是 R 型（addw 等，funct7 才有意义）。混用会把立即数高位当 funct7 判非法
+    constexpr uint32_t OP_IMM_32 = 0x1B, OP_32 = 0x3B;
     constexpr uint32_t JAL = 0x6F, JALR = 0x67, BRANCH = 0x63, LOAD = 0x03;
     constexpr uint32_t STORE = 0x23, MISC_MEM = 0x0F, SYSTEM = 0x73, AMO = 0x2F;
     constexpr uint32_t LOAD_FP = 0x07, STORE_FP = 0x27, OP_FP = 0x53;
@@ -62,6 +65,10 @@ namespace RV {
     constexpr uint32_t CSR_CYCLE=0xC00, CSR_TIME=0xC01, CSR_INSTRET=0xC02;
     constexpr uint32_t CSR_CYCLEH=0xC80, CSR_TIMEH=0xC81, CSR_INSTRETH=0xC82;
     constexpr uint32_t CSR_MCOUNTEREN=0x306, CSR_SCOUNTEREN=0x106, CSR_MSTATUSH=0x310;
+    // Smrnmi 的 mnstatus：本核不支持可恢复 NMI，但寄存器必须存在——
+    // 启动代码会无条件写它（riscv-tests 的 init 里就是 csrwi mnstatus, 8），
+    // 缺失会被当成非法指令，整个测试直接跑飞
+    constexpr uint32_t CSR_MNSTATUS=0x744;
     constexpr uint32_t CSR_MVENDORID=0xF11, CSR_MARCHID=0xF12, CSR_MIMPID=0xF13, CSR_MHARTID=0xF14;
 
     // ---- PMP ----

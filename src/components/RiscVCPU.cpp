@@ -1,5 +1,6 @@
 #include <cmath>
 #include <limits>
+#include <cstdlib>
 #include <cstdio>
 // RiscVCPU — RISC-V 软核 (RV32IMA + S/U/M + Sv32 MMU)
 #include "dcs/components/RiscVCPU.h"
@@ -779,13 +780,53 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         case RV::F3_AND:s.regs[rd]=v1&v2; break;
         } break;
     }
-    // RV64 的 W 系列：结果按 32 位算完再符号扩展到 XLEN，RV32 没有这个 opcode
+    // RV64 的 W 系列立即数指令（opcode 0x1B）：立即数占 inst[31:20]，
+    // 移位类用 inst[25:20] 当 5 位移位量。这里不能套用 R 型的 funct7 检查——
+    // 立即数高位会被误当成 funct7，addiw x, x, -1 这种就会被判成非法指令
+    case RV::OP_IMM_32: {
+        if constexpr (XLEN != 64) { takeTrap(s, RV::EXC_II, inst); return; }
+        else {
+            const uint32_t lo1 = (uint32_t) v1;
+            const uint32_t sh = rs2 & 0x1F;
+            if ((f3 == RV::F3_SLLI || f3 == RV::F3_SRLI) && f7 != 0 && f7 != 0x20) [[unlikely]]
+            { takeTrap(s, RV::EXC_II, inst); return; }
+            switch (f3) {
+            case RV::F3_ADDI: s.regs[rd] = (XLen)(SXLen)(int32_t)(lo1 + (uint32_t) ii); break; // ADDIW
+            case RV::F3_SLLI: s.regs[rd] = (XLen)(SXLen)(int32_t)(lo1 << sh); break;          // SLLIW
+            case RV::F3_SRLI: s.regs[rd] = (f7 == 0x20)
+                        ? (XLen)(SXLen)(int32_t)((int32_t) lo1 >> sh)                          // SRAIW
+                        : (XLen)(SXLen)(int32_t)(lo1 >> sh); break;                            // SRLIW
+            default: takeTrap(s, RV::EXC_II, inst); return;
+            }
+            break;
+        }
+    }
+    // RV64 的 W 系列 R 型指令（opcode 0x3B）：结果按 32 位算完再符号扩展到 XLEN
     case RV::OP_32: {
         if constexpr (XLEN != 64) { takeTrap(s, RV::EXC_II, inst); return; }
         else {
             const bool sub = (f7 == RV::F7_SUB_SRA);
+            const uint32_t lo1 = (uint32_t) v1, lo2 = (uint32_t) v2;
+            // M 扩展的 W 系列（mulw/divw/…）也用 0x3B，靠 funct7=0x01 区分
+            if (f7 == 0x01) {
+                const int32_t sl1 = (int32_t) lo1, sl2 = (int32_t) lo2;
+                switch (f3) {
+                case 0: s.regs[rd] = (XLen)(SXLen)(int32_t)(lo1 * lo2); break;                 // MULW
+                case 4: s.regs[rd] = (lo2 == 0) ? (XLen) -1
+                            : (sl1 == INT32_MIN && sl2 == -1) ? (XLen)(SXLen)INT32_MIN
+                            : (XLen)(SXLen)(int32_t)(sl1 / sl2); break;                        // DIVW
+                case 5: s.regs[rd] = (lo2 == 0) ? (XLen)(SXLen)(int32_t) -1
+                            : (XLen)(SXLen)(int32_t)(lo1 / lo2); break;                        // DIVUW
+                case 6: s.regs[rd] = (lo2 == 0) ? (XLen)(SXLen)sl1
+                            : (sl1 == INT32_MIN && sl2 == -1) ? 0
+                            : (XLen)(SXLen)(int32_t)(sl1 % sl2); break;                        // REMW
+                case 7: s.regs[rd] = (lo2 == 0) ? (XLen)(SXLen)sl1
+                            : (XLen)(SXLen)(int32_t)(lo1 % lo2); break;                        // REMUW
+                default: takeTrap(s, RV::EXC_II, inst); return;
+                }
+                break;
+            }
             if (f7 != 0 && !sub) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-            uint32_t lo1 = (uint32_t) v1, lo2 = (uint32_t) v2;
             switch (f3) {
             case RV::F3_ADD: s.regs[rd] = (XLen)(SXLen)(int32_t)(sub ? lo1 - lo2 : lo1 + lo2); break; // ADDW/SUBW
             case RV::F3_SLL: s.regs[rd] = (XLen)(SXLen)(int32_t)(lo1 << (lo2 & 0x1F)); break;        // SLLW
@@ -1383,6 +1424,7 @@ static bool csrImplemented(uint32_t addr) {
     case RV::CSR_MCYCLE: case RV::CSR_MINSTRET:
     case RV::CSR_CYCLE: case RV::CSR_TIME: case RV::CSR_INSTRET:
     case RV::CSR_MVENDORID: case RV::CSR_MARCHID: case RV::CSR_MIMPID: case RV::CSR_MHARTID:
+    case RV::CSR_MNSTATUS:
         return true;
     // 下面这些只在 RV32 存在：RV64 的计数器是完整的 64 位，没有高半 CSR，
     // mstatush 也只在 RV32 有意义
@@ -1580,6 +1622,10 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval) {
+    if (std::getenv("DCS_TRAP_DEBUG"))
+        std::fprintf(stderr, "[trap] cause=%llu tval=0x%llX pc=0x%llX inst=0x%X\n",
+                     (unsigned long long) cause, (unsigned long long) tval,
+                     (unsigned long long) s.pc, s.inst);
     bool is_irq = (cause >> (XLEN - 1)) != 0;
     uint8_t target_priv = RV::PRIV_M;
 
