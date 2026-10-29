@@ -874,7 +874,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // 不相干的数据，且不会触发任何 trap。总线只有 32 位地址线，两种位宽都要拦
         if (p + n > 4) {
         const XLen a2 = (pa & ~(XLen)3) + 4;
-        if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
         }
         
         if (_paging_active && ((va & 0xFFF) + n > 0x1000)) {
