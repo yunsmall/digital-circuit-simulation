@@ -1238,7 +1238,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         // FMA 的 rm 在 funct3：5/6 是保留编码，7 表示取 fcsr.frm
         if ((f3 == 7 ? ((s.fcsr >> 5) & 7u) : f3) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        // 单精度指令读 64 位浮点寄存器时，高 32 位不是全 1 就说明这不是合法的
+        // NaN-box 单精度值，按规范要当作 canonical NaN 处理，不能直接取低 32 位
+        auto u2f_boxed = [](uint64_t v) -> float {
+            uint32_t u = (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            float f; std::memcpy(&f, &u, 4); return f;
+        };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         const uint32_t fma_fmt = (inst >> 25) & 3u;
         if (fma_fmt == 1u) {
@@ -1260,7 +1265,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         if (fma_fmt != 0u) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         uint32_t rs3 = (inst >> 27) & 0x1F;
-        float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]), c = u2f(s.fregs[rs3]);
+        float a = u2f_boxed(s.fregs[rs1]), b = u2f_boxed(s.fregs[rs2]), c = u2f_boxed(s.fregs[rs3]);
         // double 中转不会引入双重舍入偏差：中间精度 p2 >= 2*p1+2 时两次舍入等价于一次，
         // 这里 53 >= 2*24+2 = 50 满足，且 float 乘 float 的 48 位尾数在 double 里是精确的
         double prod = (double)a * (double)b;
@@ -1537,9 +1542,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         uint32_t flags_before = s.fcsr; // 用于判断本次是否新置了异常标志
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
-        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        // 单精度指令读 64 位浮点寄存器时，高 32 位不是全 1 就说明这不是合法的
+        // NaN-box 单精度值，按规范要当作 canonical NaN 处理，不能直接取低 32 位
+        auto u2f_boxed = [](uint64_t v) -> float {
+            uint32_t u = (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            float f; std::memcpy(&f, &u, 4); return f;
+        };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
-        float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]);
+        float a = u2f_boxed(s.fregs[rs1]), b = u2f_boxed(s.fregs[rs2]);
         // qNaN 是静默的，只有 signaling NaN 才触发无效运算
         auto is_snan = [](uint32_t u) {
             return ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0 && !(u & 0x400000u);
@@ -1614,7 +1624,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             else setf_flags(std::sqrt((double)a));
             break;
         case RV::F7_FSGNJ: {
-            uint32_t ua = s.fregs[rs1], ub = s.fregs[rs2], sign;
+            // 两个操作数先按 NaN-boxing 规则取值：高 32 位不是全 1 的寄存器
+            // 代表"不是一个合法单精度值"，整体当作 canonical NaN，再取符号位
+            auto box = [](uint64_t v) -> uint32_t {
+                return (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            };
+            uint32_t ua = box(s.fregs[rs1]), ub = box(s.fregs[rs2]), sign;
             switch (f3) {
             case 0: sign = ub & 0x80000000u; break;          // FSGNJ
             case 1: sign = (~ub) & 0x80000000u; break;       // FSGNJN
