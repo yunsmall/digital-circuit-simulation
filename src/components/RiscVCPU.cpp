@@ -125,7 +125,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     auto &s = *static_cast<CpuState*>(state_ptr);
     CpuIn in(inputs);
     if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
-    // 外部中断线要每 tick 反映到 mip，否则停机期间收不到中断
+    // 外部中断线每 tick 反映到 mip，否则停机期间收不到中断。mti 同时驱动 MTIP 和
+    // 委托后的 STIP：M 态若占着 MTIP 不放，需要软件自己关 MTIE 才轮得到 S 态
     if (in.irq) s.mip|=RV::IRQ_MEI; else s.mip&=~RV::IRQ_MEI;
     if (in.mti) s.mip|=RV::IRQ_MTI; else s.mip&=~RV::IRQ_MTI;
     // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
@@ -581,12 +582,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     uint32_t f3=(inst>>RV::SH_F3)&RV::M_F3, rs1=(inst>>RV::SH_RS1)&RV::M_RS1;
     uint32_t rs2=(inst>>RV::SH_RS2)&RV::M_RS2, f7=(inst>>RV::SH_F7)&RV::M_F7;
     int32_t ii=(int32_t)inst>>20, is=((int32_t)((inst>>7)&0x1F)|((int32_t)((inst>>25)&0x7F)<<5));
-    is=(is<<20)>>20;
+    is=(int32_t)((uint32_t) is<<20)>>20;
     int32_t ib=((int32_t)((inst>>8)&0xF)<<1)|((int32_t)((inst>>25)&0x3F)<<5)|
-               ((int32_t)((inst>>7)&1)<<11)|((int32_t)((inst>>31)&1)<<12); ib=(ib<<19)>>19;
+               ((int32_t)((inst>>7)&1)<<11)|((int32_t)((inst>>31)&1)<<12); ib=(int32_t)((uint32_t) ib<<19)>>19;
     int32_t iu=(int32_t)(inst&0xFFFFF000);
     int32_t ij=((int32_t)((inst>>21)&0x3FF)<<1)|((int32_t)((inst>>20)&1)<<11)|
-               ((int32_t)((inst>>12)&0xFF)<<12)|((int32_t)((inst>>31)&1)<<20); ij=(ij<<11)>>11;
+               ((int32_t)((inst>>12)&0xFF)<<12)|((int32_t)((inst>>31)&1)<<20); ij=(int32_t)((uint32_t) ij<<11)>>11;
     // 这些量必须按 XLEN 取宽：RV64 下把 64 位寄存器截成 uint32_t 会让高半截直接丢失，
     // 依赖 64 位值的地址计算和跳转会算错
     XLen v1=s.regs[rs1], v2=s.regs[rs2];
@@ -801,7 +802,18 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // RV32 的 load 只定义了 0/1/2/4/5；RV64 多出 f3=3(LD) 和 6(LWU)
         const bool load_ok = (XLEN == 64) ? (f3 != 7) : (f3 != 3 && f3 <= 5);
         if (!load_ok) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+
         XLen va=v1+(XLen)(SXLen)ii, pa;
+
+        // RV64 的 LD 要 8 字节对齐：非对齐时要拆三段事务，当前状态机只拆两段，
+
+        // 拼出来的值会缺字节、字节选通还会越界，按规范报 misaligned
+
+        if constexpr (XLEN == 64) {
+
+            if (f3 == 3 && (va & 7)) { takeTrap(s, RV::EXC_LAM, va); return; }
+
+        }
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return; // 缺页已 trap
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
         uint32_t p=pa&3;
@@ -831,7 +843,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // RV64 多出 f3=3(SD)
         if (f3 > 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
+
         XLen va=v1+(XLen)(SXLen)is, pa;
+
+        if constexpr (XLEN == 64) {
+
+            if (f3 == 3 && (va & 7)) { takeTrap(s, RV::EXC_SAM, va); return; }
+
+        }
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
         // 总线只接受字对齐地址：先写字内剩余部分，跨字的高段留到 WAIT_MEM 补写
         uint32_t p=pa&3;
@@ -1277,6 +1296,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                                                                      : -1;
                 if (cbit >= 0 && !((s.mcounteren >> cbit) & 1)) [[unlikely]]
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
+                // U 态还要再过一道 scounteren：S 态软件靠它单独关掉 U 态的计数器访问
+                if (cbit >= 0 && s.priv == RV::PRIV_U && !((s.scounteren >> cbit) & 1)) [[unlikely]]
+                { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
             }
             switch(f3){
             case RV::F3_CSRRW: case RV::F3_CSRRWI: csrWrite(s, csr_addr, wval); break;                              // CSR 写入不依赖 rd
@@ -1314,7 +1336,7 @@ static bool csrImplemented(uint32_t addr) {
     if (addr >= RV::CSR_PMPADDR0 && addr <= RV::CSR_PMPADDR15) return true;
     switch (addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
-    case RV::CSR_MCOUNTEREN:
+    case RV::CSR_MCOUNTEREN: case RV::CSR_SCOUNTEREN:
     // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
     // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为
     case RV::CSR_MCYCLE: case RV::CSR_MINSTRET:
@@ -1354,11 +1376,17 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_MINSTRET: case RV::CSR_INSTRET: return (XLen)((XLEN == 64) ? s.instret : (s.instret & 0xFFFFFFFFu));
     case RV::CSR_MINSTRETH: case RV::CSR_INSTRETH: return (uint32_t) (s.instret >> 32);
     case RV::CSR_MCOUNTEREN: return s.mcounteren;
+    case RV::CSR_SCOUNTEREN: return s.scounteren;
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
     // SD 是只读汇总位：FS 或 XS 非 0 时必须为 1，软件靠它判断是否需要保存浮点上下文
-    case RV::CSR_MSTATUS: return s.mstatus | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen)1 << (XLEN - 1)) : 0u);
+    case RV::CSR_MSTATUS: {
+        // UXL/SXL 在 RV64 恒为 2（64 位），只读：S/U 态与本核 M 态同宽
+        XLen uxl_sxl = 0;
+        if constexpr (XLEN == 64) uxl_sxl = ((XLen) 2 << 32) | ((XLen) 2 << 34);
+        return s.mstatus | uxl_sxl | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen) 1 << (XLEN - 1)) : 0u);
+    }
     // MXL=1(RV32) | I(8) | M(12) | A(0) | F(5) | S(18) | U(20) —— 与实现的指令集和特权级一一对应
     // MXL 字段必须反映实际位宽：RV32 是 1、RV64 是 2。
     // 后面两个位是 A 和 F 扩展
@@ -1386,7 +1414,11 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_MTVAL:   return s.mtval;
     case RV::CSR_MIP:     return s.mip;
     // SIE/SPIE/SPP/FS/XS/SUM/MXR 可读，SD 由 FS/XS 汇总而来，不含 M 级字段
-    case RV::CSR_SSTATUS: return (s.mstatus & 0x000DE122u) | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen)1 << (XLEN - 1)) : 0u);
+    case RV::CSR_SSTATUS: {
+        XLen uxl = 0;
+        if constexpr (XLEN == 64) uxl = (XLen) 2 << 32;
+        return (s.mstatus & 0x000DE122u) | uxl | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen) 1 << (XLEN - 1)) : 0u);
+    }
     case RV::CSR_SIE:     return s.mie & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI);
     case RV::CSR_STVEC:   return s.stvec;
     case RV::CSR_SSCRATCH:return s.sscratch;
@@ -1412,13 +1444,15 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_MINSTRET: s.instret = (XLEN == 64) ? (uint64_t) val
                                          : ((s.instret & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
     case RV::CSR_MINSTRETH: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case RV::CSR_MCOUNTEREN: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
+    case RV::CSR_MCOUNTEREN: s.mcounteren = (uint32_t) val & 7u;
+        break;
+    case RV::CSR_SCOUNTEREN: s.scounteren = (uint32_t) val & 7u; break; // 只有 CY/TM/IR 三位有定义
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
-    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu; break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
+    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu;  // UXL/SXL 只读，不在掩码里 break;  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
     // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
     case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
@@ -1552,15 +1586,28 @@ uint32_t RiscVCPU<XLEN>::checkPerms(uint32_t pte, bool is_write, bool is_exec, u
 template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> &paddr,
                              bool is_write, bool is_exec) {
+    // 地址线只有 32 位：高于 4GB 的物理地址会被截断后别名到低 4GB，
+    // 软件完全看不出差异，所以在这里显式报访问错误。cause 按访存类型分档
+    auto pass_through = [&]() -> bool {
+        if constexpr (XLEN == 64) {
+            if ((vaddr >> 32) != 0) {
+                uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
+                takeTrap(s, cause, vaddr);
+                return false;
+            }
+        }
+        paddr = vaddr;
+        return true;
+    };
     // MPRV：M 态的数据访存按 mstatus.MPP 的特权级翻译（取指不受 MPRV 影响）
     uint8_t priv = s.priv;
     if (priv == RV::PRIV_M) {
-        if (is_exec || !(s.mstatus & RV::MSTATUS_MPRV)) { paddr = vaddr; return true; }
+        if (is_exec || !(s.mstatus & RV::MSTATUS_MPRV)) { return pass_through(); }
         uint8_t mpp = (uint8_t)((s.mstatus >> 11) & 3);
-        if (mpp == RV::PRIV_M) { paddr = vaddr; return true; }
+        if (mpp == RV::PRIV_M) { return pass_through(); }
         priv = mpp;
     }
-    if (!pagingEnabled<XLEN>(s.satp)) [[unlikely]] { paddr = vaddr; return true; }
+    if (!pagingEnabled<XLEN>(s.satp)) [[unlikely]] { return pass_through(); }
 
     uint64_t vpn = (uint64_t) vaddr >> 12;
     // TLB 查找

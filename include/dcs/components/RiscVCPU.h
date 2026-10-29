@@ -61,7 +61,7 @@ namespace RV {
     constexpr uint32_t CSR_MCYCLEH=0xB80, CSR_MINSTRETH=0xB82;
     constexpr uint32_t CSR_CYCLE=0xC00, CSR_TIME=0xC01, CSR_INSTRET=0xC02;
     constexpr uint32_t CSR_CYCLEH=0xC80, CSR_TIMEH=0xC81, CSR_INSTRETH=0xC82;
-    constexpr uint32_t CSR_MCOUNTEREN=0x306, CSR_MSTATUSH=0x310;
+    constexpr uint32_t CSR_MCOUNTEREN=0x306, CSR_SCOUNTEREN=0x106, CSR_MSTATUSH=0x310;
     constexpr uint32_t CSR_MVENDORID=0xF11, CSR_MARCHID=0xF12, CSR_MIMPID=0xF13, CSR_MHARTID=0xF14;
 
     // ---- PMP ----
@@ -174,6 +174,7 @@ private:
         uint32_t mstatus, mtvec, mepc, mcause, mie, mip, mscratch, mtval;
         // 决定 S 态能否读 cycle/time/instret（U 态还要再过 scounteren，本核未实现 S 态计数器委派）
         uint32_t mcounteren;
+        uint32_t scounteren;
         // PMP 配置与地址：本核不做保护，但必须能原样存回。
         // 软件靠"写 0 再读回验证"判断 PMP 是否已关闭，恒返回 0 会让它误判
         uint32_t pmpcfg[4], pmpaddr[16];
