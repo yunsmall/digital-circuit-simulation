@@ -924,7 +924,26 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             // OP-IMM 里对 addi/xori 这些非移位指令，inst[31:25] 是立即数高位、不是 funct7。
             // 只有 f3 落在 1/2/3/5（移位与位操作编码位）时才可能是 Z 扩展，
             // 否则必须完全跳过，否则 addi ra, ra, 700 这种会被误判
-            const bool z_imm_f3 = (f3 == 1 || f3 == 2 || f3 == 3 || f3 == 5);
+            // 只有 f3=1/5 才可能是 Z 扩展。f3=2/3 是 SLTI/SLTIU，此时 inst[31:25]
+            // 是立即数高位而非 funct7，放进来会让某些立即数被误判成 Zbb/Zbs
+            const bool z_imm_f3 = (f3 == 1 || f3 == 5);
+            // Zbkb 的 zip/unzip 也在 OP-IMM：funct7=0x04、rs2=0，f3=1 是 zip、5 是 unzip。
+            // 语义是把低半与高半的位交错/解交错
+            if (f7 == RV::F7_ZUW && (rs2 & 0x1F) == 0 && (f3 == 1 || f3 == 5)) {
+                const int half = XLEN / 2;
+                XLen r = 0;
+                for (int i = 0; i < half; ++i) {
+                    if (f3 == 1) {          // zip：低半第 i 位 -> 第 2i 位，高半 -> 第 2i+1 位
+                        r |= (XLen)((v1 >> i) & 1u) << (2 * i);
+                        r |= (XLen)((v1 >> (half + i)) & 1u) << (2 * i + 1);
+                    } else {                // unzip：反过来
+                        r |= (XLen)((v1 >> (2 * i)) & 1u) << i;
+                        r |= (XLen)((v1 >> (2 * i + 1)) & 1u) << (half + i);
+                    }
+                }
+                s.regs[rd] = r;
+                break;
+            }
             if (z_imm_f3 && f7b == 0x30u) {
                 // f3=1: clz/ctz/cpop/sext.b/sext.h；f3=5: rori
                 if (f3 == 1) {
@@ -989,9 +1008,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     if ((rs2 & 0x1F) == RV::ZSUB_BREV8) {          // brev8：每字节内位反转
                         XLen r = 0;
                         for (int b = 0; b < XLEN; b += 8) {
-                            uint32_t byte = (uint32_t)((v1 >> b) & 0xFF), rev = 0;
+                            uint32_t byte = (uint32_t)((v1 >> b) & 0xFF);
+                            uint32_t rev = 0;
                             for (int i = 0; i < 8; ++i) rev |= ((byte >> i) & 1u) << (7 - i);
-                            r |= (XLen)(rev << b);
+                            // 必须强转成 XLen 再左移：b 会到 56，uint32_t 左移超过 31 是 UB
+                            r |= (XLen) rev << b;
                         }
                         s.regs[rd] = r; break;
                     }
@@ -1075,7 +1096,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if ((v2 >> b) & 1) acc ^= (unsigned __int128)((uint64_t) v1) << b;
         if (f3 == 1) s.regs[rd] = (XLen) acc;                       // clmul
         else if (f3 == 3) s.regs[rd] = (XLen)(uint64_t)(acc >> XLEN); // clmulh
-        else s.regs[rd] = (XLen)(uint64_t)(acc >> 1);                // clmulr
+        // clmulr 取的是乘积的 bit[2N-2 : N-1]，不是简单的右移一位
+        else s.regs[rd] = (XLen)(uint64_t)(acc >> (XLEN - 1));       // clmulr
         break;
     }
     // Zicond 的 czero（funct7=0x07）：eqz 是 f3=5、nez 是 f3=7
@@ -1173,9 +1195,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             const uint32_t sh = rs2 & 0x1F;
             // ---- Zba/Zbb 的 W 形式：funct7 与基础 OP-IMM-32 不同，先分流 ----
             // slli.uw 的编码是 funct7=0x04（与 add.uw 同组），不是 0x02——这是从 ELF 反汇编核出来的
-            if (f7 == RV::F7_ZUW) {   // slli.uw：把 32 位零扩展后左移
+            // slli.uw 的移位量是 6 位，shamt[5] 落在 funct7 的 bit0 里，
+            // 所以要用 (f7 & ~1) 匹配、移位量由 inst[25:20] 拼出来
+            if ((f7 & ~1u) == RV::F7_ZUW) {
                 if (f3 != 1) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-                s.regs[rd] = (XLen) lo1 << (rs2 & 0x1F);
+                s.regs[rd] = (XLen) lo1 << (((f7 & 1u) << 5) | (rs2 & 0x1Fu));
                 break;
             }
             if ((f7 & ~1u) == 0x30u) {
