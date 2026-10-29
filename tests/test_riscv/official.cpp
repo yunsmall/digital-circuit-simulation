@@ -21,7 +21,7 @@ namespace {
 
 struct Fixture {
     std::unique_ptr<Circuit> circuit = std::make_unique<Circuit>();
-    RiscVCPU *cpu = nullptr;
+    RiscVCPU<32> *cpu = nullptr;
     WishboneMemory *mem = nullptr;
     Net *clk_net = nullptr, *rst_net = nullptr, *irq_net = nullptr, *mti_net = nullptr, *msi_net = nullptr;
     Net *wb_adr = nullptr, *wb_dat_o = nullptr, *wb_dat_i = nullptr, *wb_we = nullptr;
@@ -29,7 +29,7 @@ struct Fixture {
     Net *halted_net = nullptr;
 
     Fixture() {
-        auto cpu_ptr = std::make_unique<RiscVCPU>("cpu0");
+        auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
         cpu = cpu_ptr.get();
         circuit->addComponent(std::move(cpu_ptr));
         auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);

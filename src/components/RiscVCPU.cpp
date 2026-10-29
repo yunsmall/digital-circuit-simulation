@@ -13,7 +13,8 @@ constexpr int I_CLK = 0, I_RST = 1, I_DAT = 2, I_ACK = 3, I_IRQ = 4, I_MTI = 5, 
 constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, O_HALT = 6, O_COUNT = 7;
 
 // ============================================================
-RiscVCPU::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
+template<int XLEN> requires SupportedXlen<XLEN>
+RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
     addInput("clk", 1); addInput("rst", 1); addInput("wb_dat_i", 32);
     addInput("wb_ack_i", 1); addInput("irq", 1);
     addInput("mti", 1); addInput("msi", 1);
@@ -25,25 +26,36 @@ RiscVCPU::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
     std::memset(&_state, 0, sizeof(_state));
     _state.priv = RV::PRIV_M;
 }
-RiscVCPU::~RiscVCPU() = default;
-uint32_t RiscVCPU::reg(int idx) const { return (idx>=0&&idx<=31)?_state.regs[idx]:0; }
-uint32_t RiscVCPU::pc() const { return _state.pc; }
-bool RiscVCPU::halted() const { return _state.wfi_halted; }
-bool RiscVCPU::prepare(std::string &) { _prepared = true; return true; }
-std::vector<Component::JitSymbol> RiscVCPU::extraJitSymbols() const {
+template<int XLEN> requires SupportedXlen<XLEN>
+RiscVCPU<XLEN>::~RiscVCPU() = default;
+template<int XLEN> requires SupportedXlen<XLEN>
+uint32_t RiscVCPU<XLEN>::reg(int idx) const { return (idx>=0&&idx<=31)?_state.regs[idx]:0; }
+template<int XLEN> requires SupportedXlen<XLEN>
+uint32_t RiscVCPU<XLEN>::pc() const { return _state.pc; }
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::halted() const { return _state.wfi_halted; }
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::prepare(std::string &) { _prepared = true; return true; }
+template<int XLEN> requires SupportedXlen<XLEN>
+std::vector<Component::JitSymbol> RiscVCPU<XLEN>::extraJitSymbols() const {
     return {{"_dcs_cpu_tick",reinterpret_cast<void*>(&cpuTick)},
             {"_dcs_cpu_reset",reinterpret_cast<void*>(&cpuReset)}};
 }
 
-std::string RiscVCPU::genStateDecl() const {
+template<int XLEN> requires SupportedXlen<XLEN>
+std::string RiscVCPU<XLEN>::genStateDecl() const {
     return std::format("static void *_cpu_state_{0} = (void *)0x{1:X}ULL;\n",
                        _id, reinterpret_cast<uintptr_t>(&_state));
 }
-std::string RiscVCPU::genInitCode() const  { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
-std::string RiscVCPU::genDeinitCode() const { return ""; }
-std::string RiscVCPU::genResetCode() const { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
+template<int XLEN> requires SupportedXlen<XLEN>
+std::string RiscVCPU<XLEN>::genInitCode() const  { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
+template<int XLEN> requires SupportedXlen<XLEN>
+std::string RiscVCPU<XLEN>::genDeinitCode() const { return ""; }
+template<int XLEN> requires SupportedXlen<XLEN>
+std::string RiscVCPU<XLEN>::genResetCode() const { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
 
-std::string RiscVCPU::genFuncDef_seq() const {
+template<int XLEN> requires SupportedXlen<XLEN>
+std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     int id = _id;
     std::string code;
     code += std::format("// RISC-V CPU: {}\n", name());
@@ -66,7 +78,8 @@ std::string RiscVCPU::genFuncDef_seq() const {
     code += "}\n";
     return code;
 }
-std::unique_ptr<Component> RiscVCPU::clone(const std::string &n) const {
+template<int XLEN> requires SupportedXlen<XLEN>
+std::unique_ptr<Component> RiscVCPU<XLEN>::clone(const std::string &n) const {
     // 与其余元件一致：连运行状态一起复制，复制出来的核可以直接接着跑
     auto p = std::make_unique<RiscVCPU>(n);
     p->_state = _state;
@@ -95,7 +108,8 @@ void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, uint8_t 
 }
 
 // ============================================================
-void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
+template<int XLEN> requires SupportedXlen<XLEN>
+void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<CpuState*>(state_ptr);
     CpuIn in(inputs);
     if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
@@ -508,7 +522,8 @@ void RiscVCPU::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *c
     packOut(outputs, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);
 }
 
-void RiscVCPU::cpuReset(void *state_ptr) {
+template<int XLEN> requires SupportedXlen<XLEN>
+void RiscVCPU<XLEN>::cpuReset(void *state_ptr) {
     auto &s = *static_cast<CpuState*>(state_ptr);
     std::memset(&s,0,sizeof(s));
     s.phase=Phase::FETCH; s.priv=RV::PRIV_M;
@@ -520,7 +535,8 @@ void RiscVCPU::cpuReset(void *state_ptr) {
 // ============================================================
 static bool csrImplemented(uint32_t addr); // 定义在 csrRead 之前，这里先声明
 
-void RiscVCPU::execute(CpuState &s, uint32_t inst,
+template<int XLEN> requires SupportedXlen<XLEN>
+void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                        uint32_t &wb_adr, uint32_t &wb_dat, bool &wb_we,
                        uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc, bool &need_mem) {
     s.regs[0]=0; need_mem=false;
@@ -1208,7 +1224,8 @@ static bool csrImplemented(uint32_t addr) {
     }
 }
 
-uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
+template<int XLEN> requires SupportedXlen<XLEN>
+uint32_t RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     switch (addr) {
     // cycle/instret 与 M 态的 mcycle/minstret 是同一对计数器，只是可见性不同
     case 0xB00: case 0xC00: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
@@ -1253,7 +1270,8 @@ uint32_t RiscVCPU::csrRead(const CpuState &s, uint32_t addr) {
     default: return 0;
     }
 }
-void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
+template<int XLEN> requires SupportedXlen<XLEN>
+void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
     switch (addr) {
     // pmpaddr 是 0x3B0..0x3BF，pmpcfg 是 0x3A0..0x3A3
     case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: s.pmpcfg[addr - 0x3A0] = val; break;
@@ -1309,7 +1327,8 @@ void RiscVCPU::csrWrite(CpuState &s, uint32_t addr, uint32_t val) {
 // ============================================================
 // 中断裁决（考虑委托）
 // ============================================================
-bool RiscVCPU::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
     uint32_t pending = s.mie & s.mip;
     if (!pending) [[likely]] return false; // 绝大多数时候无中断等待
 
@@ -1343,7 +1362,8 @@ bool RiscVCPU::takeInterrupt(CpuState &s, uint32_t &trap_cause) {
 // ============================================================
 // 同步异常陷阱入口
 // ============================================================
-bool RiscVCPU::takeTrap(CpuState &s, uint32_t cause, uint32_t tval) {
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::takeTrap(CpuState &s, uint32_t cause, uint32_t tval) {
     bool is_irq = (cause >> 31) != 0;
     uint8_t target_priv = RV::PRIV_M;
 
@@ -1378,7 +1398,8 @@ bool RiscVCPU::takeTrap(CpuState &s, uint32_t cause, uint32_t tval) {
 // ============================================================
 // Sv32 MMU + TLB
 // ============================================================
-uint32_t RiscVCPU::checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t priv, uint32_t mstatus) {
+template<int XLEN> requires SupportedXlen<XLEN>
+uint32_t RiscVCPU<XLEN>::checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t priv, uint32_t mstatus) {
     uint32_t cause = is_write ? RV::EXC_SPF : is_exec ? RV::EXC_IPF : RV::EXC_LPF;
     if (is_write && !(pte & RV::PTE_W)) return cause;
     if (is_exec && !(pte & RV::PTE_X)) return cause;
@@ -1390,7 +1411,8 @@ uint32_t RiscVCPU::checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t
     return 0;
 }
 
-bool RiscVCPU::mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
                              bool is_write, bool is_exec) {
     // MPRV：M 态的数据访存按 mstatus.MPP 的特权级翻译（取指不受 MPRV 影响）
     uint8_t priv = s.priv;
@@ -1437,5 +1459,10 @@ bool RiscVCPU::mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
     }
     return false; // 发起 MMU 遍历，原指令稍后重试
 }
+
+// 两份实现都编进这个 .cpp：RV32 是默认，RV64 供 OpenSBI/Linux 用。
+// 放在这里而不是头文件，是为了让其它翻译单元只看到声明
+template class RiscVCPU<32>;
+template class RiscVCPU<64>;
 
 } // namespace dsc

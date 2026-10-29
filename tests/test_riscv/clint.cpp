@@ -15,7 +15,7 @@ using namespace dsc;
 // ============================================================
 TEST(ClintTest, SFENCE_VMA) {
     auto circuit = std::make_unique<Circuit>();
-    auto cpu_ptr = std::make_unique<RiscVCPU>("cpu0");
+    auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);
@@ -76,7 +76,7 @@ TEST(ClintTest, SFENCE_VMA) {
 // ============================================================
 TEST(ClintTest, FENCE_I) {
     auto circuit = std::make_unique<Circuit>();
-    auto cpu_ptr = std::make_unique<RiscVCPU>("cpu0");
+    auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);
@@ -139,7 +139,7 @@ TEST(ClintTest, TimerInterrupt) {
     auto circuit = std::make_unique<Circuit>();
 
     // 元件
-    auto cpu_ptr = std::make_unique<RiscVCPU>("cpu0");
+    auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 14, 32); // 16KB, addr 0-3FFF

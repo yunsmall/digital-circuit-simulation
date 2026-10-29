@@ -9,7 +9,7 @@ using namespace dsc;
 
 struct AmoTestFixture {
     std::unique_ptr<Circuit> circuit;
-    RiscVCPU *cpu = nullptr;
+    RiscVCPU<32> *cpu = nullptr;
     WishboneMemory *mem = nullptr;
     Net *clk_net, *rst_net, *irq_net, *mti_net, *msi_net;
     Net *wb_adr, *wb_dat_o, *wb_dat_i, *wb_we, *wb_sel, *wb_stb, *wb_cyc, *wb_ack;
@@ -17,7 +17,7 @@ struct AmoTestFixture {
 
     AmoTestFixture() {
         circuit = std::make_unique<Circuit>();
-        auto cpu_ptr = std::make_unique<RiscVCPU>("cpu0");
+        auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
         cpu = cpu_ptr.get();
         circuit->addComponent(std::move(cpu_ptr));
         auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);

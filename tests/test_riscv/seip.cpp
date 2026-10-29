@@ -10,13 +10,13 @@ using namespace dsc;
 namespace {
 struct Fx {
     std::unique_ptr<Circuit> c = std::make_unique<Circuit>();
-    RiscVCPU *cpu = nullptr;
+    RiscVCPU<32> *cpu = nullptr;
     WishboneMemory *mem = nullptr;
     Net *clk, *rst, *irq, *mti, *msi, *seip;
     Net *wb_adr, *wb_dat_o, *wb_dat_i, *wb_we, *wb_sel, *wb_stb, *wb_cyc, *wb_ack, *halted;
 
     Fx() {
-        auto p = std::make_unique<RiscVCPU>("cpu");
+        auto p = std::make_unique<RiscVCPU<32>>("cpu");
         cpu = p.get();
         c->addComponent(std::move(p));
         auto m = std::make_unique<WishboneMemory>("mem", 16, 32);

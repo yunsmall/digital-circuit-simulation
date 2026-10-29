@@ -2,6 +2,7 @@
 // 支持 RV32IMA + S/U/M 特权级 + Sv32 MMU
 #pragma once
 #include <cstdint>
+#include <type_traits>
 #include <string>
 #include "dcs/Component.h"
 
@@ -90,8 +91,16 @@ namespace RV {
     constexpr int TLB_SIZE = 32;
 } // namespace RV
 
+// 只有 32 和 64 两种位宽有意义（RV32/RV64），传别的值编译期直接拒绝
+template<int N>
+concept SupportedXlen = (N == 32 || N == 64);
+
+template<int XLEN> requires SupportedXlen<XLEN>
 class RiscVCPU : public Component {
 public:
+    // 地址与通用寄存器的宽度：RV32 用 32 位，RV64 用 64 位
+    using XLen = std::conditional_t<XLEN == 32, uint32_t, uint64_t>;
+
     explicit RiscVCPU(const std::string &name);
     ~RiscVCPU() override;
 
@@ -128,7 +137,7 @@ private:
     };
 
     struct CpuState {
-        uint32_t regs[32], pc;
+        XLen regs[32], pc;
         // 64 位计数器：RV32 上 cycle/instret 由低高两个 CSR 拼成，硬件内部必须按 64 位递增
         uint64_t cycles, instret;
         uint32_t fregs[32]; // 浮点寄存器按 IEEE754 位模式存放，避免来回转换
@@ -219,5 +228,10 @@ private:
     // TLB 命中、L1 大页、L2 4KB 页三条路径共用，避免改一处漏两处。
     static uint32_t checkPerms(uint32_t pte, bool is_write, bool is_exec, uint8_t priv, uint32_t mstatus);
 };
+
+// 实现全在 .cpp 里并显式实例化，这里只抑制隐式实例化，
+// 免得每个包含者都去编译上千行模板代码
+extern template class RiscVCPU<32>;
+extern template class RiscVCPU<64>;
 
 } // namespace dsc

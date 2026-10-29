@@ -10,14 +10,14 @@ using namespace dsc;
 namespace {
 struct Fixture {
     std::unique_ptr<Circuit> circuit = std::make_unique<Circuit>();
-    RiscVCPU *cpu = nullptr;
+    RiscVCPU<32> *cpu = nullptr;
     WishboneMemory *mem = nullptr;
     Net *clk = nullptr, *rst = nullptr, *irq = nullptr, *mti = nullptr, *msi = nullptr;
     Net *wb_adr = nullptr, *wb_dat_o = nullptr, *wb_dat_i = nullptr, *wb_we = nullptr;
     Net *wb_sel = nullptr, *wb_stb = nullptr, *wb_cyc = nullptr, *wb_ack = nullptr, *halted = nullptr;
 
     Fixture() {
-        auto c = std::make_unique<RiscVCPU>("cpu0");
+        auto c = std::make_unique<RiscVCPU<32>>("cpu0");
         cpu = c.get();
         circuit->addComponent(std::move(c));
         auto m = std::make_unique<WishboneMemory>("mem0", 16, 32);

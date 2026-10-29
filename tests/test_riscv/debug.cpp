@@ -12,7 +12,7 @@ TEST(RiscVCPUDebug, SingleAddiInstruction) {
     Circuit c;
 
     // 创建 CPU 和内存
-    auto *cpu = static_cast<RiscVCPU*>(c.addComponent(std::make_unique<RiscVCPU>("cpu0")));
+    auto *cpu = static_cast<RiscVCPU<32>*>(c.addComponent(std::make_unique<RiscVCPU<32>>("cpu0")));
     auto *mem = static_cast<WishboneMemory*>(c.addComponent(std::make_unique<WishboneMemory>("mem0", 12, 32)));
 
     // 加载单条指令: addi x1, x0, 42
