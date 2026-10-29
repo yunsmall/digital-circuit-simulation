@@ -1389,6 +1389,27 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 }
                 }
             };
+            // FCVT 要把浮点舍入成整数，语义和"舍入到 double 精度"完全不同：
+            // 前者要处理小数部分并按 rm 选整，后者在 double 上本来就是恒等
+            auto round_to_int = [&](double v) -> double {
+                switch (eff_rm) {
+                case 0: {   // RNE：中点取偶
+                    double fl = std::floor(v), ce = std::ceil(v);
+                    double dlo = v - fl, dhi = ce - v;
+                    if (dlo < dhi) return fl;
+                    if (dhi < dlo) return ce;
+                    return (std::fmod(fl, 2.0) == 0.0) ? fl : ce;
+                }
+                case 1: return std::trunc(v);   // RTZ
+                case 2: return std::floor(v);   // RDN
+                case 3: return std::ceil(v);    // RUP
+                default: {  // RMM：中点远离 0
+                    double t = std::trunc(v), f = v - t;
+                    if (std::fabs(f) > 0.5 || (std::fabs(f) == 0.5)) t += (v > 0 ? 1.0 : -1.0);
+                    return t;
+                }
+                }
+            };
             auto setd = [&](double v) { s.fregs[rd] = d2u(v); };
             // 双精度没有更宽的宿主类型可用（long double 在 MSVC/clang-cl 上也是 64 位），
             // 所以"结果是否不精确"不能靠比较舍入前后——exact 本身已经是舍入过的值。
@@ -1418,7 +1439,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 double r = std::isinf(exact) ? exact : round_to_double(exact);
                 setd(r);
                 if (std::isinf(r)) {
-                    if (std::isfinite(exact)) s.fcsr |= 0x04;   // OF
+                    // 有限输入算出无穷才是溢出；exact 本身可能已是 inf，不能用它判断
+                    if (std::isfinite(ox) && std::isfinite(oy)) { s.fcsr |= 0x04; s.fcsr |= 0x01; }
                     return;
                 }
                 // 粗判：舍入前后不同一定不精确；相同则再用精确余项判一次
@@ -1484,7 +1506,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 // rs2 选目标宽度：0=W 1=WU 2=L 3=LU
                 if (rs2 >= 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-                double r = round_to_double(da);
+                double r = round_to_int(da);   // FCVT 是舍入成整数，不是舍入到 double
                 if (rs2 == 0) {   // FCVT.W.D：32 位有符号，RV64 下符号扩展到 XLEN
                     if (std::isnan(r) || r >= 2147483648.0) { s.regs[rd] = (XLen)(SXLen)0x7FFFFFFF; s.fcsr |= 0x10; }
                     else if (r < -2147483648.0) { s.regs[rd] = (XLen)(SXLen)(int32_t)0x80000000; s.fcsr |= 0x10; }
