@@ -32,6 +32,7 @@ RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu")
     addOutput("wb_stb_o", 1, false, true); addOutput("wb_cyc_o", 1, false, true);
     addOutput("halted", 1, false, true);
     std::memset(&_state, 0, sizeof(_state));
+    _state.phase = Phase::FETCH;
     _state.priv = RV::PRIV_M;
 }
 template<int XLEN> requires SupportedXlen<XLEN>
@@ -1662,17 +1663,21 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     uint32_t l1_tag = vaddr >> 22;
     if (s.l1_cache_valid && s.l1_cache_tag == l1_tag) [[likely]] {
         s.mmu_l2_addr = ((uint64_t) s.l1_cache_ppn << 12) | (uint64_t)(((vaddr >> 12) & 0x3FF) * 4);
-        s.phase = Phase::MMU_WALK_L2;
-    } else {
-        s.mmu_l1_addr = s.mmu_root + (l1_tag << 2);
-        s.phase = Phase::MMU_WALK_L1;
-    }
-            // 页表本身也必须落在 32 位地址线能表达的范围内，否则遍历会读到别名的垃圾
-        if (s.mmu_l1_addr > 0xFFFFFFFFULL || s.mmu_l2_addr > 0xFFFFFFFFULL) {
-            uint32_t cause = is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF);
-            takeTrap(s, cause, vaddr);
+        // 页表本身也要落在 32 位地址线能表达的范围内，否则遍历读到的是别名的垃圾。
+        // 两条分支各自只设一个地址，检查必须放在分支内：同时看两个会误报
+        if (s.mmu_l2_addr > 0xFFFFFFFFULL) {
+            takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
             return false;
         }
+        s.phase = Phase::MMU_WALK_L2;
+    } else {
+        s.mmu_l1_addr = s.mmu_root + ((uint64_t) l1_tag << 2);
+        if (s.mmu_l1_addr > 0xFFFFFFFFULL) {
+            takeTrap(s, is_exec ? RV::EXC_IAF : (is_write ? RV::EXC_SAF : RV::EXC_LAF), vaddr);
+            return false;
+        }
+        s.phase = Phase::MMU_WALK_L1;
+    }
     return false; // 发起 MMU 遍历，原指令稍后重试
 }
 
