@@ -824,6 +824,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                               (s.priv != RV::PRIV_M ||
                                ((s.mstatus & RV::MSTATUS_MPRV) &&
                                 (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
+// 跨字访问的第二次事务地址会越过地址空间顶端时回绕到 0，从设备读到的是
+        // 不相干的数据，且不会触发任何 trap。总线只有 32 位地址线，两种位宽都要拦
+        if (p + n > 4) {
+        const XLen a2 = (pa & ~(XLen)3) + 4;
+        if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        }
+        
         if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
             // 跨页时第二个字不属于同一个物理页，需要第二次翻译（当前状态机不支持），
             // 按规范允许的做法触发 misaligned load。必须在置 need_mem 之前返回，
@@ -862,6 +869,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                               (s.priv != RV::PRIV_M ||
                                ((s.mstatus & RV::MSTATUS_MPRV) &&
                                 (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
+// 跨字访问的第二次事务地址会越过地址空间顶端时回绕到 0，从设备读到的是
+        // 不相干的数据，且不会触发任何 trap。总线只有 32 位地址线，两种位宽都要拦
+        if (p + n > 4) {
+        const XLen a2 = (pa & ~(XLen)3) + 4;
+        if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        }
+        
         if (_paging_active && ((pa & 0xFFF) + n > 0x1000)) {
             s.acc_stage = 0;
             takeTrap(s, RV::EXC_SAM, va); // 跨页非对齐写同上，只能报错
