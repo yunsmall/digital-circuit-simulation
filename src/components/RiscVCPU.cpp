@@ -8,6 +8,14 @@
 
 namespace dsc {
 
+// satp 的 mode 域位置随 XLEN 变：RV32 在 bit31、Rv64 在 bit63:60。
+// 分页是否开启要看整个 mode 域，不能只测一个位——RV64 下 bit31 落在 ASID 里
+template<int XLEN> requires SupportedXlen<XLEN>
+static inline bool pagingEnabled(unsigned long long satp) {
+    if constexpr (XLEN == 64) return (satp >> 60) != 0;
+    else return (satp >> 31) != 0;
+}
+
 constexpr int SLOT = 16;
 constexpr int I_CLK = 0, I_RST = 1, I_DAT = 2, I_ACK = 3, I_IRQ = 4, I_MTI = 5, I_MSI = 6, I_SEIP = 7;
 constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, O_HALT = 6, O_COUNT = 7;
@@ -186,7 +194,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             // 页错误已进 trap，s.pc 现在是 trap 入口。M 态入口是物理地址可直接用；
             // S 态的 stvec 是虚拟地址，必须重新翻译，不能把它当物理地址取指。
             XLen fpa2=0;
-            if (s.priv == RV::PRIV_M || (s.satp & RV::SATP_MODE) == 0) {
+            if (s.priv == RV::PRIV_M || !pagingEnabled<XLEN>(s.satp)) {
                 s.fetch_pa = s.pc;
             } else if (!mmuTranslate(s, s.pc, fpa2, false, true)) {
                 if (s.phase == Phase::MMU_WALK_L1 || s.phase == Phase::MMU_WALK_L2) {
@@ -800,7 +808,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         uint32_t n=(f3==RV::F3_LH||f3==RV::F3_LHU)?2:(f3==RV::F3_LB||f3==RV::F3_LBU)?1:(f3==3)?8:4;
         // MPRV 下 M 态的数据访问同样走分页，此时跨页检查不能因为 priv==M 就跳过，
         // 否则非对齐拆分会对第二个字直接用物理地址，跳过了另外一页的翻译
-        bool _paging_active = (s.satp & RV::SATP_MODE) &&
+        bool _paging_active = pagingEnabled<XLEN>(s.satp) &&
                               (s.priv != RV::PRIV_M ||
                                ((s.mstatus & RV::MSTATUS_MPRV) &&
                                 (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
@@ -812,9 +820,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             takeTrap(s, RV::EXC_LAM, va);
             return;
         }
-        wb_adr=pa&~3u; wb_we=false; wb_sel=0x0F;
+        wb_adr=pa&~(XLen)3; wb_we=false; wb_sel=0x0F;
         wb_stb=wb_cyc=true; need_mem=true;
-        s.bus_adr=pa&~3u; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_sel=0x0F; s.bus_fp=0;
+        s.bus_adr=pa&~(XLen)3; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_sel=0x0F; s.bus_fp=0;
         s.acc_va=pa; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((p+n>4)?1:0);
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
@@ -831,7 +839,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         uint32_t first=(p+n>4)?(4-p):n;
         // MPRV 下 M 态的数据访问同样走分页，此时跨页检查不能因为 priv==M 就跳过，
         // 否则非对齐拆分会对第二个字直接用物理地址，跳过了另外一页的翻译
-        bool _paging_active = (s.satp & RV::SATP_MODE) &&
+        bool _paging_active = pagingEnabled<XLEN>(s.satp) &&
                               (s.priv != RV::PRIV_M ||
                                ((s.mstatus & RV::MSTATUS_MPRV) &&
                                 (((s.mstatus >> 11) & 3u) != RV::PRIV_M)));
@@ -840,14 +848,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             takeTrap(s, RV::EXC_SAM, va); // 跨页非对齐写同上，只能报错
             return;
         }
-        wb_adr=pa&~3u; wb_we=true;
+        wb_adr=pa&~(XLen)3; wb_we=true;
         wb_sel=(uint8_t)(((1u<<first)-1u)<<p); wb_dat=v2<<(8*p);
         s.acc_va=pa; s.acc_raw=v2; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((n>first)?1:0);
         if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效
             XLen w0 = pa & ~(XLen)3;
             if (s.lr_addr == w0 || (s.acc_stage == 1 && s.lr_addr == w0 + 4)) s.lr_valid = false;
         }
-        wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~3u; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
+        wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~(XLen)3; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
     // ---- AMO ----
@@ -871,7 +879,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         bool amo_write = (((inst >> 27) & 0x1F) != RV::F5_LR);
         if (!mmuTranslate(s, va, pa, amo_write, false)) [[unlikely]] return;
         // AMO: 先发起读请求，WAIT_MEM 中完成修改后自动回写
-        wb_adr=pa&~3u; wb_dat=v2; wb_we=false; wb_sel=0x0F;
+        wb_adr=pa&~(XLen)3; wb_dat=v2; wb_we=false; wb_sel=0x0F;
         wb_stb=wb_cyc=true; need_mem=true;
         s.bus_adr=pa; s.bus_funct3=f3; s.bus_rd=rd;
         s.bus_sel=0x0F; s.bus_we=false; s.bus_amo=true;
@@ -1302,21 +1310,21 @@ static bool csrImplemented(uint32_t addr) {
     // 0x3A4-0x3AF 和 0x3C0-0x3EF 是保留地址，访问必须报非法指令，
     // 否则软件能写进去并读回 0，误以为写成功了
     // RV64 的 pmpcfg 每项占 8 字节，只有 pmpcfg0/pmpcfg2（奇数号是 RV32 的布局）
-    if (addr >= 0x3A0 && addr <= 0x3A3) return (XLEN == 32) || ((addr & 1) == 0);
-    if (addr >= 0x3B0 && addr <= 0x3BF) return true;
+    if (addr >= RV::CSR_PMPCFG0 && addr <= RV::CSR_PMPCFG3) return (XLEN == 32) || ((addr & 1) == 0);
+    if (addr >= RV::CSR_PMPADDR0 && addr <= RV::CSR_PMPADDR15) return true;
     switch (addr) {
     case RV::CSR_FFLAGS: case RV::CSR_FRM: case RV::CSR_FCSR:
-    case 0x306:  // mcounteren
+    case RV::CSR_MCOUNTEREN:
     // mstatush 在 RV32 上只有 SBE/MBE/GVA/MPV 等位。本核是大端不支持、也没有
     // 客户机虚拟化，这些位全部硬连 0：读回 0，写入忽略，即下面的默认分支行为
-    case 0xB00: case 0xB02: // mcycle / minstret
-    case 0xC00: case 0xC01: case 0xC02: // cycle / time / instret
-    case 0xF11: case 0xF12: case 0xF13: case 0xF14: // vendorid / archid / impid / hartid
+    case RV::CSR_MCYCLE: case RV::CSR_MINSTRET:
+    case RV::CSR_CYCLE: case RV::CSR_TIME: case RV::CSR_INSTRET:
+    case RV::CSR_MVENDORID: case RV::CSR_MARCHID: case RV::CSR_MIMPID: case RV::CSR_MHARTID:
         return true;
     // 下面这些只在 RV32 存在：RV64 的计数器是完整的 64 位，没有高半 CSR，
     // mstatush 也只在 RV32 有意义
-    case 0x310: case 0xB80: case 0xB82:
-    case 0xC80: case 0xC81: case 0xC82:
+    case RV::CSR_MSTATUSH: case RV::CSR_MCYCLEH: case RV::CSR_MINSTRETH:
+    case RV::CSR_CYCLEH: case RV::CSR_TIMEH: case RV::CSR_INSTRETH:
         return (XLEN == 32);
     case RV::CSR_SSTATUS: case RV::CSR_SIE: case RV::CSR_STVEC: case RV::CSR_SSCRATCH:
     case RV::CSR_SEPC: case RV::CSR_SCAUSE: case RV::CSR_STVAL: case RV::CSR_SIP: case RV::CSR_SATP:
@@ -1331,22 +1339,21 @@ static bool csrImplemented(uint32_t addr) {
 
 template<int XLEN> requires SupportedXlen<XLEN>
 XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
+    if (addr >= RV::CSR_PMPCFG0 && addr <= RV::CSR_PMPCFG3) return s.pmpcfg[addr - RV::CSR_PMPCFG0];
+    if (addr >= RV::CSR_PMPADDR0 && addr <= RV::CSR_PMPADDR15)
+        return s.pmpaddr[addr - RV::CSR_PMPADDR0];
     switch (addr) {
     // cycle/instret 与 M 态的 mcycle/minstret 是同一对计数器，只是可见性不同
     // RV64 的 cycle/mcycle 是完整的 64 位 CSR；RV32 才拆成低/高两个
-    case 0xB00: case 0xC00: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
-    case 0xB80: case 0xC80: return (uint32_t) (s.cycles >> 32);
+    case RV::CSR_MCYCLE: case RV::CSR_CYCLE: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
+    case RV::CSR_MCYCLEH: case RV::CSR_CYCLEH: return (uint32_t) (s.cycles >> 32);
     // time 本应来自 CLINT 的 mtime，这里用 cycle 近似：本核时钟与 mtime 同源，
     // 恒返回 0 会让依赖 rdtime 的超时逻辑静默失效
-    case 0xC01: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
-    case 0xC81: return (uint32_t) (s.cycles >> 32);
-    case 0xB02: case 0xC02: return (XLen)((XLEN == 64) ? s.instret : (s.instret & 0xFFFFFFFFu));
-    case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
-    case 0x306: return s.mcounteren; // mcounteren
-    case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: return s.pmpcfg[addr - 0x3A0];
-    case 0x3B0: case 0x3B1: case 0x3B2: case 0x3B3: case 0x3B4: case 0x3B5: case 0x3B6: case 0x3B7:
-    case 0x3B8: case 0x3B9: case 0x3BA: case 0x3BB: case 0x3BC: case 0x3BD: case 0x3BE: case 0x3BF:
-        return s.pmpaddr[addr - 0x3B0];
+    case RV::CSR_TIME: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
+    case RV::CSR_TIMEH: return (uint32_t) (s.cycles >> 32);
+    case RV::CSR_MINSTRET: case RV::CSR_INSTRET: return (XLen)((XLEN == 64) ? s.instret : (s.instret & 0xFFFFFFFFu));
+    case RV::CSR_MINSTRETH: case RV::CSR_INSTRETH: return (uint32_t) (s.instret >> 32);
+    case RV::CSR_MCOUNTEREN: return s.mcounteren;
     case RV::CSR_FFLAGS:  return s.fcsr & 0x1Fu;
     case RV::CSR_FRM:     return (s.fcsr >> 5) & 0x7u;
     case RV::CSR_FCSR:    return s.fcsr & 0xFFu;
@@ -1387,21 +1394,19 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
 }
 template<int XLEN> requires SupportedXlen<XLEN>
 void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
+    if (addr >= RV::CSR_PMPCFG0 && addr <= RV::CSR_PMPCFG3) { s.pmpcfg[addr - RV::CSR_PMPCFG0] = val; return; }
+    if (addr >= RV::CSR_PMPADDR0 && addr <= RV::CSR_PMPADDR15) { s.pmpaddr[addr - RV::CSR_PMPADDR0] = val; return; }
     switch (addr) {
     // pmpaddr 是 0x3B0..0x3BF，pmpcfg 是 0x3A0..0x3A3
-    case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: s.pmpcfg[addr - 0x3A0] = val; break;
-    case 0x3B0: case 0x3B1: case 0x3B2: case 0x3B3: case 0x3B4: case 0x3B5: case 0x3B6: case 0x3B7:
-    case 0x3B8: case 0x3B9: case 0x3BA: case 0x3BB: case 0x3BC: case 0x3BD: case 0x3BE: case 0x3BF:
-        s.pmpaddr[addr - 0x3B0] = val; break;
     // mcycle/minstret 是 R/W：软件常用写它们重置计时基准
     // RV32 只有低 32 位可写；RV64 是完整 64 位 CSR，OR 进去会把高半写坏
-    case 0xB00: s.cycles = (XLEN == 64) ? (uint64_t) val
+    case RV::CSR_MCYCLE: s.cycles = (XLEN == 64) ? (uint64_t) val
                                         : ((s.cycles & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
-    case 0xB80: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case 0xB02: s.instret = (XLEN == 64) ? (uint64_t) val
+    case RV::CSR_MCYCLEH: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
+    case RV::CSR_MINSTRET: s.instret = (XLEN == 64) ? (uint64_t) val
                                          : ((s.instret & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
-    case 0xB82: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case 0x306: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
+    case RV::CSR_MINSTRETH: s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
+    case RV::CSR_MCOUNTEREN: s.mcounteren = val & 7u; break; // 只有 CY/TM/IR 三位有定义
     case RV::CSR_FFLAGS:  s.fcsr = (s.fcsr & ~0x1Fu) | (val & 0x1Fu); break;
     case RV::CSR_FRM:     s.fcsr = (s.fcsr & ~0xE0u) | ((val & 0x7u) << 5); break;
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
@@ -1549,7 +1554,7 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
         if (mpp == RV::PRIV_M) { paddr = vaddr; return true; }
         priv = mpp;
     }
-    if ((s.satp & RV::SATP_MODE) == 0) [[unlikely]] { paddr = vaddr; return true; }
+    if (!pagingEnabled<XLEN>(s.satp)) [[unlikely]] { paddr = vaddr; return true; }
 
     uint64_t vpn = (uint64_t) vaddr >> 12;
     // TLB 查找

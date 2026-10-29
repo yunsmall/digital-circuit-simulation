@@ -55,6 +55,20 @@ namespace RV {
     constexpr uint32_t CSR_SSCRATCH=0x140, CSR_SEPC=0x141, CSR_SCAUSE=0x142, CSR_STVAL=0x143;
     constexpr uint32_t CSR_SIP=0x144, CSR_SATP=0x180;
 
+    // ---- 计数器 / 环境配置 / 只读标识 ----
+    // 这些原来直接以字面量散落在 switch 里，和上面成对的命名混用，既难对照规范也容易写错
+    constexpr uint32_t CSR_MCYCLE=0xB00, CSR_MINSTRET=0xB02;
+    constexpr uint32_t CSR_MCYCLEH=0xB80, CSR_MINSTRETH=0xB82;
+    constexpr uint32_t CSR_CYCLE=0xC00, CSR_TIME=0xC01, CSR_INSTRET=0xC02;
+    constexpr uint32_t CSR_CYCLEH=0xC80, CSR_TIMEH=0xC81, CSR_INSTRETH=0xC82;
+    constexpr uint32_t CSR_MCOUNTEREN=0x306, CSR_MSTATUSH=0x310;
+    constexpr uint32_t CSR_MVENDORID=0xF11, CSR_MARCHID=0xF12, CSR_MIMPID=0xF13, CSR_MHARTID=0xF14;
+
+    // ---- PMP ----
+    // pmpcfg 四项、pmpaddr 十六项。RV64 的 pmpcfg 每项 8 字节，只用偶数号
+    constexpr uint32_t CSR_PMPCFG0=0x3A0, CSR_PMPCFG3=0x3A3;
+    constexpr uint32_t CSR_PMPADDR0=0x3B0, CSR_PMPADDR15=0x3BF;
+
     // ---- mstatus 位 ----
     constexpr uint32_t MSTATUS_SIE=1u<<1, MSTATUS_MIE=1u<<3, MSTATUS_SPIE=1u<<5;
     constexpr uint32_t MSTATUS_MPIE=1u<<7, MSTATUS_SPP=1u<<8, MSTATUS_MPP=3u<<11;
