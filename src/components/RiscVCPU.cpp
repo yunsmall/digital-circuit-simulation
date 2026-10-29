@@ -575,12 +575,16 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                         if constexpr (XLEN == 64) result = (XLen)(uint32_t) value;
                         break;
                     }
-                    // FLW 只写低 32 位并清高半；FLD 写满 64 位
-                    // FLW 只提供 32 位，写回时高半必须填全 1；FLD 写满 64 位
-                    if (s.bus_fp) s.fregs[s.bus_rd] = (s.bus_funct3 == 3)
-                        ? (uint64_t) value
-                        : (0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) value);
-                    else s.regs[s.bus_rd]=result;
+                    if (s.bus_fp) {
+                        if (s.bus_funct3 == 3) {
+                            // FLD 要 8 字节，而 value 是 XLen 宽——RV32 下只有 32 位，
+                            // 高半会被截掉。直接从 acc_wide 取完整的 8 字节
+                            s.fregs[s.bus_rd] = (uint64_t)(s.acc_wide >> (8 * (s.acc_va & 3)));
+                        } else {
+                            // FLW 只提供 32 位，写回时高半必须填全 1（NaN-boxing）
+                            s.fregs[s.bus_rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) value;
+                        }
+                    } else s.regs[s.bus_rd]=result;
                     wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
             } else {
                 // 写响应；跨字非对齐写在这里补写高出字的那几个字节
@@ -1161,7 +1165,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         s.acc_stage = 0; // AMO 是单次对齐事务，不能继承上一次非对齐访存的拆分级数
         s.bus_fp = 0;    // 清掉可能残留的浮点访存标志，否则读响应会写进 fregs
         // .W 是 funct3=2，.D 是 funct3=3（只有 RV64 有）
-        if (f3 != 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
+        // f3=2 是 FLW（4 字节），f3=3 是 FLD（8 字节）。D 扩展与 XLEN 无关：
+        // RV32 的 f 寄存器同样是 64 位，fld/fsd 一样可用
+        if (f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
         switch ((inst >> 27) & 0x1F) { // 未实现的 AMO 编码必须报非法指令，不能静默完成
         case RV::F5_LR: case RV::F5_SC: case RV::F5_AMOSWAP: case RV::F5_AMOADD:
@@ -1201,7 +1207,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // FLW/FLD 写完 freg 后 FS 必须是 Dirty，否则上下文切换不会保存浮点寄存器
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         // f3=2 是 FLW（4 字节），f3=3 是 FLD（8 字节，只有 RV64 有）
-        if (f3 != 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
+        // D 扩展与 XLEN 无关，RV32 也支持 8 字节的 FSD
+        if (f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
@@ -1218,8 +1225,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     case RV::STORE_FP: {
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
-        // f3=2 是 FSW，f3=3 是 FSD（只有 RV64 有）
-        if (f3 != 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
+        // f3=2 是 FSW，f3=3 是 FSD。D 扩展与 XLEN 无关，RV32 也能写 8 字节
+        if (f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
@@ -1247,9 +1254,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         const uint32_t fma_fmt = (inst >> 25) & 3u;
         if (fma_fmt == 1u) {
             // 双精度 FMA：宿主 double 就是 64 位 IEEE754，用 std::fma 保证"乘加只舍入一次"，
-            // 这才是 FMA 相对先乘后加的意义。RV32 没有 D 扩展
-            if constexpr (XLEN != 64) { takeTrap(s, RV::EXC_II, inst); return; }
-            else {
+            // 这才是 FMA 相对先乘后加的意义。D 扩展与 XLEN 无关，RV32 同样支持
+            {
                 uint32_t rs3d = (inst >> 27) & 0x1F;
                 auto u2d = [](uint64_t u) { double d; std::memcpy(&d, &u, 8); return d; };
                 auto d2u = [](double d) { uint64_t u; std::memcpy(&u, &d, 8); return u; };
@@ -1269,7 +1275,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 }
                 if (std::isnan(m)) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                 else s.fregs[rd] = d2u(m);
-                break;
+                // 写了 freg 就必须把 FS 置 Dirty，否则上下文切换不会保存浮点寄存器；
+                // 这里的 break 跳过了单精度路径末尾的同一句，不能漏
+                s.mstatus |= (3u << 13);
                 break;
             }
         }
