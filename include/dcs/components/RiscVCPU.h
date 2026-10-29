@@ -173,7 +173,9 @@ private:
         XLen regs[32], pc;
         // 64 位计数器：RV32 上 cycle/instret 由低高两个 CSR 拼成，硬件内部必须按 64 位递增
         uint64_t cycles, instret;
-        uint32_t fregs[32]; // 浮点寄存器按 IEEE754 位模式存放，避免来回转换
+        // 浮点寄存器按 IEEE754 位模式存放，避免来回转换。D 扩展要 64 位，
+        // F 指令只读写低 32 位
+        uint64_t fregs[32];
         uint32_t fcsr;      // frm[7:5] | fflags[4:0]
         Phase phase;
         uint32_t inst;

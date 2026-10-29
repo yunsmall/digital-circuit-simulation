@@ -95,18 +95,28 @@ uint32_t expand(uint16_t c) {
             return I(0x03, rd_p, 2, rs1_p, (int32_t)u);
         }
         case 3: {    // RV32: C.FLW   RV64: C.LD
-            uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
-            if constexpr (XLEN == 32) return I(0x07, rd_p, 2, rs1_p, (int32_t)u);   // flw
-            else return I(0x03, rd_p, 3, rs1_p, (int32_t)u);                        // ld
+            // RV32 的 C.FLW 与 C.LW 位段相同（uimm[2] 在 c[6]、uimm[6] 在 c[5]），
+            // RV64 的 C.LD 才是 uimm[7:6] 在 c[6:5]。用错取法会访问错地址
+            if constexpr (XLEN == 32) {
+                uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 6) & 1u) << 2) | (((c >> 5) & 1u) << 6);
+                return I(0x07, rd_p, 2, rs1_p, (int32_t)u);   // flw
+            } else {
+                uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
+                return I(0x03, rd_p, 3, rs1_p, (int32_t)u);   // ld
+            }
         }
         case 6: {    // C.SW -> sw rs2', uimm(rs1')
             uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 6) & 1u) << 2) | (((c >> 5) & 1u) << 6);
             return S(2, rs1_p, rs2_p, (int32_t)u);
         }
-        case 7: {    // RV32: C.FSW   RV64: C.SD
-            uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
-            if constexpr (XLEN == 32) return S(2, rs1_p, rs2_p, (int32_t)u);        // fsw
-            else return S(3, rs1_p, rs2_p, (int32_t)u);                             // sd
+        case 7: {    // RV32: C.FSW   RV64: C.SD（位段差别同 C.FLW/C.LD）
+            if constexpr (XLEN == 32) {
+                uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 6) & 1u) << 2) | (((c >> 5) & 1u) << 6);
+                return S(2, rs1_p, rs2_p, (int32_t)u);   // fsw
+            } else {
+                uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
+                return S(3, rs1_p, rs2_p, (int32_t)u);   // sd
+            }
         }
         default: return ILLEGAL;   // C.FLD/C.FSD 属于 D 扩展，暂不支持
         }
@@ -188,9 +198,15 @@ uint32_t expand(uint16_t c) {
         return I(0x03, rd, 2, 2, (int32_t)u);
     }
     case 3: {        // RV32: C.FLWSP   RV64: C.LDSP
-        uint32_t u = (((c >> 12) & 1u) << 5) | (((c >> 5) & 3u) << 3) | (((c >> 2) & 7u) << 6);
-        if constexpr (XLEN == 32) return I(0x07, rd, 2, 2, (int32_t)u);
-        else { if (rd == 0) return ILLEGAL; return I(0x03, rd, 3, 2, (int32_t)u); }
+        // RV32 的 C.FLWSP 与 C.LWSP 位段相同；RV64 的 C.LDSP 才是 uimm[8:6] 在 c[4:2]
+        if constexpr (XLEN == 32) {
+            uint32_t u = (((c >> 12) & 1u) << 5) | (((c >> 4) & 7u) << 2) | (((c >> 2) & 3u) << 6);
+            return I(0x07, rd, 2, 2, (int32_t)u);   // flw
+        } else {
+            if (rd == 0) return ILLEGAL;
+            uint32_t u = (((c >> 12) & 1u) << 5) | (((c >> 5) & 3u) << 3) | (((c >> 2) & 7u) << 6);
+            return I(0x03, rd, 3, 2, (int32_t)u);   // ld
+        }
     }
     case 4: {
         const uint32_t b12v = (c >> 12) & 1u;
@@ -213,9 +229,14 @@ uint32_t expand(uint16_t c) {
         return S(2, 2, rs2, (int32_t)u);
     }
     case 7: {        // RV32: C.FSWSP   RV64: C.SDSP
-        uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 7) & 7u) << 6);
-        if constexpr (XLEN == 32) return S(2, 2, rs2, (int32_t)u);
-        else return S(3, 2, rs2, (int32_t)u);
+        // 与 C.FLWSP/C.LDSP 同理：RV32 用 C.SWSP 的位段，RV64 才是 uimm[8:6] 在 c[9:7]
+        if constexpr (XLEN == 32) {
+            uint32_t u = (((c >> 9) & 0xFu) << 2) | (((c >> 7) & 3u) << 6);
+            return S(2, 2, rs2, (int32_t)u);   // fsw
+        } else {
+            uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 7) & 7u) << 6);
+            return S(3, 2, rs2, (int32_t)u);   // sd
+        }
     }
     default: return ILLEGAL;   // C.FLDSP/C.FSDSP 属于 D 扩展
     }

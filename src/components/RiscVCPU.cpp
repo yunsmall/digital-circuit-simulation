@@ -1062,8 +1062,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     }
     case RV::JALR: {
         if(f3!=0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-        XLen tgt=(v1+(XLen)(SXLen)ii)&~(XLen)1;
-        if (tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }   // IALIGN=16
+        // 先看原始目标是否奇数，再清最低位：先清后判的话检查永远为假
+        const XLen raw_tgt = v1 + (XLen)(SXLen)ii;
+        if (raw_tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, raw_tgt); return; }
+        const XLen tgt = raw_tgt & ~(XLen)1;
         s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::BRANCH: { if (f3 == 2 || f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
@@ -1788,7 +1790,8 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break; // 只允许改 SSIP
     case RV::CSR_STVEC:   s.stvec = val & ~(XLen)2; break;
     case RV::CSR_SSCRATCH:s.sscratch = val; break;
-    case RV::CSR_SEPC:    s.sepc = val & ~(XLen)3; break;
+    // 与 MEPC 同理：有 C 扩展后返回地址可以是 4n+2，只能清 bit0
+    case RV::CSR_SEPC:    s.sepc = val & ~(XLen)1; break;
     case RV::CSR_SCAUSE:  s.scause = val; break;
     case RV::CSR_STVAL:   s.stval = val; break;
     case RV::CSR_SATP: {
