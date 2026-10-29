@@ -444,6 +444,13 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
                     break;
                 }
+                // Sv32 的 4MiB 超级页要求 ppn[0]（PTE bits 19:10）为 0。非零说明页表配错了，
+                // 规范要求报 page fault：直接丢弃这 10 位、拿虚拟地址的 ppn[0] 拼会译到错误地址
+                if (l1e & 0x000FFC00u) {
+                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF), s.mmu_vaddr);
+                    s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                    break;
+                }
                 // 大页的 A/D 同样要落到内存页表上，否则与 4KB 页路径行为不一致
                 {
                     uint32_t upd = l1e;
@@ -467,6 +474,13 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             } else {
                 // 非叶子 PTE（R=W=X=0）：指向 L2 页表
                 s.mmu_l2_addr = (((uint64_t)(l1e >> 10)) << 12) | (uint64_t)(((s.mmu_vaddr >> 12) & 0x3FF) * 4);
+                // 与缓存命中那条路径对称：L2 页表地址越过 32 位就只能报访问错误，
+                // 否则总线会拿截断后的别名地址去读垃圾页表项
+                if (s.mmu_l2_addr > 0xFFFFFFFFULL) {
+                    takeTrap(s, s.mmu_is_exec ? RV::EXC_IAF : (s.mmu_is_write ? RV::EXC_SAF : RV::EXC_LAF), s.mmu_vaddr);
+                    wb_stb = wb_cyc = false;
+                    break;
+                }
                 s.phase = Phase::MMU_WALK_L2;
                 wb_stb = wb_cyc = false; // 本拍拉低，下拍 MMU_WALK_L2 重新断言 stb 上升沿
             }
@@ -537,6 +551,13 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     case Phase::MMU_AD_WRITE:
         wb_adr = s.mmu_pte_addr; wb_dat = s.mmu_pte; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
         if (in.ack) {
+            // 大页路径同样要查 ppn[0]：页表配错时按规范报 page fault，
+            // 而且不能继续装填 TLB，否则错的映射会被缓存下来
+            if (s.mmu_pte_is_l1 && (s.mmu_pte & 0x000FFC00u)) {
+                takeTrap(s, s.mmu_is_exec ? RV::EXC_IPF : (s.mmu_is_write ? RV::EXC_SPF : RV::EXC_LPF), s.mmu_vaddr);
+                s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                break;
+            }
             // 页表已更新，按更新后的 PTE 装填 TLB
             int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
             auto &e = s.tlb[idx];
@@ -568,8 +589,6 @@ void RiscVCPU<XLEN>::cpuReset(void *state_ptr) {
 // ============================================================
 // execute
 // ============================================================
-static bool csrImplemented(uint32_t addr); // 定义在 csrRead 之前，这里先声明
-
 // csrImplemented 的定义在文件后半段，execute 需要先看到声明
 template<int XLEN> requires SupportedXlen<XLEN>
 static bool csrImplemented(uint32_t addr);
