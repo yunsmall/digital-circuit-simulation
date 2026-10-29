@@ -27,6 +27,28 @@ namespace RV {
     // 取基础 funct7 用 f7 & ~1。这样 D 的分支可以和 F 一一对应，不用再排一张表
     constexpr uint32_t FMT_D = 0x01;
 
+    // ---- Z 扩展的编码常量 ----
+    // 这些扩展复用 OP/OP-IMM，靠 funct7 区分。规范里同一功能的寄存器形式和立即数
+    // 形式常常用不同的 funct7（bset 是 0x14 而 bclr 是 0x24），逐个命名免得代码里
+    // 出现一串看不出含义的裸数字
+    constexpr uint32_t F7_ZBA_SHADD  = 0x10;   // sh1add/sh2add/sh3add 及其 .uw
+    constexpr uint32_t F7_ZBB_MINMAX = 0x05;   // max/maxu/min/minu
+    constexpr uint32_t F7_ZBB_ANDN   = 0x20;   // andn/orn/xnor（与 SUB/SRA 共用）
+    constexpr uint32_t F7_ZBB_ROL    = 0x30;   // rol/ror/rolw/rorw
+    constexpr uint32_t F7_ZBB_CNT    = 0x30;   // clz/ctz/cpop/sext.b/sext.h（OP-IMM）
+    constexpr uint32_t F7_ZBB_ORCB   = 0x14;   // orc.b（OP-IMM）
+    constexpr uint32_t F7_ZBB_REV8   = 0x34;   // rev8/brev8
+    constexpr uint32_t F7_ZBS_BSET   = 0x14;   // bset/bseti
+    constexpr uint32_t F7_ZBS_BCLR   = 0x24;   // bclr/bclri/bext/bexti
+    constexpr uint32_t F7_ZBS_BINV   = 0x34;   // binv/binvi
+    constexpr uint32_t F7_ZBC_CLMUL  = 0x05;   // clmul/clmulh/clmulr
+    constexpr uint32_t F7_ZICOND     = 0x07;   // czero.eqz/czero.nez
+    constexpr uint32_t F7_ZUW        = 0x04;   // add.uw/pack/packh/zext.h
+    constexpr uint32_t F7_ZUSLLI     = 0x02;   // slli.uw
+    // 用 rs2 域区分的子操作码
+    constexpr uint32_t ZSUB_CLZ=0, ZSUB_CTZ=1, ZSUB_CPOP=2, ZSUB_SEXT_B=4, ZSUB_SEXT_H=5;
+    constexpr uint32_t ZSUB_ORCB=7, ZSUB_BREV8=7, ZSUB_REV8=0x18;
+
     // ---- 浮点 CSR ----
     constexpr uint32_t CSR_FFLAGS=0x001, CSR_FRM=0x002, CSR_FCSR=0x003;
 

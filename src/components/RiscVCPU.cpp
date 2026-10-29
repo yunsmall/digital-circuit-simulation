@@ -961,24 +961,42 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         if ((v1 >> b) & 0xFF) r |= (XLen)((XLen)0xFF << b);
                     s.regs[rd] = r; break;
                 }
-                const XLen m = (XLen)1 << (shamt6 & (XLEN - 1));
-                switch (f3) {
-                case 1: s.regs[rd] = v1 | m; break;
-                case 2: s.regs[rd] = v1 & ~m; break;
-                case 3: s.regs[rd] = v1 ^ m; break;
-                case 5: s.regs[rd] = (v1 >> (shamt6 & (XLEN - 1))) & 1; break;
-                default: [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-                }
+                // funct7=0x14 上只有 bseti（f3=1）；orc.b 已在上面单独处理
+                if (f3 != 1) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                s.regs[rd] = v1 | ((XLen)1 << (shamt6 & (XLEN - 1)));   // bseti
                 break;
             }
-            // rev8：RV64 的 shamt 是 56，f7 因此是 0x35；RV32 是 0x34
-            if (f3 == 5 && (f7 == 0x35u || (XLEN == 32 && f7 == 0x34u))) {   // rev8（f3=5 与 SRLI 同编码）
-                XLen r = 0;
-                for (int b = 0; b < XLEN; b += 8) {
-                    int src = XLEN - 8 - b;
-                    r |= (XLen)(((v1 >> src) & 0xFF) << b);
+            // funct7=0x24 上：bclri(f3=1)、bexti(f3=5)
+            if (z_imm_f3 && f7b == RV::F7_ZBS_BCLR) {
+                const uint32_t sh3 = shamt6 & (XLEN - 1);
+                if (f3 == 1) s.regs[rd] = v1 & ~((XLen)1 << sh3);        // bclri
+                else if (f3 == 5) s.regs[rd] = (v1 >> sh3) & 1;          // bexti
+                else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+                break;
+            }
+            // funct7=0x34 上：binvi(f3=1)、rev8 与 brev8(f3=5，靠 rs2 区分)
+            if (z_imm_f3 && f7b == RV::F7_ZBS_BINV) {
+                if (f3 == 1) { s.regs[rd] = v1 ^ ((XLen)1 << (shamt6 & (XLEN - 1))); break; }   // binvi
+                if (f3 == 5) {
+                    if ((rs2 & 0x1F) == RV::ZSUB_REV8) {          // rev8：整寄存器按字节反转
+                        XLen r = 0;
+                        for (int b = 0; b < XLEN; b += 8) {
+                            int src = XLEN - 8 - b;
+                            r |= (XLen)(((v1 >> src) & 0xFF) << b);
+                        }
+                        s.regs[rd] = r; break;
+                    }
+                    if ((rs2 & 0x1F) == RV::ZSUB_BREV8) {          // brev8：每字节内位反转
+                        XLen r = 0;
+                        for (int b = 0; b < XLEN; b += 8) {
+                            uint32_t byte = (uint32_t)((v1 >> b) & 0xFF), rev = 0;
+                            for (int i = 0; i < 8; ++i) rev |= ((byte >> i) & 1u) << (7 - i);
+                            r |= (XLen)(rev << b);
+                        }
+                        s.regs[rd] = r; break;
+                    }
                 }
-                s.regs[rd] = r; break;
+                [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
             }
         }
         if (bad_enc) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
@@ -1000,7 +1018,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     case RV::OP: {
     // ---- Zba / Zbb / Zbs：funct7 与基础运算不同，先在这里分流 ----
     // 这些扩展的编码复用 OP，靠 funct7 区分，必须在下面的 funct7 白名单之前处理
-    if (f7 == 0x05) {          // MAX/MAXU/MIN/MINU
+    // Zbc 的 clmul 系列也用 funct7=0x05，占 f3=1/2/3；max/min 占 4/5/6/7，
+    // 所以这里的判断必须带 f3，否则会把 clmul 一起 trap 掉
+    if (f7 == 0x05 && (f3 == 4 || f3 == 5 || f3 == 6 || f3 == 7)) {   // MAX/MAXU/MIN/MINU
         const bool sg = (f3 == 6 || f3 == 4);
         if (sg) {
             if (f3 == 6) s.regs[rd] = ((SXLen)v1 > (SXLen)v2) ? v1 : v2;   // MAX
@@ -1021,15 +1041,16 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         break;
     }
-    if (f7 == 0x14) {          // Zbs：bset/bclr/binv/bext（寄存器形式）
-        const XLen m = (XLen)1 << (v2 & (XLEN - 1));
-        switch (f3) {
-        case 1: s.regs[rd] = v1 | m; break;
-        case 2: s.regs[rd] = v1 & ~m; break;
-        case 3: s.regs[rd] = v1 ^ m; break;
-        case 5: s.regs[rd] = (v1 >> (v2 & (XLEN - 1))) & 1; break;
-        default: [[unlikely]] takeTrap(s, RV::EXC_II, inst); return;
-        }
+    // Zbs 的寄存器形式分三组 funct7：bset=0x14、bclr/bext=0x24、binv=0x34。
+    // 用 f3 再区分具体是哪条：单比特操作都是 f3=1，bext 是 f3=5
+    if (f7 == RV::F7_ZBS_BSET || f7 == RV::F7_ZBS_BCLR || f7 == RV::F7_ZBS_BINV) {
+        const uint32_t sh = (uint32_t)(v2 & (XLEN - 1));
+        const XLen m = (XLen)1 << sh;
+        if (f7 == RV::F7_ZBS_BSET && f3 == 1) s.regs[rd] = v1 | m;               // bset
+        else if (f7 == RV::F7_ZBS_BCLR && f3 == 1) s.regs[rd] = v1 & ~m;         // bclr
+        else if (f7 == RV::F7_ZBS_BINV && f3 == 1) s.regs[rd] = v1 ^ m;          // binv
+        else if (f7 == RV::F7_ZBS_BCLR && f3 == 5) s.regs[rd] = (v1 >> sh) & 1;  // bext
+        else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         break;
     }
     // Zbb：andn/orn/xnor。funct7=0x20 同时是标准 SUB/SRA 的编码（f3=0/5），
@@ -1046,6 +1067,38 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         else if (f3 == 5) s.regs[rd] = (XLen)(((uint64_t)v1 >> sh) | (XLen)(v1 << ((XLEN - sh) & (XLEN - 1))));
         else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         break;
+    }
+    // Zbc 的 clmul 系列（funct7=0x05，与 max/min 共用，按 f3 区分：clmul=1/clmulh=3/clmulr=2）
+    if (f7 == RV::F7_ZBC_CLMUL && (f3 == 1 || f3 == 2 || f3 == 3)) {
+        unsigned __int128 acc = 0;
+        for (int b = 0; b < XLEN; ++b)
+            if ((v2 >> b) & 1) acc ^= (unsigned __int128)((uint64_t) v1) << b;
+        if (f3 == 1) s.regs[rd] = (XLen) acc;                       // clmul
+        else if (f3 == 3) s.regs[rd] = (XLen)(uint64_t)(acc >> XLEN); // clmulh
+        else s.regs[rd] = (XLen)(uint64_t)(acc >> 1);                // clmulr
+        break;
+    }
+    // Zicond 的 czero（funct7=0x07）：eqz 是 f3=5、nez 是 f3=7
+    if (f7 == RV::F7_ZICOND && (f3 == 5 || f3 == 7)) {
+        if (f3 == 5) s.regs[rd] = (v2 == 0) ? 0 : v1;
+        else         s.regs[rd] = (v2 != 0) ? 0 : v1;
+        break;
+    }
+    // Zbkb 的 pack/packh 与 Zba 的 add.uw 共用 funct7=0x04，按 funct3 区分：
+    // pack=4、packh=7、add.uw=0。这些编码是从测试 ELF 反汇编里核出来的
+    if (f7 == RV::F7_ZUW) {
+        if (f3 == 4) {   // pack：两侧各取低一半拼起来
+            if constexpr (XLEN == 64)
+                s.regs[rd] = (XLen)((((uint64_t) v1) & 0xFFFFFFFFULL) | ((((uint64_t) v2) & 0xFFFFFFFFULL) << 32));
+            else
+                s.regs[rd] = (XLen)((((uint64_t) v1) & 0xFFFFULL) | ((((uint64_t) v2) & 0xFFFFULL) << 16));
+            break;
+        }
+        if (f3 == 7) {   // packh：两侧各取低 8 位
+            s.regs[rd] = (XLen)((((uint64_t) v1) & 0xFFULL) | ((((uint64_t) v2) & 0xFFULL) << 8));
+            break;
+        }
+        [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
     }
     // funct7 的合法值取决于 funct3，必须在 switch 之前统一判断：
     // f3=0 是 ADD/SUB（0x00/0x20）、f3=5 是 SRL/SRA（0x00/0x20）、
@@ -1119,7 +1172,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             const uint32_t lo1 = (uint32_t) v1;
             const uint32_t sh = rs2 & 0x1F;
             // ---- Zba/Zbb 的 W 形式：funct7 与基础 OP-IMM-32 不同，先分流 ----
-            if (f7 == 0x02) {   // slli.uw：把 32 位零扩展后左移
+            // slli.uw 的编码是 funct7=0x04（与 add.uw 同组），不是 0x02——这是从 ELF 反汇编核出来的
+            if (f7 == RV::F7_ZUW) {   // slli.uw：把 32 位零扩展后左移
                 if (f3 != 1) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
                 s.regs[rd] = (XLen) lo1 << (rs2 & 0x1F);
                 break;
@@ -1161,9 +1215,25 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             const bool sub = (f7 == RV::F7_SUB_SRA);
             const uint32_t lo1 = (uint32_t) v1, lo2 = (uint32_t) v2;
             // ---- Zba/Zbb 的 W 形式 ----
-            if (f7 == 0x04) {   // add.uw：rs1 低 32 位零扩展后加 rs2
+            // 0x3B 上 funct7=0x04 的一组：add.uw(f3=0)、zext.h 与 packw(f3=4，靠 rs2 区分)
+            if (f7 == RV::F7_ZUW) {
+                if (f3 == 4) {
+                    if (lo2 == 0) { s.regs[rd] = (XLen)(v1 & 0xFFFF); break; }   // zext.h（rs2=0）
+                    uint32_t r = (lo1 & 0xFFFF) | ((lo2 & 0xFFFF) << 16);         // packw
+                    s.regs[rd] = (XLen)(SXLen)(int32_t) r;
+                    break;
+                }
                 if (f3 != 0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-                s.regs[rd] = (XLen)(uint32_t) v1 + v2;
+                s.regs[rd] = (XLen)(uint32_t) v1 + v2;   // add.uw
+                break;
+            }
+            // Zba 的 .uw 形式：sh1add.uw/sh2add.uw/sh3add.uw 与 sh1add 同 funct7，靠 opcode 区分
+            if (f7 == RV::F7_ZBA_SHADD) {
+                const XLen basew = (XLen)(uint32_t) v1;
+                if (f3 == 2) s.regs[rd] = (XLen)(basew << 1) + v2;
+                else if (f3 == 4) s.regs[rd] = (XLen)(basew << 2) + v2;
+                else if (f3 == 6) s.regs[rd] = (XLen)(basew << 3) + v2;
+                else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
                 break;
             }
             if ((f7 & ~1u) == 0x10u) {   // sh1add.uw / sh2add.uw / sh3add.uw
