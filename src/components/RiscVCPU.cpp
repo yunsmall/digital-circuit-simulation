@@ -1547,13 +1547,18 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // FSQRT 的 rs2 固定为 0，f0 不是它的输入，拿来判 sNaN 会误报 NV
         bool snan_in = is_snan(s.fregs[rs1]) || (f7 != RV::F7_FSQRT && is_snan(s.fregs[rs2]));
         uint32_t rm = f3;
-        auto setf = [&](float v) { s.fregs[rd] = f2u(v); };
+        // 单精度结果写进 64 位寄存器时只改低 32 位：高半必须保持原样。
+        // RISC-V 用 NaN-boxing 区分"合法单精度"和"双精度值"，整体赋值会把
+        // 高半清零，随后的 fmv.x.d 就读到错的位模式
+        auto setf = [&](float v) {
+            s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | (uint64_t) f2u(v);
+        };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
         auto setf_flags = [&](double exact, bool cancelled_to_zero = false, bool extra_inexact = false) {
             float r = round_to_float(exact, cur_rm, cancelled_to_zero);
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
-                s.fregs[rd] = 0x7FC00000u;
+                s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | 0x7FC00000u;
                 // sNaN 输入本身就是非法运算；其余情况是"非 NaN 输入算出了 NaN"
                 if (snan_in || (!std::isnan(a) && !std::isnan(b))) s.fcsr |= 0x10;
                 return;
@@ -1616,14 +1621,15 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             case 2: sign = (ua ^ ub) & 0x80000000u; break;   // FSGNJX
             default: takeTrap(s, RV::EXC_II, inst); return;  // f3 >= 3 是保留编码
             }
-            s.fregs[rd] = (ua & 0x7FFFFFFFu) | sign;
+            // 只改低 32 位，高半保持（NaN-boxing）
+            s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | (uint64_t)((ua & 0x7FFFFFFFu) | sign);
             break;
         }
         case RV::F7_FMINMAX:
             if (f3 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // f3 >= 2 是保留编码
             // NaN 参与时返回另一个操作数并置 NV；两个都是 NaN 才返回 canonical NaN
             if (snan_in) s.fcsr |= 0x10;
-            if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = 0x7FC00000u;
+            if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | 0x7FC00000u;
             else if (std::isnan(a)) setf(b);
             else if (std::isnan(b)) setf(a);
             else if (f3 == 0) {
