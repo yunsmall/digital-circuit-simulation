@@ -100,6 +100,8 @@ class RiscVCPU : public Component {
 public:
     // 地址与通用寄存器的宽度：RV32 用 32 位，RV64 用 64 位
     using XLen = std::conditional_t<XLEN == 32, uint32_t, uint64_t>;
+    // 有符号形式，用于比较/符号扩展；在 32 位构建里仍旧是 int32_t，行为不变
+    using SXLen = std::conditional_t<XLEN == 32, int32_t, int64_t>;
 
     explicit RiscVCPU(const std::string &name);
     ~RiscVCPU() override;

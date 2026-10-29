@@ -554,9 +554,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     int32_t iu=(int32_t)(inst&0xFFFFF000);
     int32_t ij=((int32_t)((inst>>21)&0x3FF)<<1)|((int32_t)((inst>>20)&1)<<11)|
                ((int32_t)((inst>>12)&0xFF)<<12)|((int32_t)((inst>>31)&1)<<20); ij=(ij<<11)>>11;
-    uint32_t v1=s.regs[rs1], v2=s.regs[rs2];
-    int32_t s1=(int32_t)v1, s2=(int32_t)v2;
-    uint32_t npc=s.pc+4;
+    // 这些量必须按 XLEN 取宽：RV64 下把 64 位寄存器截成 uint32_t 会让高半截直接丢失，
+    // 依赖 64 位值的地址计算和跳转会算错
+    XLen v1=s.regs[rs1], v2=s.regs[rs2];
+    SXLen s1=(SXLen)v1, s2=(SXLen)v2;
+    XLen npc=s.pc+4;
 
         // 已知局限：这里假设宿主的浮点舍入方向是 RNE（默认值，本项目不调 fesetround）。
         // 若宿主被改成其他方向，"(t)float" 和 double 运算本身都会跟着变，
