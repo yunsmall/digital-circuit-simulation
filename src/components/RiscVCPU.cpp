@@ -590,6 +590,9 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                             // FLD 要 8 字节，而 value 是 XLen 宽——RV32 下只有 32 位，
                             // 高半会被截掉。直接从 acc_wide 取完整的 8 字节
                             s.fregs[s.bus_rd] = (uint64_t)(s.acc_wide >> (8 * (s.acc_va & 3)));
+                        } else if (s.bus_funct3 == 1) {
+                            // FLH：取低 16 位，高 48 位填全 1（NaN-boxing）
+                            s.fregs[s.bus_rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t)(uint16_t) value;
                         } else {
                             // FLW 只提供 32 位，写回时高半必须填全 1（NaN-boxing）
                             s.fregs[s.bus_rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) value;
@@ -705,6 +708,101 @@ void RiscVCPU<XLEN>::cpuReset(void *state_ptr) {
 // csrImplemented 的定义在文件后半段，execute 需要先看到声明
 template<int XLEN> requires SupportedXlen<XLEN>
 static bool csrImplemented(uint32_t addr);
+
+// ---- Zfh 半精度辅助 ----
+// 不用 clang 的 _Float16：它依赖 compiler-rt 的 __extendhfsf2/__truncsfhf2，
+// 本工程不链 compiler-rt，链接会直接失败。half 的字段少，按位展开即可，
+// 中间结果一律用 double 承载：double 的 53 位尾数足以精确表示两个 half 的和/积，
+// 所以"先算 double 再舍入到 half"不会引入双重舍入误差。
+inline double halfToDouble(uint16_t h) {
+    const bool neg = (h & 0x8000) != 0;
+    const int e = (h >> 10) & 0x1F;
+    const int m = h & 0x3FF;
+    double v;
+    if (e == 0) v = std::ldexp((double) m, -24);              // 非规格化：m * 2^-24
+    else if (e == 31) v = (m == 0) ? std::numeric_limits<double>::infinity()
+                                   : std::numeric_limits<double>::quiet_NaN();
+    else v = std::ldexp((double)(0x400 | m), e - 25);        // 1.m * 2^(e-15)
+    return neg ? -v : v;
+}
+
+// 按 RISC-V 的 rm 编码（0=RNE 1=RTZ 2=RDN 3=RUP 4=RMM）把 x 舍入成整数
+inline double roundByRm(double x, uint32_t rm) {
+    switch (rm) {
+    case 0: {
+        double fl = std::floor(x), ce = std::ceil(x);
+        double dlo = x - fl, dhi = ce - x;
+        if (dlo < dhi) return fl;
+        if (dhi < dlo) return ce;
+        return std::fmod(fl, 2.0) == 0.0 ? fl : ce;          // 中点取偶
+    }
+    case 1: return std::trunc(x);
+    case 2: return std::floor(x);
+    case 3: return std::ceil(x);
+    default: { double t = std::trunc(x), f = x - t; if (std::fabs(f) >= 0.5) t += (x > 0 ? 1.0 : -1.0); return t; }
+    }
+}
+
+// 把 double 按 rm 舍入成 half 位模式；fflags 用 RISC-V 的位布局累加（NX=1, OF=4, NV=0x10）
+inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
+    const bool neg = std::signbit(v);
+    const uint16_t sign = neg ? 0x8000 : 0;
+    if (std::isnan(v)) {
+        uint64_t bits; std::memcpy(&bits, &v, 8);
+        // double 的 signaling NaN：无 quiet 位但有尾数
+        const bool snan = (bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL
+                       && (bits & 0x000FFFFFFFFFFFFFULL) != 0
+                       && (bits & 0x0008000000000000ULL) == 0;
+        if (snan) fflags |= 0x10;
+        return 0x7E00;                                       // canonical NaN
+    }
+    if (std::isinf(v)) return sign | 0x7C00;
+    if (v == 0.0) return sign;
+
+    const double a = std::fabs(v);
+    const double min_normal = std::ldexp(1.0, -14);
+    const double max_half = 65504.0;                         // 2^16 - 2^5
+
+    double ulp;
+    int exp = 0;
+    const bool subnormal = (a < min_normal);
+    if (subnormal) {
+        ulp = std::ldexp(1.0, -24);                          // 非规格化步长
+    } else {
+        int e2;
+        std::frexp(a, &e2);                                  // a = f * 2^e2, f∈[0.5,1)
+        exp = e2 - 1;
+        ulp = std::ldexp(1.0, exp - 10);                     // 10 位尾数
+    }
+
+    // 溢出：|v| 超过 half 能表示的范围时按 rm 决定给 inf 还是最大有限值
+    if (a > max_half) {
+        const bool to_inf = (rm == 1) ? false                      // RTZ
+                          : (rm == 2) ? neg                        // RDN
+                          : (rm == 3) ? !neg                        // RUP
+                          : (a >= 65520.0);                         // RNE/RMM：中点以上才到 inf
+        if (to_inf) { fflags |= 0x04 | 0x01; return sign | 0x7C00; }
+        fflags |= 0x04 | 0x01;
+        return sign | 0x7BFF;                                     // 最大有限值
+    }
+
+    const double x = a / ulp;
+    double n = roundByRm(x, rm);
+    if (n != x) fflags |= 0x01;                                   // NX
+    if (n == 0.0) return sign;
+
+    uint16_t out;
+    if (subnormal) {
+        // 非规格化：n 就是尾数本身（n==1024 时自然进位到最小正规数的位模式）
+        out = (uint16_t) n;
+    } else {
+        int e = exp + 15;
+        int m = (int) n - 1024;                                  // 去掉隐含的 1
+        if (m >= 1024) { e++; m = 0; }                           // 舍入进位
+        out = (uint16_t)((e << 10) | m);
+    }
+    return sign | out;
+}
 
 template<int XLEN> requires SupportedXlen<XLEN>
 void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
@@ -1350,18 +1448,20 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         s.amo_hi_write = false;
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
-    // ---- 浮点访存（FLW / FSW，自然对齐；非对齐按规范触发异常）----
+    // ---- 浮点访存（FLH/FLW/FLD、FSH/FSW/FSD，自然对齐；非对齐按规范触发异常）----
     case RV::LOAD_FP: {
         // FLW/FLD 写完 freg 后 FS 必须是 Dirty，否则上下文切换不会保存浮点寄存器
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
-        // f3=2 是 FLW（4 字节），f3=3 是 FLD（8 字节，只有 RV64 有）
-        // D 扩展与 XLEN 无关，RV32 也支持 8 字节的 FSD
-        if (f3 != 2 && f3 != 3) [[unlikely]]
+        // f3=1 是 FLH（2 字节，Zfh），f3=2 是 FLW（4 字节），f3=3 是 FLD（8 字节）
+        if (f3 != 1 && f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
-        if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
-        wb_adr=pa; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
+        // FLH 只要求 2 字节对齐，其余要求 4 字节
+        if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
+        // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
+        // 地址要抹掉低两位，具体取哪半由 acc_va 在读回时移位决定
+        wb_adr=pa & ~(XLen)3; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
         s.bus_adr=pa; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_fp=1;
         // 读响应按 acc_va 的低两位移位，不记就会用上一条访存的残留偏移
         s.acc_va=pa; s.acc_stage = 0;
@@ -1373,15 +1473,20 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     case RV::STORE_FP: {
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
-        // f3=2 是 FSW，f3=3 是 FSD。D 扩展与 XLEN 无关，RV32 也能写 8 字节
-        if (f3 != 2 && f3 != 3) [[unlikely]]
+        // f3=1 是 FSH（2 字节），f3=2 是 FSW，f3=3 是 FSD
+        if (f3 != 1 && f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
-        if (pa & 3u) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
+        if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
         if (s.lr_valid && s.lr_addr == (pa & ~(XLen)3)) s.lr_valid = false;
-        wb_adr=pa; wb_we=true; wb_sel=0x0F; wb_dat=(uint32_t) s.fregs[rs2]; wb_stb=wb_cyc=true; need_mem=true;
-        s.bus_adr=pa; s.bus_wdat=(uint32_t) s.fregs[rs2]; s.bus_we=true; s.bus_sel=0x0F; s.bus_fp=0; s.acc_stage=0;
+        // 总线只接受字对齐地址：FSH/FSW 按字内偏移搬字节，FSD 走拆段机制
+        uint32_t p = (uint32_t)(pa & 3);
+        uint32_t wdat = (f3 == 1) ? ((uint32_t)(uint16_t) s.fregs[rs2] << (8 * p))
+                                  : ((uint32_t) s.fregs[rs2] << (8 * p));
+        uint8_t sel = (f3 == 1) ? (uint8_t)(0x3u << p) : (uint8_t)(0xFu << p);
+        wb_adr=pa & ~(XLen)3; wb_we=true; wb_sel=sel; wb_dat=wdat; wb_stb=wb_cyc=true; need_mem=true;
+        s.bus_adr=pa & ~(XLen)3; s.bus_wdat=wdat; s.bus_we=true; s.bus_sel=sel; s.bus_fp=0; s.acc_stage=0;
         // FSD 要写 8 字节，复用拆段机制：acc_raw 存待写数据，acc_f3=3 表示 8 字节
         if (f3 == 3) { s.acc_va = pa; s.acc_raw = s.fregs[rs2]; s.acc_f3 = 3; s.acc_stage = 1; }
         } break;
@@ -1400,6 +1505,32 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         const uint32_t fma_fmt = (inst >> 25) & 3u;
+        if (fma_fmt == 2u) {
+            // 半精度 FMA：double 的 53 位尾数足以容纳 half 的 22 位乘积加上对齐余量，
+            // std::fma 保证乘加只舍入一次，最后再按 rm 舍入到 half
+            const uint32_t rs3h = (inst >> 27) & 0x1F;
+            const uint32_t rmv = (f3 == 7) ? ((s.fcsr >> 5) & 7u) : f3;
+            auto readH = [&](int idx) -> double {
+                if ((s.fregs[idx] >> 16) != 0xFFFFFFFFFFFFULL)
+                    return std::numeric_limits<double>::quiet_NaN();
+                return halfToDouble((uint16_t) s.fregs[idx]);
+            };
+            double a = readH(rs1), b = readH(rs2), c = readH(rs3h);
+            double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
+                                                  : std::fma(-a, b, (op == 0x4B) ? c : -c);
+            {
+                double p = a * b;
+                double pe = std::fma(a, b, -p);
+                double sp = p + c;
+                double bb = sp - p;
+                double se = (p - (sp - bb)) + (c - bb);
+                if (std::isfinite(m) && (pe + se) != 0.0) s.fcsr |= 0x01;   // NX
+            }
+            if (std::isnan(m)) { s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL; s.fcsr |= 0x10; }
+            else s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t) doubleToHalf(m, rmv, s.fcsr);
+            s.mstatus |= (3u << 13); // 写 freg，FS 置 Dirty
+            break;
+        }
         if (fma_fmt == 1u) {
             // 双精度 FMA：宿主 double 就是 64 位 IEEE754，用 std::fma 保证"乘加只舍入一次"，
             // 这才是 FMA 相对先乘后加的意义。D 扩展与 XLEN 无关，RV32 同样支持
@@ -1488,22 +1619,37 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- 单精度浮点运算（F 扩展），寄存器内容是 IEEE754 位模式 ----
     case RV::OP_FP: {
-        // RISC-V 的 F 和 D 共用这条 opcode，靠 funct7 的 fmt 域区分：
-        // fmt=00 是单精度、01 是双精度，所以 (f7 & 1) 就够判断，f7 & ~1 拿到对应的 F 操作码
-        // FCVT.S.D / FCVT.D.S 是跨精度的，funct7 的 fmt 位指向的是【源】还是【目标】
-        // 要按 rs2 区分：f7=0x20（fmt=S）且 rs2=1 是 FCVT.D.S，f7=0x21（fmt=D）且 rs2=0 是 FCVT.S.D
-        if ((f7 & ~1u) == 0x20u && (rs2 == 1 || rs2 == 0) && ((f7 & 1u) != rs2)) {
-            if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
-            const uint32_t erm = (f3 == 7) ? ((s.fcsr >> 5) & 7u) : f3;
-            if (erm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-            if ((f7 & 1u) != 0u) {
-                // FCVT.D.S：单精度 -> 双精度。float 的每个值 double 都能精确表示，不会丢精度
-                float fv; uint32_t u = (uint32_t) s.fregs[rs1];
-                std::memcpy(&fv, &u, 4);
-                if (std::isnan(fv)) { s.fregs[rd] = 0x7FF8000000000000ULL; break; }
-                double dv = (double) fv;
-                std::memcpy(&s.fregs[rd], &dv, 8);
+        // OP-FP 的 funct7[1:0] 是格式域：0=S 1=D 2=H（Zfh）。fmt=3（Q）没实现。
+        const uint32_t fmt = f7 & 3u;
+        // 按格式读写浮点寄存器。half 必须 NaN-boxing：读时 bits[63:16] 不是全 1
+        // 说明这不是合法的半精度值，按 canonical NaN 处理；写时高 48 位填 1
+        auto fregRead = [&](int idx, uint32_t f) -> double {
+            if (f == 0) { uint32_t u = (uint32_t) s.fregs[idx]; float v; std::memcpy(&v, &u, 4); return v; }
+            if (f == 1) { double v; std::memcpy(&v, &s.fregs[idx], 8); return v; }
+            if ((s.fregs[idx] >> 16) != 0xFFFFFFFFFFFFULL)
+                return std::numeric_limits<double>::quiet_NaN();
+            return halfToDouble((uint16_t) s.fregs[idx]);
+        };
+        const uint32_t xrm = (f3 == 7) ? ((s.fcsr >> 5) & 7u) : f3;
+        auto fregWrite = [&](int idx, uint32_t f, double v) {
+            if (f == 0) {
+                float fv = (float) v;
+                uint32_t u; std::memcpy(&u, &fv, 4);
+                s.fregs[idx] = 0xFFFFFFFF00000000ULL | (uint64_t) u;
+            } else if (f == 1) {
+                std::memcpy(&s.fregs[idx], &v, 8);
             } else {
+                s.fregs[idx] = 0xFFFFFFFFFFFF0000ULL | (uint64_t) doubleToHalf(v, xrm, s.fcsr);
+            }
+        };
+        // 跨精度转换（funct7 = 0x20|dst，rs2 = 源格式）
+        if ((f7 & ~3u) == 0x20u) {
+            const uint32_t dst = fmt, src = rs2;
+            // 同格式或超出 S/D/H 都是保留编码
+            if (dst > 2 || src > 2 || dst == src) { takeTrap(s, RV::EXC_II, inst); return; }
+            if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
+            if (xrm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
+            if (dst == 0 && src == 1) {
                 // FCVT.S.D：双精度 -> 单精度。舍入要按 rm 走，不能一律用宿主的 RNE；
                 // 带宽度的舍入要对"超出 float 范围"和"恰好中点"分别处理
                 double dv; std::memcpy(&dv, &s.fregs[rs1], 8);
@@ -1523,10 +1669,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     float fv;
                     if (mag > fmax) {
                         // 太大：按 rm 决定是给 inf 还是最大有限值
-                        bool to_inf = (erm == 0) ? (mag >= half_fmax)
-                                    : (erm == 1) ? false
-                                    : (erm == 2) ? neg
-                                    : (erm == 3) ? !neg
+                        bool to_inf = (xrm == 0) ? (mag >= half_fmax)
+                                    : (xrm == 1) ? false
+                                    : (xrm == 2) ? neg
+                                    : (xrm == 3) ? !neg
                                     : (mag >= half_fmax);
                         fv = to_inf ? (neg ? -INFINITY : INFINITY)
                                     : (neg ? -std::numeric_limits<float>::max()
@@ -1541,9 +1687,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                             double hi = lo;
                             if (lo > dv) { hi = lo; lo = std::nextafter(lo, 0.0); }
                             else { lo = lo; hi = std::nextafter(lo, neg ? -INFINITY : INFINITY); }
-                            double pick = (erm == 1) ? (neg ? hi : lo)     // RTZ
-                                        : (erm == 2) ? lo                  // RDN
-                                        : (erm == 3) ? hi                  // RUP
+                            double pick = (xrm == 1) ? (neg ? hi : lo)     // RTZ
+                                        : (xrm == 2) ? lo                  // RDN
+                                        : (xrm == 3) ? hi                  // RUP
                                         : std::fabs(dv - lo) < std::fabs(hi - dv) ? lo
                                           : std::fabs(dv - lo) > std::fabs(hi - dv) ? hi
                                           : (std::fmod(lo, 2.0) == 0.0 ? lo : hi);   // RNE 中点取偶
@@ -1554,10 +1700,164 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) 0;
                     std::memcpy(&s.fregs[rd], &fv, 4);
                 }
+            } else if (dst == 1 && src == 0) {
+                // FCVT.D.S：单精度 -> 双精度。float 的每个值 double 都能精确表示，不会丢精度
+                float fv; uint32_t u = (uint32_t) s.fregs[rs1];
+                std::memcpy(&fv, &u, 4);
+                if (std::isnan(fv)) { s.fregs[rd] = 0x7FF8000000000000ULL; break; }
+                double dv = (double) fv;
+                std::memcpy(&s.fregs[rd], &dv, 8);
+            } else {
+                // 涉及 half 的转换：half→S/D 精确（float/double 都能表示所有 half 值），
+                // S/D→half 由 fregWrite 里的 doubleToHalf 按 rm 舍入
+                fregWrite(rd, dst, fregRead(rs1, src));
             }
             break;
         }
-        const bool is_d = (f7 & RV::FMT_D) != 0;
+        // ---- Zfh：fmt=2 的全部算术/比较/转换指令 ----
+        if (fmt == 2) {
+            if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
+            if (xrm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
+            const uint32_t op = f7 & ~3u;
+            const double ha = fregRead(rs1, 2), hb = fregRead(rs2, 2);
+            auto is_snan_h = [](uint64_t u) {
+                if ((u >> 16) != 0xFFFFFFFFFFFFULL) return false;
+                uint16_t h = (uint16_t) u;
+                return ((h >> 10) & 0x1F) == 0x1F && (h & 0x3FF) != 0 && !(h & 0x200);
+            };
+            const bool hsnan = is_snan_h(s.fregs[rs1])
+                            || (op != RV::F7_FSQRT && is_snan_h(s.fregs[rs2]));
+            auto setHalf = [&](double v) {
+                s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t) doubleToHalf(v, xrm, s.fcsr);
+            };
+            // 算术运算产生 NaN 且输入里没有 NaN，说明是无效运算（inf-inf、0*inf、
+            // 0/0、inf/inf、sqrt 负数），规范要求置 NV
+            auto setHalfOp = [&](double v) {
+                if (std::isnan(v)) {
+                    const bool invalid = !std::isnan(ha) && (op == RV::F7_FSQRT || !std::isnan(hb));
+                    s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL;
+                    if (hsnan || invalid) s.fcsr |= 0x10;
+                } else {
+                    setHalf(v);
+                }
+            };
+            auto cvtToIntHalf = [&](double a) -> double {
+                // FCVT.W/WU/L/LU.H：先按 rm 舍入到整数，再按目标宽度饱和
+                switch (xrm) {
+                case 1: return std::trunc(a);
+                case 2: return std::floor(a);
+                case 3: return std::ceil(a);
+                case 4: { double t = std::trunc(a), fr = a - t; if (std::fabs(fr) >= 0.5) t += (a > 0 ? 1.0 : -1.0); return t; }
+                default: {
+                    double fl = std::floor(a), ce = std::ceil(a);
+                    double dlo = a - fl, dhi = ce - a;
+                    if (dlo < dhi) return fl;
+                    if (dhi < dlo) return ce;
+                    return std::fmod(fl, 2.0) == 0.0 ? fl : ce;
+                }
+                }
+            };
+            switch (op) {
+            case RV::F7_FADD: setHalfOp(ha + hb); break;
+            case RV::F7_FSUB: setHalfOp(ha - hb); break;
+            case RV::F7_FMUL: setHalfOp(ha * hb); break;
+            case RV::F7_FDIV: setHalfOp(ha / hb); break;
+            case RV::F7_FSQRT: setHalfOp(std::sqrt(ha)); break;
+            case RV::F7_FSGNJ: {
+                uint16_t ua = (uint16_t) s.fregs[rs1], ub = (uint16_t) s.fregs[rs2];
+                uint16_t sg;
+                if (f3 == 0) sg = ub & 0x8000;              // FSGNJ
+                else if (f3 == 1) sg = (~ub) & 0x8000;      // FSGNJN
+                else if (f3 == 2) sg = (ua ^ ub) & 0x8000;  // FSGNJX
+                else { takeTrap(s, RV::EXC_II, inst); return; }
+                s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t)((ua & 0x7FFFu) | sg);
+                break;
+            }
+            case RV::F7_FMINMAX: {
+                if (std::isnan(ha) && std::isnan(hb)) { s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL; break; }
+                if (std::isnan(ha)) { setHalf(hb); if (hsnan) s.fcsr |= 0x10; break; }
+                if (std::isnan(hb)) { setHalf(ha); if (hsnan) s.fcsr |= 0x10; break; }
+                // ±0 相等：fmin 取负零、fmax 取正零（IEEE 754 规定 -0 < +0）
+                if (f3 == 0) setHalf(ha == hb ? (std::signbit(ha) ? ha : hb) : std::fmin(ha, hb));
+                else if (f3 == 1) setHalf(ha == hb ? (std::signbit(ha) ? hb : ha) : std::fmax(ha, hb));
+                else { takeTrap(s, RV::EXC_II, inst); return; }
+                break;
+            }
+            case RV::F7_FCMP: {
+                if (f3 >= 3) { takeTrap(s, RV::EXC_II, inst); return; }
+                uint32_t r = 0;
+                if (std::isnan(ha) || std::isnan(hb)) { if (f3 != 2 || hsnan) s.fcsr |= 0x10; }
+                else if (f3 == 2) r = (ha == hb) ? 1u : 0u;
+                else if (f3 == 1) r = (ha < hb) ? 1u : 0u;
+                else r = (ha <= hb) ? 1u : 0u;
+                s.regs[rd] = r;
+                break;
+            }
+            case RV::F7_FCVT_W_S: {
+                if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
+                double r = cvtToIntHalf(ha);
+                if (std::isnan(r)) { s.fcsr |= 0x10; }
+                // 截掉小数部分（或舍入改变数值）就是不精确
+                if (std::isfinite(ha) && std::isfinite(r) && r != ha) s.fcsr |= 0x01;
+                if (rs2 == 0) {
+                    if (std::isnan(r) || r >= 2147483648.0) { s.regs[rd] = (XLen)(SXLen)0x7FFFFFFF; s.fcsr |= 0x10; }
+                    else if (r < -2147483648.0) { s.regs[rd] = (XLen)(SXLen)(int32_t)0x80000000; s.fcsr |= 0x10; }
+                    else s.regs[rd] = (XLen)(SXLen)(int32_t) r;
+                } else if (rs2 == 1) {
+                    if (std::isnan(r) || r >= 4294967296.0) { s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t)0xFFFFFFFFu; s.fcsr |= 0x10; }
+                    else if (r < 0.0) { s.regs[rd] = 0; s.fcsr |= 0x10; }
+                    else s.regs[rd] = (XLen)(SXLen)(int32_t)(uint32_t) r;
+                } else if (rs2 == 2) {
+                    if (std::isnan(r) || r >= 9223372036854775808.0) { s.regs[rd] = (XLen)0x7FFFFFFFFFFFFFFFULL; s.fcsr |= 0x10; }
+                    else if (r < -9223372036854775808.0) { s.regs[rd] = (XLen)0x8000000000000000ULL; s.fcsr |= 0x10; }
+                    else s.regs[rd] = (XLen)(SXLen) r;
+                } else {
+                    if (std::isnan(r) || r >= 18446744073709551616.0) { s.regs[rd] = (XLen)0xFFFFFFFFFFFFFFFFULL; s.fcsr |= 0x10; }
+                    else if (r < 0.0) { s.regs[rd] = 0; s.fcsr |= 0x10; }
+                    else s.regs[rd] = (XLen) r;
+                }
+                break;
+            }
+            case RV::F7_FCVT_S_W: {
+                if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
+                double d;
+                if (rs2 == 0) d = (double)(int32_t) v1;
+                else if (rs2 == 1) d = (double)(uint32_t) v1;
+                else if (rs2 == 2) d = (double)(int64_t) v1;
+                else d = (double)(uint64_t) v1;
+                setHalf(d);
+                break;
+            }
+            case RV::F7_FMV_X_W:
+                if (f3 == 0) {
+                    // FMV.X.H：把低 16 位符号扩展到 XLEN
+                    s.regs[rd] = (XLen)(SXLen)(int16_t)(uint16_t) s.fregs[rs1];
+                } else if (f3 == 1) {
+                    uint16_t u = (uint16_t) s.fregs[rs1], cls = 0;
+                    const bool sign = (u >> 15) != 0;
+                    const uint32_t e = (u >> 10) & 0x1F, m = u & 0x3FF;
+                    if (e == 0x1F && m == 0) cls = sign ? (1u << 0) : (1u << 7);
+                    else if (e == 0x1F) cls = (m & 0x200) ? (1u << 9) : (1u << 8);
+                    else if (e == 0 && m == 0) cls = sign ? (1u << 3) : (1u << 4);
+                    else if (e == 0) cls = sign ? (1u << 2) : (1u << 5);
+                    else cls = sign ? (1u << 1) : (1u << 6);
+                    s.regs[rd] = cls;
+                } else {
+                    takeTrap(s, RV::EXC_II, inst); return;
+                }
+                break;
+            case RV::F7_FMV_W_X:
+                if (f3 != 0) { takeTrap(s, RV::EXC_II, inst); return; }
+                // FMV.H.X：低 16 位进 f 寄存器，高 48 位填 1（NaN-boxing）
+                s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t)(uint16_t) v1;
+                break;
+            default:
+                takeTrap(s, RV::EXC_II, inst); return;
+            }
+            break;
+        }
+        if (fmt == 3) { takeTrap(s, RV::EXC_II, inst); return; } // Q 扩展未实现
+        const bool is_d = (fmt == 1);
         // D 扩展与 XLEN 无关：架构上 f 寄存器始终是 64 位宽，RV32 也有 D
         if (is_d) {
             if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
@@ -2230,7 +2530,8 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
                | (1u << 8)   // I
                | (1u << 12)  // M
                | (1u << 18)  // S
-               | (1u << 20); // U
+               | (1u << 20)  // U
+               | (1u << 21); // H（Zfh 半精度浮点）
     }
     case RV::CSR_MEDELEG: return s.medeleg;
     case RV::CSR_MIDELEG: return s.mideleg;

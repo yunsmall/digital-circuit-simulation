@@ -43,14 +43,20 @@ plan_suite() {
         [ -e "$s" ] || continue
         name=$(basename "$s" .S)
         mkdir -p "$STRIP/$suite"
-        # 去掉 .global mtvec_handler / .global stvec_handler（见文件头说明）
-        grep -v -E '^[[:space:]]*\.global[[:space:]]+(mtvec|stvec)_handler' "$s" \
-            > "$STRIP/$suite/$name.S" || true
+        # 两阶段编译：先 C 预处理展开宏——.float16 藏在 test_macros.h 的宏体内，
+        # 直接 grep 源文件看不到；展开后再把 clang 汇编器不认识的东西换掉
+        $CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi \
+            -I"$ENVINC/p" -I"$ISADIR" -I"$ISADIR/macros/scalar" -I"$ENVINC" \
+            -E "$s" -o "$STRIP/$suite/$name.i.S"
+        # 去掉 .global mtvec_handler / .global stvec_handler（见文件头说明），
+        # 并把 .float16 换成 .hword 位模式
+        grep -v -E '^[[:space:]]*\.global[[:space:]]+(mtvec|stvec)_handler' "$STRIP/$suite/$name.i.S" \
+            | python "$ROOT/tests/riscv-official/fix_float16.py" > "$STRIP/$suite/$name.S"
         # dirty.S 用 "符号 - DRAM_BASE" 计算虚拟地址：只有链接在 DRAM_BASE 时
         # 这个差值才是它期望的低地址（链接在 0 会让 32 位减法回绕）
         link=$LINK_LOW
         [ "$name" = "dirty" ] && link=$LINK_DRAM
-        echo "$CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi -nostdlib -nostartfiles -static -I$ENVINC/p -I$ISADIR -I$ISADIR/macros/scalar -I$ENVINC -T$link -Wl,--no-relax -o $outdir/$suite-p-$name.elf $STRIP/$suite/$name.S || echo FAIL:$suite-p-$name.elf >> $CMDS.fail" >> "$CMDS"
+        echo "$CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi -nostdlib -nostartfiles -static -x assembler -T$link -Wl,--no-relax -o $outdir/$suite-p-$name.elf $STRIP/$suite/$name.S || echo FAIL:$suite-p-$name.elf >> $CMDS.fail" >> "$CMDS"
     done
 }
 
@@ -74,6 +80,7 @@ for x in 32 64; do
     plan_suite $x rv${x}uzbc    ${mbase}im_zbc    $abi $out
     plan_suite $x rv${x}uzbkb   ${mbase}im_zbkb   $abi $out
     plan_suite $x rv${x}uzbs    ${mbase}im_zbs    $abi $out
+    plan_suite $x rv${x}uzfh    ${mbase}imafd_zfh $abi $out  # Zfh 依赖 F，fcvt.h.d 还要 D
     plan_suite $x rv${x}uzicond ${mbase}im_zicond $abi $out
 done
 
