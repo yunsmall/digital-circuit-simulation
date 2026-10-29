@@ -38,8 +38,11 @@ template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::prepare(std::string &) { _prepared = true; return true; }
 template<int XLEN> requires SupportedXlen<XLEN>
 std::vector<Component::JitSymbol> RiscVCPU<XLEN>::extraJitSymbols() const {
-    return {{"_dcs_cpu_tick",reinterpret_cast<void*>(&cpuTick)},
-            {"_dcs_cpu_reset",reinterpret_cast<void*>(&cpuReset)}};
+    // 符号名必须随 XLEN 区分：RV32 和 RV64 的 cpuTick 是两份不同的函数，
+    // 同名注册会让后注册的覆盖先注册的，另一档实例就会被喂进布局不匹配的 CpuState
+    const std::string sfx = (XLEN == 32) ? "_32" : "_64";
+    return {{"_dcs_cpu_tick" + sfx, reinterpret_cast<void*>(&cpuTick)},
+            {"_dcs_cpu_reset" + sfx, reinterpret_cast<void*>(&cpuReset)}};
 }
 
 template<int XLEN> requires SupportedXlen<XLEN>
@@ -48,19 +51,20 @@ std::string RiscVCPU<XLEN>::genStateDecl() const {
                        _id, reinterpret_cast<uintptr_t>(&_state));
 }
 template<int XLEN> requires SupportedXlen<XLEN>
-std::string RiscVCPU<XLEN>::genInitCode() const  { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
+std::string RiscVCPU<XLEN>::genInitCode() const  { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0});\n", _id, (XLEN == 32) ? "_32" : "_64"); }
 template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genDeinitCode() const { return ""; }
 template<int XLEN> requires SupportedXlen<XLEN>
-std::string RiscVCPU<XLEN>::genResetCode() const { return std::format("    _dcs_cpu_reset(_cpu_state_{0});\n", _id); }
+std::string RiscVCPU<XLEN>::genResetCode() const { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0});\n", _id, (XLEN == 32) ? "_32" : "_64"); }
 
 template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     int id = _id;
     std::string code;
     code += std::format("// RISC-V CPU: {}\n", name());
-    code += "extern void _dcs_cpu_tick(void *, const uint8_t *const *, uint8_t *const *);\n";
-    code += "extern void _dcs_cpu_reset(void *);\n\n";
+    const std::string sfx = (XLEN == 32) ? "_32" : "_64";
+    code += "extern void _dcs_cpu_tick" + sfx + "(void *, const uint8_t *const *, uint8_t *const *);\n";
+    code += "extern void _dcs_cpu_reset" + sfx + "(void *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
     code += genInputPtrArray("_in");
     // 输出与组合元件一样经 genOutputWrite：它同时写 _c_out 与 _w，
@@ -70,7 +74,7 @@ std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     code += std::format("    uint8_t *_op[{}] = {{", O_COUNT);
     for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
     code += "};\n";
-    code += std::format("    _dcs_cpu_tick(_cpu_state_{0}, _in, _op);\n", id);
+    code += std::format("    _dcs_cpu_tick{1}(_cpu_state_{0}, _in, _op);\n", id, sfx);
     const int ow[O_COUNT] = {32, 32, 1, 4, 1, 1, 1};
     for (int i = 0; i < O_COUNT; i++)
         code += std::format("    {{ uint32_t _v=0; dcs_memcpy(&_v,_obuf[{}],4); {} }}\n", i,
