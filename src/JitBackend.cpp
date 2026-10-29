@@ -34,15 +34,15 @@ namespace {
 // TCCState 已由 libtcc.h 在全局作用域声明；这里再加一个会让 dsc 内的名字遮蔽它
 #else
 void initCompilerEnv() {
-    static bool done = false;
-    if (done)
-        return;
-    done = true;
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmParser();
-    LLVMInitializeX86AsmPrinter();
+    // 测试夹具会并行编译多个电路，一次性初始化必须线程安全
+    static std::once_flag once;
+    std::call_once(once, [] {
+        LLVMInitializeX86TargetInfo();
+        LLVMInitializeX86Target();
+        LLVMInitializeX86TargetMC();
+        LLVMInitializeX86AsmParser();
+        LLVMInitializeX86AsmPrinter();
+    });
 }
 #endif
 } // namespace

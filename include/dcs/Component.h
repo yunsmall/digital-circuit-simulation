@@ -168,6 +168,9 @@ public:
     // 模式 B 回调直接接收线网指针数组：省掉每 tick 把引脚打包进 16 字节槽、
     // 再把输出解包出来的拷贝。依赖的不变式是 _w[] 高位恒 0、_c_out_* 在 init 时清零。
     [[nodiscard]] std::string genInputPtrArray(std::string_view arr) const;
+    // 回调型元件的输出缓冲 + 指针表。用 static 初始化：每拍不再重建栈上的指针数组，
+    // 定长地址也让编译器能算出固定偏移。clear 为真时每拍整块清零（回调没写满输出时用）
+    [[nodiscard]] std::string genOutputPtrArray(int count, bool clear = true) const;
 
 protected:
     void setParam(const std::string &key, const std::string &value) {

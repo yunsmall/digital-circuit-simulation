@@ -79,11 +79,7 @@ std::string AxiLiteBridge::genFuncDef_seq() const {
     code += genInputPtrArray("_in");
     // 输出先落中间缓冲，再由 genOutputWrite 同时写 _c_out 与 _w；
     // 传给回调的必须是指针数组，二维数组强转会让回调把首字节当指针
-    code += std::format("    uint8_t _obuf[{}][{}];\n", (int) O_COUNT, SLOT);
-    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
-    code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
-    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
-    code += "};\n";
+    code += genOutputPtrArray((int) O_COUNT);
     code += std::format("    _dcs_axib_tick(_axib_state_{0}, _in, _op);\n", _id);
     const int widths[O_COUNT] = {1, 1, 2, 1, 1, 32, 2, 1, 32, 32, 1, 4, 1, 1};
     for (int i = 0; i < O_COUNT; i++)

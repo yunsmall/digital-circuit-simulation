@@ -188,7 +188,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
                 int nid = n->id();
                 if (bus_nets.count(nid))
                     continue; // 总线网留给决议阶段
-                int nb = byte_count(n->bit_width());
+                // 非三态输出在元件函数里已经由 genOutputWrite 直接写进 _w 了，
+                // 这里再整块拷一遍是纯冗余，每拍每个输出能省一次 16 字节写
+                if (!c->outputs()[oi]->isTriState())
+                    continue;
                 oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
                 // _c_out 的高位由 genOutputWrite 清零，整块 16 字节一次拷过去即可：
                 // 比"拷 nb 字节再清剩余"少一次调用，定长拷贝也更容易被编译器展开
@@ -261,7 +264,9 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
             int nid = n->id();
             if (bus_nets_handled.count(nid))
                 continue; // 总线已处理
-            int nb = byte_count(n->bit_width());
+            // 非三态输出已经由 genOutputWrite 直接写进 _w，这里再拷一遍是纯冗余
+            if (!c->outputs()[oi]->isTriState())
+                continue;
             oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
             oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n", nid, c->id(), oi);
             oss << "    } else {\n";

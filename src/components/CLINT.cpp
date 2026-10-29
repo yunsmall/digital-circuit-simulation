@@ -61,8 +61,7 @@ std::string CLINT::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
     // 输入直接给指针数组，回调按虚实地址视图读，不再逐引脚打包
     code += genInputPtrArray("_in");
-    code += std::format("    uint8_t _obuf[4][{}]; dcs_memset(_obuf, 0, sizeof(_obuf));\n", SLOT);
-    code += "    uint8_t *_op[4] = {_obuf[0],_obuf[1],_obuf[2],_obuf[3]};\n";
+    code += genOutputPtrArray(4);
     code += std::format("    _dcs_clint_tick(_clint_state_{0}, _in, _op);\n", id);
     code += "    {\n";
     code += "        uint32_t _dout = 0; dcs_memcpy(&_dout, _obuf[0], 4);\n";

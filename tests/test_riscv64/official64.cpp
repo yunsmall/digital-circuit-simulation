@@ -10,10 +10,13 @@
 #include <dcs/components/WishboneMemory.h>
 #include <dcs/util/ElfLoader.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace dsc;
@@ -166,17 +169,38 @@ TEST(RiscV64Official, AllElf) {
         GTEST_SKIP() << "目录里没有 .elf: " << dir;
     std::sort(elfs.begin(), elfs.end());
 
-    int skipped = 0;
-    for (const auto &p : elfs) {
-        std::string err;
-        uint32_t v = runElf(p.string(), err);
-        if (!err.empty()) {
-            ADD_FAILURE() << p.filename().string() << ": " << err;
+    // 每个用例都搭一份独立电路，JIT 上下文是每实例独立的（编译器目标初始化已 call_once），
+    // 所以可以并行跑。默认 4 路：ctest 本身还会并行跑多个测试目标，再高会互相抢核
+    unsigned nthreads = 4;
+    if (const char *e = std::getenv("DCS_TEST_THREADS")) nthreads = (unsigned) std::max(1, std::atoi(e));
+    std::vector<std::string> errs(elfs.size());
+    std::vector<uint32_t> vals(elfs.size(), 0);
+    std::atomic<size_t> next{0};
+    auto worker = [&] {
+        for (;;) {
+            const size_t i = next.fetch_add(1);
+            if (i >= elfs.size())
+                break;
+            vals[i] = runElf(elfs[i].string(), errs[i]);
+        }
+    };
+    if (nthreads <= 1) {
+        worker();
+    } else {
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads);
+        for (unsigned t = 0; t < nthreads; ++t) pool.emplace_back(worker);
+        for (auto &t : pool) t.join();
+    }
+    // 汇总按文件名顺序打印，结果与并行调度无关
+    for (size_t i = 0; i < elfs.size(); i++) {
+        if (!errs[i].empty()) {
+            ADD_FAILURE() << elfs[i].filename().string() << ": " << errs[i];
             continue;
         }
-        if (v != 1) {
-            ADD_FAILURE() << p.filename().string() << ": 失败编码 " << v
-                          << "（用例号 " << (v >> 1) << "）";
+        if (vals[i] != 1) {
+            ADD_FAILURE() << elfs[i].filename().string() << ": 失败编码 " << vals[i]
+                          << "（用例号 " << (vals[i] >> 1) << "）";
         }
     }
 }

@@ -93,12 +93,8 @@ std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
     code += genInputPtrArray("_in");
     // 输出与组合元件一样经 genOutputWrite：它同时写 _c_out 与 _w，
-    // 避免本元件比别处多出一拍传播延迟
-    // _obuf/_op 用 static：packOut 每拍写满全部输出，不需要每拍清零/重建指针表
-    code += std::format("    static uint8_t _obuf[{}][{}];\n", O_COUNT, SLOT);
-    code += std::format("    static uint8_t *const _op[{}] = {{", O_COUNT);
-    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
-    code += "};\n";
+    // 避免本元件比别处多出一拍传播延迟。packOut 每拍写满全部输出，不需要预先清零
+    code += genOutputPtrArray(O_COUNT, false);
     code += std::format("    _dcs_cpu_tick{1}(_cpu_state_{0}, _in, _op);\n", id, sfx);
     const int ow[O_COUNT] = {32, 32, 1, 4, 1, 1, 1};
     for (int i = 0; i < O_COUNT; i++)

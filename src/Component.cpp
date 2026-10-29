@@ -122,20 +122,29 @@ std::string Component::genInputPtrArray(std::string_view arr) const {
     return s;
 }
 
+std::string Component::genOutputPtrArray(int count, bool clear) const {
+    std::string s = std::format("    static uint8_t _obuf[{}][16];\n", count);
+    if (clear)
+        s += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
+    s += std::format("    static uint8_t *const _op[{}] = {{", count);
+    for (int i = 0; i < count; i++) s += std::format("{}_obuf[{}]", i ? "," : "", i);
+    s += "};\n";
+    return s;
+}
+
+
 std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin_w) const {
-    // 写 _c_out（供总线决议用）
-    std::string s = gen_write_wire(_id, out_idx, val, pin_w);
-    // 非三态输出：同时直接写 _w（下游组合逻辑元件立即可见）
-    // 三态输出：不直接写 _w，由 propagation 的总线决议来决定
     bool ts = out_idx >= 0 && out_idx < (int) _outputs.size() && _outputs[out_idx]->isTriState();
-    if (!ts) {
-        int net_id = out_idx < (int) _outputs.size() ? _outputs[out_idx]->netId() : -1;
-        if (net_id >= 0) {
-            int b = byte_count(pin_w);
-            s += std::format("\n    dcs_memcpy(_w[{}], &{}, {});", net_id, val, b);
-            s += std::format("\n    dcs_memset(_w[{}] + {}, 0, {});", net_id, b, 16 - b);
-        }
-    }
+    // 三态输出要参与总线决议，必须写 _c_out；非三态输出只被下游当普通线网读，
+    // 直接写 _w 就够了——省掉 _c_out 那一份拷贝和清零，每拍每个输出少两次写
+    if (ts)
+        return gen_write_wire(_id, out_idx, val, pin_w);
+    int net_id = out_idx < (int) _outputs.size() ? _outputs[out_idx]->netId() : -1;
+    if (net_id < 0)
+        return "";
+    int b = byte_count(pin_w);
+    std::string s = std::format("dcs_memcpy(_w[{}], &{}, {});", net_id, val, b);
+    s += std::format("\n    dcs_memset(_w[{}] + {}, 0, {});", net_id, b, 16 - b);
     return s;
 }
 

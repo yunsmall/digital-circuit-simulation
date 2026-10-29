@@ -77,11 +77,7 @@ std::string UART::genFuncDef_seq() const {
     code += genInputPtrArray("_in");
     // 输出先落中间缓冲，再由 genOutputWrite 同时写 _c_out 与 _w；
     // 传给回调的必须是指针数组，二维数组强转会让回调把首字节当指针
-    code += std::format("    uint8_t _obuf[{}][{}];\n", (int) O_COUNT, SLOT);
-    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
-    code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
-    for (int i = 0; i < O_COUNT; i++) code += std::format("{}_obuf[{}]", i ? "," : "", i);
-    code += "};\n";
+    code += genOutputPtrArray((int) O_COUNT);
     code += std::format("    _dcs_uart_tick(_uart_state_{0}, _in, _op);\n", _id);
     code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
     code += "    { uint8_t _a=0; dcs_memcpy(&_a,_obuf[1],1); " + genOutputWrite(O_ACK, "_a", 1) + " }\n";

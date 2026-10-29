@@ -72,10 +72,7 @@ std::string PLIC::genFuncDef_seq() const {
     code += genInputPtrArray("_in");
     // 输出先落中间缓冲，再由 genOutputWrite 同时写 _c_out 和 _w（下游同拍可见）；
     // 传给回调的必须是指针数组，二维数组强转会让回调把首字节当指针读
-    code += std::format("    uint8_t _obuf[{}][{}];\n", (int) O_COUNT, SLOT);
-    code += "    dcs_memset(_obuf, 0, sizeof(_obuf));\n";
-    code += std::format("    uint8_t *_op[{}] = {{", (int) O_COUNT);
-    code += "_obuf[0],_obuf[1],_obuf[2]};\n";
+    code += genOutputPtrArray((int) O_COUNT);
     code += std::format("    _dcs_plic_tick(_plic_state_{0}, _in, _op);\n", _id);
     // 输出仍走 genOutputWrite：它同时写 _c_out 与 _w，保证下游同拍可见
     code += "    { uint32_t _d=0; dcs_memcpy(&_d,_obuf[0],4); " + genOutputWrite(O_DAT, "_d", 32) + " }\n";
