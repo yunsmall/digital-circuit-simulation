@@ -1342,19 +1342,56 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 double dv = (double) fv;
                 std::memcpy(&s.fregs[rd], &dv, 8);
             } else {
-                // FCVT.S.D：双精度 -> 单精度，要按 rm 舍入并置 NX
+                // FCVT.S.D：双精度 -> 单精度。舍入要按 rm 走，不能一律用宿主的 RNE；
+                // 带宽度的舍入要对"超出 float 范围"和"恰好中点"分别处理
                 double dv; std::memcpy(&dv, &s.fregs[rs1], 8);
-                if (std::isnan(dv)) { s.fregs[rd] = (uint64_t) 0x7FC00000u; break; }
-                float fv;
-                switch (erm) {
-                case 1: fv = (float) dv; if ((double) fv != dv) { // RTZ
-                            double t = std::trunc(dv);
-                            if (std::fabs(t) > (double) std::numeric_limits<float>::max()) fv = (float) t; } break;
-                default: fv = (float) dv; break;
+                if (std::isnan(dv)) {
+                    // NaN 也要 NaN-box：高半填全 1
+                    s.fregs[rd] = 0xFFFFFFFF7FC00000ULL;
+                    if (((s.fregs[rs1] >> 52) & 0x7FF) == 0x7FF
+                        && (s.fregs[rs1] & 0xFFFFFFFFFFFFFULL) != 0
+                        && !(s.fregs[rs1] & 0x8000000000000ULL)) s.fcsr |= 0x10;   // sNaN
+                    break;
                 }
-                if ((double) fv != dv) s.fcsr |= 0x01;   // NX
-                s.fregs[rd] = (uint64_t)(uint32_t) 0;
-                std::memcpy(&s.fregs[rd], &fv, 4);
+                {
+                    const double fmax = (double) std::numeric_limits<float>::max();
+                    const double half_fmax = std::ldexp(1.0, 128) - std::ldexp(1.0, 103);
+                    bool neg = std::signbit(dv);
+                    double mag = std::fabs(dv);
+                    float fv;
+                    if (mag > fmax) {
+                        // 太大：按 rm 决定是给 inf 还是最大有限值
+                        bool to_inf = (erm == 0) ? (mag >= half_fmax)
+                                    : (erm == 1) ? false
+                                    : (erm == 2) ? neg
+                                    : (erm == 3) ? !neg
+                                    : (mag >= half_fmax);
+                        fv = to_inf ? (neg ? -INFINITY : INFINITY)
+                                    : (neg ? -std::numeric_limits<float>::max()
+                                           : std::numeric_limits<float>::max());
+                        s.fcsr |= 0x04;   // OF
+                        s.fcsr |= 0x01;   // NX
+                    } else {
+                        fv = (float) dv;   // 宿主 RNE
+                        if ((double) fv != dv) {
+                            // 非 RNE：先截到目标方向的相邻值
+                            double lo = (double) fv;
+                            double hi = lo;
+                            if (lo > dv) { hi = lo; lo = std::nextafter(lo, 0.0); }
+                            else { lo = lo; hi = std::nextafter(lo, neg ? -INFINITY : INFINITY); }
+                            double pick = (erm == 1) ? (neg ? hi : lo)     // RTZ
+                                        : (erm == 2) ? lo                  // RDN
+                                        : (erm == 3) ? hi                  // RUP
+                                        : std::fabs(dv - lo) < std::fabs(hi - dv) ? lo
+                                          : std::fabs(dv - lo) > std::fabs(hi - dv) ? hi
+                                          : (std::fmod(lo, 2.0) == 0.0 ? lo : hi);   // RNE 中点取偶
+                            fv = (float) pick;
+                            s.fcsr |= 0x01;   // NX
+                        }
+                    }
+                    s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) 0;
+                    std::memcpy(&s.fregs[rd], &fv, 4);
+                }
             }
             break;
         }
