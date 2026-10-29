@@ -572,9 +572,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
             // 其余模式（含 RTZ）都是 +0。C 的加法固定产生 +0，这里补上符号
             // 不能靠 exact 的符号来判：它是宿主 double 运算的结果，
             // 宿主被 fesetround 改成 RDN 时抵消的结果已经是 -0了
-            if (exact == 0.0 && rmode == 2) {
-                // 只有"两个同号相减归零"才走这里，由调用方标记
-                if (cancelled_to_zero) return -0.0f;
+            if (exact == 0.0 && cancelled_to_zero) {
+                // 只有 roundTowardNegative 给 -0，其余模式必须强制 +0：
+                // exact 本身可能已经是 -0（宿主舍入方向被改过）
+                return rmode == 2 ? -0.0f : 0.0f;
             }
             float r = (float) exact;
             if (!std::isfinite(r)) return r;
@@ -809,9 +810,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // 抵消条件取决于实际表达式的符号
         // 不能用 prod != 0 排除零：(+0)+(-0) 这类也属于精确抵消，
         // 只有同号零相加才不是抵消
-        bool fma_opposite = (std::signbit(prod) != std::signbit(c));
+        // 零交叉时"异号"的含义取决于实际表达式：
+        // prod+c / -prod-c 要异号才抵消，prod-c / -prod+c 要同号才抵消
+        bool same_sign = (std::signbit(prod) == std::signbit(c));
         bool fma_cancel = ((op == 0x43 || op == 0x4F) ? c == -prod : c == prod)
-                          && (prod != 0.0 || c != 0.0 || fma_opposite);
+                          && (prod != 0.0 || c != 0.0
+                              || (op == 0x43 || op == 0x4F ? !same_sign : same_sign));
         float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3, fma_cancel);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
         // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
@@ -819,7 +823,10 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                         || ((s.fregs[rs2] >> 23) & 0xFF) == 0xFF && (s.fregs[rs2] & 0x7FFFFFu) && !(s.fregs[rs2] & 0x400000u)
                         || ((s.fregs[rs3] >> 23) & 0xFF) == 0xFF && (s.fregs[rs3] & 0x7FFFFFu) && !(s.fregs[rs3] & 0x400000u);
         if (std::isnan(r)) {
-            if (fma_snan || (!std::isnan(a) && !std::isnan(b) && !std::isnan(c))) s.fcsr |= 0x10;
+            // 0*inf 无论加数是什么（含 qNaN）都是无效运算
+            bool mul_invalid = (a == 0.0f && std::isinf(b)) || (std::isinf(a) && b == 0.0f);
+            if (fma_snan || mul_invalid || (!std::isnan(a) && !std::isnan(b) && !std::isnan(c)))
+                s.fcsr |= 0x10;
         } else if (std::isfinite(exact)) {
             if ((double)r != exact) s.fcsr |= 0x01;          // NX
             // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
@@ -839,6 +846,7 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
 
     // ---- 单精度浮点运算（F 扩展），寄存器内容是 IEEE754 位模式 ----
     case RV::OP_FP: {
+        uint32_t flags_before = s.fcsr; // 用于判断本次是否新置了异常标志
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
@@ -1017,12 +1025,14 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
         // FS=Dirty 只在浮点状态确实被修改时设置：FMV.X.W/FCLASS 只读 freg，
         // FCMP 只有在置了 NV 时才算修改，否则上下文切换会白白多保存一次 FPU 状态
         // FCVT.W.S/WU.S 只读 freg、只在产生 NX/NV 时才动浮点状态；
-        // 精确转换若也置 Dirty，上下文切换会白白多保存一次 FPU
-        // F7_FCVT_W_S 同时覆盖 FCVT.W.S 和 FCVT.WU.S（rs2 区分）
+        // 精确转换若也置 Dirty，上下文切换会白白多保存一次 FPU。
+        // 判断必须用"本次是否新置位"：用累计的 fcsr 会把之前就存在的
+        // NX/NV 算进来，精确的指令也会被当成修改了浮点状态
+        uint32_t flags_new = s.fcsr & ~flags_before;
         bool fcvt_to_int = (f7 == RV::F7_FCVT_W_S);
         if (f7 != RV::F7_FMV_X_W
-            && (!fcvt_to_int || (s.fcsr & 0x11))                 // NX 或 NV
-            && (f7 != RV::F7_FCMP || (s.fcsr & 0x10)))
+            && (!fcvt_to_int || (flags_new & 0x11))
+            && (f7 != RV::F7_FCMP || (flags_new & 0x10)))
             s.mstatus |= (3u << 13);
         break;
     }
