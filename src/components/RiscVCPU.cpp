@@ -900,8 +900,12 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                 if (a == 0.0f && b == 0.0f) s.fregs[rd] = s.fregs[rs1] | s.fregs[rs2]; // -0 优先
                 else setf(a < b ? a : b);
             } else {
-                if (a == 0.0f && b == 0.0f) s.fregs[rd] = s.fregs[rs1] & s.fregs[rs2]; // +0 优先
-                else setf(a > b ? a : b);
+                // FMAX 对任何两个零都要给 +0（F 扩展 12.2），
+                // 但位与对 (-0,-0) 的结果是 -0，所以要先排掉这种组合
+                if (a == 0.0f && b == 0.0f) {
+                    uint32_t ua = s.fregs[rs1], ub = s.fregs[rs2];
+                    s.fregs[rd] = ((ua | ub) == 0x80000000u) ? 0u : (ua & ub);
+                } else setf(a > b ? a : b);
             }
             break;
         case RV::F7_FCMP: {
