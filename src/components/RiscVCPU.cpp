@@ -580,7 +580,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                         break;
                     }
                     // FLW 只写低 32 位并清高半；FLD 写满 64 位
-                    if (s.bus_fp) s.fregs[s.bus_rd] = (s.bus_funct3 == 3) ? (uint64_t) value : (uint64_t)(uint32_t) value;
+                    // FLW 只提供 32 位，写回时高半必须填全 1；FLD 写满 64 位
+                    if (s.bus_fp) s.fregs[s.bus_rd] = (s.bus_funct3 == 3)
+                        ? (uint64_t) value
+                        : (0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) value);
                     else s.regs[s.bus_rd]=result;
                     wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
             } else {
@@ -1238,7 +1241,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         // FMA 的 rm 在 funct3：5/6 是保留编码，7 表示取 fcsr.frm
         if ((f3 == 7 ? ((s.fcsr >> 5) & 7u) : f3) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-        auto u2f = [](uint32_t u) { float f; std::memcpy(&f, &u, 4); return f; };
+        // 把操作数当浮点数用时才检查 NaN-box：高 32 位不是全 1 说明这不是合法的
+        // 单精度值，按规范整体当作 canonical NaN。FMV.X.W / FCLASS.S 直接读位模式，
+        // 走的是 s.fregs[rs1] 不经过这里，所以不受影响
+        auto u2f = [](uint64_t v) -> float {
+            uint32_t u = (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            float f; std::memcpy(&f, &u, 4); return f;
+        };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         const uint32_t fma_fmt = (inst >> 25) & 3u;
         if (fma_fmt == 1u) {
@@ -1350,7 +1359,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             break;
         }
         const bool is_d = (f7 & RV::FMT_D) != 0;
-        if (is_d && XLEN != 64) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        // D 扩展与 XLEN 无关：架构上 f 寄存器始终是 64 位宽，RV32 也有 D
         if (is_d) {
             if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
             auto u2d = [](uint64_t u) { double d; std::memcpy(&d, &u, 8); return d; };
@@ -1551,14 +1560,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // RISC-V 用 NaN-boxing 区分"合法单精度"和"双精度值"，整体赋值会把
         // 高半清零，随后的 fmv.x.d 就读到错的位模式
         auto setf = [&](float v) {
-            s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | (uint64_t) f2u(v);
+            s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t) f2u(v);
         };
         // exact 用 double 保存未舍入的结果，据此判断是否不精确（NX）
         auto setf_flags = [&](double exact, bool cancelled_to_zero = false, bool extra_inexact = false) {
             float r = round_to_float(exact, cur_rm, cancelled_to_zero);
             if (std::isnan(r)) {
                 // 规范要求产生 canonical NaN，不同平台算出的 NaN 位模式不统一
-                s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | 0x7FC00000u;
+                s.fregs[rd] = 0xFFFFFFFF00000000ULL | 0x7FC00000u;
                 // sNaN 输入本身就是非法运算；其余情况是"非 NaN 输入算出了 NaN"
                 if (snan_in || (!std::isnan(a) && !std::isnan(b))) s.fcsr |= 0x10;
                 return;
@@ -1614,7 +1623,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             else setf_flags(std::sqrt((double)a));
             break;
         case RV::F7_FSGNJ: {
-            uint32_t ua = s.fregs[rs1], ub = s.fregs[rs2], sign;
+            // 操作数先按 NaN-boxing 取值：高 32 位不是全 1 的寄存器整体当作
+            // canonical NaN，再从中取符号位
+            auto box = [](uint64_t v) -> uint32_t {
+                return (v >> 32) == 0xFFFFFFFFu ? (uint32_t) v : 0x7FC00000u;
+            };
+            uint32_t ua = box(s.fregs[rs1]), ub = box(s.fregs[rs2]), sign;
             switch (f3) {
             case 0: sign = ub & 0x80000000u; break;          // FSGNJ
             case 1: sign = (~ub) & 0x80000000u; break;       // FSGNJN
@@ -1622,14 +1636,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             default: takeTrap(s, RV::EXC_II, inst); return;  // f3 >= 3 是保留编码
             }
             // 只改低 32 位，高半保持（NaN-boxing）
-            s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | (uint64_t)((ua & 0x7FFFFFFFu) | sign);
+            s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t)((ua & 0x7FFFFFFFu) | sign);
             break;
         }
         case RV::F7_FMINMAX:
             if (f3 >= 2) { takeTrap(s, RV::EXC_II, inst); return; } // f3 >= 2 是保留编码
             // NaN 参与时返回另一个操作数并置 NV；两个都是 NaN 才返回 canonical NaN
             if (snan_in) s.fcsr |= 0x10;
-            if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = (s.fregs[rd] & 0xFFFFFFFF00000000ULL) | 0x7FC00000u;
+            if (std::isnan(a) && std::isnan(b)) s.fregs[rd] = 0xFFFFFFFF00000000ULL | 0x7FC00000u;
             else if (std::isnan(a)) setf(b);
             else if (std::isnan(b)) setf(a);
             else if (f3 == 0) {
@@ -1745,7 +1759,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             break;
         case RV::F7_FMV_W_X:
             if (f3 != 0) { takeTrap(s, RV::EXC_II, inst); return; } // funct3 固定为 0
-            s.fregs[rd] = v1;
+            // FMV.W.X 写入的是单精度位模式，高半要填全 1（NaN-boxing）。
+            // 直接写整个 XLEN 值会让高半变成 0，随后的单精度读取就判成 NaN
+            s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t)((uint32_t) v1);
             break;
         default:
             takeTrap(s, RV::EXC_II, inst); return;
