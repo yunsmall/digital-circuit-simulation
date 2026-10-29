@@ -10,7 +10,7 @@ namespace dsc {
 
 namespace RV {
     // ---- Opcode ----
-    constexpr uint32_t OP_IMM = 0x13, LUI = 0x37, AUIPC = 0x17, OP = 0x33;
+    constexpr uint32_t OP_IMM = 0x13, LUI = 0x37, AUIPC = 0x17, OP = 0x33, OP_32 = 0x3B;
     constexpr uint32_t JAL = 0x6F, JALR = 0x67, BRANCH = 0x63, LOAD = 0x03;
     constexpr uint32_t STORE = 0x23, MISC_MEM = 0x0F, SYSTEM = 0x73, AMO = 0x2F;
     constexpr uint32_t LOAD_FP = 0x07, STORE_FP = 0x27, OP_FP = 0x53;
@@ -95,6 +95,10 @@ namespace RV {
 template<int N>
 concept SupportedXlen = (N == 32 || N == 64);
 
+// 放在命名空间级才能用在模板参数表和作用域里；类内再起个别名 XLen 方便书写
+template<int N> requires SupportedXlen<N>
+using XLenOf = std::conditional_t<N == 32, uint32_t, uint64_t>;
+
 template<int XLEN> requires SupportedXlen<XLEN>
 class RiscVCPU : public Component {
 public:
@@ -107,8 +111,8 @@ public:
     ~RiscVCPU() override;
 
     // halted：执行 WFI 期间为高，有中断待处理时自动唤醒
-    uint32_t reg(int idx) const;
-    uint32_t pc() const;
+    XLen reg(int idx) const;
+    XLen pc() const;
     bool halted() const;
     uint32_t freg(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
     uint32_t fcsr() const { return _state.fcsr; }
@@ -217,14 +221,14 @@ private:
     static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
     static void cpuReset(void *state_ptr);
     static void execute(CpuState &s, uint32_t inst,
-                        uint32_t &wb_adr, uint32_t &wb_dat, bool &wb_we,
+                        XLen &wb_adr, uint32_t &wb_dat, bool &wb_we,
                         uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc,
                         bool &need_mem);
-    static uint32_t csrRead(const CpuState &s, uint32_t addr);
-    static void csrWrite(CpuState &s, uint32_t addr, uint32_t val);
+    static XLen csrRead(const CpuState &s, uint32_t addr);
+    static void csrWrite(CpuState &s, uint32_t addr, XLen val);
     static bool takeInterrupt(CpuState &s, uint32_t &trap_cause);
-    static bool takeTrap(CpuState &s, uint32_t cause, uint32_t tval);
-    static bool mmuTranslate(CpuState &s, uint32_t vaddr, uint32_t &paddr,
+    static bool takeTrap(CpuState &s, uint32_t cause, XLen tval);
+    static bool mmuTranslate(CpuState &s, XLen vaddr, XLen &paddr,
                              bool is_write, bool is_exec);
     // 返回 0 表示放行，否则返回应触发的页错误 cause。
     // TLB 命中、L1 大页、L2 4KB 页三条路径共用，避免改一处漏两处。
@@ -233,9 +237,7 @@ private:
 
 // 实现全在 .cpp 里并显式实例化，这里只抑制隐式实例化，
 // 免得每个包含者都去编译上千行模板代码
-// 目前只实例化 RV32。<64> 的指令语义（ADDW/LD/SD/LWU、6 位 shamt、64 位 CSR、
-// Sv39、PC>4G 的地址路径）尚未实现，暴露出去只会得到"能编译但静默算错"的实例，
-// 那比明确不给更难查。等语义补齐后再打开这一行。
 extern template class RiscVCPU<32>;
+extern template class RiscVCPU<64>;
 
 } // namespace dsc
