@@ -538,6 +538,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
     int32_t s1=(int32_t)v1, s2=(int32_t)v2;
     uint32_t npc=s.pc+4;
 
+        // 已知局限：这里假设宿主的浮点舍入方向是 RNE（默认值，本项目不调 fesetround）。
+        // 若宿主被改成其他方向，"(t)float" 和 double 运算本身都会跟着变，
+        // 彻底的做法是自带软浮点（如 SoftFloat），那是另一个量级的工程
         // C 的 double->float 转换永远是就近舍入，而 RISC-V 要求按 frm/rm 选模式。
         // 先取就近结果，再按方向用 nextafterf 修正一格。
         auto round_to_float = [&](double exact, int rmode, bool cancelled_to_zero = false) -> float {
