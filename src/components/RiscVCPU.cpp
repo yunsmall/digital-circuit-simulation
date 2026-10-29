@@ -2490,7 +2490,6 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval
         s.pc = (is_irq && (s.stvec & 3) == 1) ? (s.stvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.stvec & ~(XLen)3);
     } else {
         s.mcause = cause; s.mepc = s.pc; s.mtval = tval;
-    if (std::getenv("DCS_Z")) std::fprintf(stderr, "TRAP pc=%08llX cause=%llX tval=%llX inst=%08X\n", (unsigned long long) s.pc, (unsigned long long) cause, (unsigned long long) tval, s.inst);
         uint8_t mie = (s.mstatus & RV::MSTATUS_MIE) ? 1 : 0;
         s.mstatus = (s.mstatus & ~(XLen)RV::MSTATUS_MPIE) | (mie ? RV::MSTATUS_MPIE : 0);
         // 规范 3.1.6.3：trap 进入 M 态时 MPRV 必须清零
