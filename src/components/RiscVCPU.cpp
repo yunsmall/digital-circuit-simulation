@@ -1269,11 +1269,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
                 if (s.priv == RV::PRIV_S && (s.mstatus & RV::MSTATUS_TW)) [[unlikely]]
                 { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
-                // 有中断挂起就继续执行；否则停在这里，PC 不前进
-                if (!(s.mip & s.mie)) {
+                // 有中断挂起就继续执行；否则停在这里等中断唤醒
+                if (!(s.mip & s.mie) && s.mie != 0) {
                     s.wfi_halted = true;
                     s.phase = Phase::HALTED; // 停止取指，等中断唤醒
-                    npc = s.pc;
+                    // PC 照常前进：中断返回若落回 WFI 本身，会再停一次机，
+                    // 而这时中断源已经处理掉，就再也醒不过来了
+                    npc = s.pc + 4;
                 }
                 break;
             default:
