@@ -171,6 +171,9 @@ if(GTest_FOUND)
         file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${TEST_SOURCE_GLOB})
         add_executable(${TEST_NAME} ${TEST_SOURCES})
         target_link_libraries(${TEST_NAME} PRIVATE dcs_lib GTest::gtest GTest::gtest_main)
+        # tests/common 下是跨测试复用的辅助件（如 Wishbone 主设备测试台），
+        # 各测试用 #include "common/xxx.h" 引用
+        target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         set_target_properties(${TEST_NAME} PROPERTIES CXX_STANDARD 23)
         if(DCS_WHOLEARCHIVE)
             target_link_options(${TEST_NAME} PRIVATE ${DCS_WHOLEARCHIVE})
@@ -214,6 +217,8 @@ if(GTest_FOUND)
     add_dcs_test(test_edgecases  tests/test_edgecases/*.cpp)
     add_dcs_test(test_coverage   tests/test_coverage/*.cpp)
     add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
+    add_dcs_test(test_wbmem      tests/test_wbmem/*.cpp)
+    add_dcs_test(test_rvc        tests/test_rvc/*.cpp)
     # Verilator 集成测试：DLL 由 verilog_test/ 子项目生成，测试里用的是相对路径，
     # 所以工作目录要指到那里，否则加载不到 DLL
     if(DCS_BUILD_VERILOG)

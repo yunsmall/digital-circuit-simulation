@@ -4,6 +4,7 @@
 #include <cstdio>
 // RiscVCPU — RISC-V 软核 (RV32IMA + S/U/M + Sv32 MMU)
 #include "dcs/components/RiscVCPU.h"
+#include "dcs/util/RvcDecode.h"
 #include <cstring>
 #include <format>
 
@@ -153,13 +154,22 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         // FETCH 这一拍地址要等上升沿翻译完才能定，不能先按 pc 发请求，
         // 否则从设备先把 pc 当地址做掉一次事务，页表读取会拿到取指数据
         case Phase::FETCH: adr=s.pc; sel=0x0F; stb=cyc=false; break;
-        case Phase::WAIT_FETCH: adr=s.fetch_pa; sel=0x0F; stb=cyc=true; break;
+        case Phase::WAIT_FETCH: adr=s.fetch_pa & ~(XLen)3; sel=0x0F; stb=cyc=true; break;
+        // 跨字 32 位指令要读下一个字；漏这个 case 会让这一拍 stb/cyc 全为 0，
+        // 从设备不响应，取指永远等不到 ack
+        case Phase::FETCH_HI_GAP: adr=s.fetch_hi_addr; sel=0x0F; stb=false; cyc=true; break;
+        case Phase::WAIT_FETCH_HI: adr=s.fetch_hi_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::WAIT_MEM: {
             // 与上升沿分支保持一致：拆分事务的拉低相位必须真的拉低 stb，
             // 否则同一时钟周期的另一半又把 stb 抬起来，从设备看不到事务边界。
             // stage 4 是"下一次上升沿才发起第二次事务"，这一拍必须继续拉低，
             // 否则会先用旧地址发一次假事务，从设备锁存旧地址后真正的事务再也不触发
-            bool hold_off = (s.acc_stage >= 2 && s.acc_stage <= 4);
+            // 这些相位要求 stb 保持低电平：拆分事务的两次拉低，以及第三段等旧 ack 撤销。
+            // 漏掉 7 的话下降沿会把 stb 又抬起来，从设备永远看不到事务结束
+            // 两拍拉低的相位都要在这里标出来：上升沿推进相位之后，下降沿会再读一次
+            // acc_stage，漏掉就会把下半拍的 stb 又抬回去，从设备看不到事务边界
+            bool hold_off = (s.acc_stage >= 2 && s.acc_stage <= 4)
+                         || (s.acc_stage == 7) || (s.acc_stage == 8);
             adr=s.bus_adr; wdat=s.bus_wdat; we=s.bus_we; sel=s.bus_sel;
             stb=cyc=!hold_off;
             break;
@@ -185,6 +195,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
 
     switch (s.phase) {
     case Phase::FETCH: {
+        if (std::getenv("DCS_PH")) std::fprintf(stderr, "PH-FETCH pc=%llX\n", (unsigned long long) s.pc);
         // 取指同样过 MMU：S/U 态开启 satp 后 pc 是虚拟地址
         XLen fpa=0;
         if (!mmuTranslate(s, s.pc, fpa, false, true)) [[unlikely]] {
@@ -219,31 +230,113 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             uint32_t ic_idx = (fpa >> 2) & 255u;
             uint32_t ic_tag = fpa >> 10;
             if (s.icache[ic_idx].valid && s.icache[ic_idx].tag == ic_tag) {
+                // 命中时直接用缓存里解压好的指令：解压只在 miss 时做一次。
+                // 一个 4 字节字里可能有两条压缩指令，所以按字内位置取对应那一份
                 s.ic_hits++;
-                s.inst = s.icache[ic_idx].inst;
+                const uint32_t half = (fpa & 2u) ? 1u : 0u;
+                // len==0 表示这一半是跨字 32 位指令，缓存里装不下，退回总线去读
+                if (s.icache[ic_idx].len[half] == 0) [[unlikely]] {
+                    wb_adr = fpa & ~(XLen)3; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+                    s.phase = Phase::WAIT_FETCH;
+                    break;
+                }
+                s.inst = s.icache[ic_idx].inst[half];
+                s.inst_len = s.icache[ic_idx].len[half];
                 s.phase = Phase::EXECUTE; // 命中就不再发起总线读
                 wb_stb = wb_cyc = false;
                 break;
             }
             s.ic_misses++;
         }
-        wb_adr=fpa; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
+        // 总线只接受字对齐地址：压缩指令的 pc 可能是 4n+2，地址要抹掉低两位，
+        // 具体取哪个半字由 fetch_pa 的 bit1 在 WAIT_FETCH 里决定
+        wb_adr=fpa & ~(XLen)3; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
         break;
     }
 
     case Phase::WAIT_FETCH:
         if (in.ack) {
-            s.inst=in.dat;
+            // 取指按字对齐读，压缩指令可能只占半个字：低 2 位不是 11 就是 16 位指令。
+            // fetch_pa 的 bit1 决定取低半还是高半
+            if (std::getenv("DCS_F")) std::fprintf(stderr, "F pa=%llX dat=%08X half=%04X ack=%d\n", (unsigned long long) s.fetch_pa, in.dat, (unsigned)(((s.fetch_pa & 2u) ? (in.dat >> 16) : in.dat) & 0xFFFFu), (int) in.ack);
+            const uint32_t lo16 = in.dat & 0xFFFFu;
+            const uint32_t hi16 = in.dat >> 16;
+            const uint32_t half = (s.fetch_pa & 2u) ? hi16 : lo16;
+            if ((half & 3u) == 3u) {
+                if (s.fetch_pa & 2u) {
+                    // 32 位指令落在字内偏移 2：它跨了两个字，必须再读下一个字拼起来。
+                    // 这一路不进 icache（一行只存一个字的两个半字位置，装不下跨字指令）
+                    s.fetch_word0 = in.dat;
+                    s.fetch_hi_addr = (s.fetch_pa & ~(XLen)3) + 4;
+                    s.fetch_gap_cnt = 0;
+                    // 先把 stb 拉低结束这一笔事务，下一拍才发起读下一个字。
+                    // 直接跳 WAIT_FETCH_HI 的话 stb 一直保持高，从设备看不到事务边界，
+                    // 不会给第二个 ack
+                    wb_stb = false; wb_cyc = true;
+                    s.phase = Phase::FETCH_HI_GAP;
+                    break;
+                }
+                s.inst = in.dat;
+                s.inst_len = 4;
+            } else {
+                s.inst = rvc::expand<XLEN>((uint16_t)(half & 0xFFFFu));
+                s.inst_len = 2;
+                if (s.inst == rvc::ILLEGAL) [[unlikely]] {
+                    // 未实现或非法的压缩编码要按非法指令处理，不能拿 0 继续执行
+                    s.inst = 0;
+                    takeTrap(s, RV::EXC_II, 0);
+                    wb_stb = wb_cyc = false; s.phase = Phase::FETCH;
+                    break;
+                }
+            }
+            // 把两个字内位置都解压好存进缓存：同一行可能先后被 pc&3==0 和 ==2 访问
             uint32_t ic_idx = (s.fetch_pa >> 2) & 255u;
-            s.icache[ic_idx].tag = s.fetch_pa >> 10;
-            s.icache[ic_idx].inst = in.dat;
-            s.icache[ic_idx].valid = true;
+            typename CpuState::ICacheLine &line = s.icache[ic_idx];
+            line.tag = s.fetch_pa >> 10;
+            line.raw = in.dat;
+            line.inst[0] = ((lo16 & 3u) == 3u) ? in.dat : rvc::expand<XLEN>((uint16_t)lo16);
+            line.len[0]  = ((lo16 & 3u) == 3u) ? 4 : 2;
+            line.inst[1] = ((hi16 & 3u) == 3u) ? 0u : rvc::expand<XLEN>((uint16_t)hi16);
+            line.len[1]  = ((hi16 & 3u) == 3u) ? 0u : 2;   // len=0 表示"这一半要跨字，别用缓存"
+            line.valid = true;
             wb_stb=wb_cyc=false; s.phase=Phase::EXECUTE;
         }
-        else { wb_adr=s.fetch_pa; wb_sel=0x0F; wb_stb=wb_cyc=true; }
+        else { wb_adr=s.fetch_pa & ~(XLen)3; wb_sel=0x0F; wb_stb=wb_cyc=true; }
+        break;
+
+    case Phase::FETCH_HI_GAP:
+        // 拉低 stb 后，从设备要先看到 stb 撤销才清 ack_pending，主设备再晚一拍才看到
+        // ack 变低；ack 变低之后从设备的 prev_stb 也才归 0。少等这一拍，第二笔的
+        // stb 上升沿会被从设备当成上一笔的延续，不会重新锁存地址
+        if (!in.ack) {
+            if (s.fetch_gap_cnt >= 1) {
+                wb_adr = s.fetch_hi_addr; wb_sel = 0x0F;
+                wb_stb = wb_cyc = true;
+                s.phase = Phase::WAIT_FETCH_HI;
+            } else {
+                s.fetch_gap_cnt++;
+                wb_stb = false; wb_cyc = true;
+            }
+        } else {
+            wb_stb = false; wb_cyc = true;
+        }
+        break;
+
+    case Phase::WAIT_FETCH_HI:
+        if (in.ack) {
+            // 跨字 32 位指令：低半来自第一个字的高 16 位，高半来自新读到的字
+            if (std::getenv("DCS_HI")) std::fprintf(stderr, "HI pa=%llX hi_adr=%llX w0=%08X dat=%08X\n", (unsigned long long) s.fetch_pa, (unsigned long long) s.fetch_hi_addr, s.fetch_word0, in.dat);
+            s.inst = (s.fetch_word0 >> 16) | (in.dat << 16);
+            s.inst_len = 4;
+            wb_stb = wb_cyc = false;
+            s.phase = Phase::EXECUTE;
+        } else {
+            wb_adr = (s.fetch_pa & ~(XLen)3) + 4; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+        }
         break;
 
     case Phase::EXECUTE: {
+        if (std::getenv("DCS_PC")) std::fprintf(stderr, "PC=%llX len=%d inst=%08X\n", (unsigned long long) s.pc, (int) s.inst_len, s.inst);
         XLen trap_cause=0;
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
             takeTrap(s, trap_cause, 0);
@@ -272,6 +365,40 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     case Phase::WAIT_MEM:
         // 两次事务之间的相位：主从都是时序元件，_w 传递有一拍延迟，
         // 只拉低一拍 stb 不足以让从设备忘记上一次 ack，必须占满这些拍再重新发起。
+        // 第三段：8 字节非对齐访问要跨 3 个总线字（sd x, 1(base) 要写 1..8），
+        // 前两段只覆盖 7 字节。7=拉低 8=发起 9=等 ack 10=已到达
+        // 第三段：8 字节非对齐访问跨 3 个总线字（ld/sd 偏移 1..3），前两段只覆盖 7 字节。
+        // 地址必须在拉低那一拍就放上总线：从设备晚一拍才采到地址，等到发起那一拍
+        // 才改地址，它锁存的仍是上一段的字
+        if (s.acc_stage >= 7 && s.acc_stage <= 10) [[unlikely]] {
+            const XLen a3 = (s.acc_va & ~(XLen)3) + 8;
+            if (s.acc_stage == 7 || s.acc_stage == 8) {
+                uint32_t dat = 0;
+                uint8_t sel = 0x0F;
+                if (s.bus_we) {
+                    const uint32_t p = (uint32_t)(s.acc_va & 3);
+                    const uint32_t n = (s.acc_f3 == 3) ? 8 : 4;
+                    const uint32_t rest = p + n - 8;   // 第三段要写的字节数
+                    // 按 p 定位：p=1 取最高字节，p=2 取高两字节，p=3 取高三字节
+                    dat = (uint32_t)(s.acc_raw >> (8 * (8 - p)));
+                    sel = (uint8_t)((1u << rest) - 1u);
+                }
+                wb_adr = a3; wb_dat = dat; wb_we = s.bus_we; wb_sel = sel;
+                wb_stb = false; wb_cyc = true;
+                s.bus_adr = a3; s.bus_wdat = dat; s.bus_sel = sel;
+                if (s.acc_stage == 8 && !in.ack) s.acc_stage = 9;   // 旧 ack 撤了才发起
+                else if (s.acc_stage == 7) s.acc_stage = 8;
+                break;
+            }
+            // 发起第三段：地址已经就位，这里只拉高 stb
+            if (s.acc_stage == 9) {
+                wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = s.bus_we; wb_sel = s.bus_sel;
+                wb_stb = wb_cyc = true;
+                s.acc_stage = 10;
+                break;
+            }
+            // stage 10 落到下面的统一 ack 处理：这一拍 ack 高就是第三段的数据
+        }
         if (s.acc_stage >= 2 && s.acc_stage <= 5) [[unlikely]] {
             if (s.acc_stage <= 3) { // 拉低 stb，等从设备看到事务结束
                 wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = s.bus_we; wb_sel = s.bus_sel;
@@ -402,27 +529,36 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     // 普通读；跨字非对齐访问要再读一个字，与第一次读回的内容拼接
                     if (s.acc_stage == 1) {
                         s.acc_raw = raw;
+                        s.acc_wide = (unsigned __int128) raw;   // 第一段落在最低 32 位
+                        s.acc_seg = 1;
                         s.acc_stage = 2;      // 进入两次事务之间的拉低阶段
                         wb_adr = s.bus_adr; wb_dat=0; wb_we=false; wb_sel=0x0F;
                         wb_stb = wb_cyc = false;
                         break;
                     }
+                    // 第二段刚到，如果 8 字节访问还差最后一段，先把这一段存下再去发第三段
+                    if (s.acc_stage == 6) {
+                        s.acc_wide |= (unsigned __int128) raw << 32;   // 第二段
+                        s.acc_seg = 2;
+                        const uint32_t pp = (uint32_t)(s.acc_va & 3);
+                        const uint32_t nn = (s.acc_f3 == 3) ? 8 : 4;
+                        if (pp + nn > 8) {
+                            s.acc_raw2 = raw;
+                            s.acc_stage = 7;   // 7 等旧 ack 撤销 -> 8 发起 -> 9 等新 ack -> 10 到达
+                            break;
+                        }
+                    }
+                    // 收尾：两段够用、或者三段都到齐了，都从这里统一取出结果。
+                    // acc_wide 里每段的字节位置与内存一致，右移 va&3 就是目标起始字节。
+                    // 对齐访存（acc_stage==0）走下面的 else，不碰 128 位运算——
+                    // 那是热路径，非对齐本来就慢，代价要全部落在非对齐那一侧
                     XLen value;
-                    if (s.acc_stage >= 6) {
-                        if constexpr (XLEN == 64) {
-                        if ((s.acc_va & 3) == 0) {
-                            // 对齐但要读 8 字节（LD）：两次 32 位事务在高位拼，
-                            // 不能走下面的跨字移位——那里 va&3 为 0 时会出现 raw << 32
-                            value = (XLen) s.acc_raw | ((XLen) raw << 32);
-                        } else {
-                            XLen sh = 8 * (s.acc_va & 3);
-                            value = ((XLen) s.acc_raw >> sh) | ((XLen) raw << (32 - sh));
-                        }
-                        } else {
-                            // RV32 的拼接只能按 32 位写，否则 (uint32_t)raw << 32 是未定义行为
-                            uint64_t sh = 8 * (s.acc_va & 3);
-                            value = (XLen)(uint32_t)((s.acc_raw >> sh) | ((uint64_t) raw << (32 - sh)));
-                        }
+                    if (s.acc_stage >= 10) {
+                        s.acc_wide |= (unsigned __int128) raw << 64;   // 第三段
+                        value = (XLen)(s.acc_wide >> (8 * (s.acc_va & 3)));
+                        s.acc_stage = 0;
+                    } else if (s.acc_stage >= 6) {
+                        value = (XLen)(s.acc_wide >> (8 * (s.acc_va & 3)));
                         s.acc_stage = 0;
                     } else {
                         value = (XLen) raw >> (8 * (s.acc_va & 3));
@@ -456,6 +592,12 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 }
                 if (s.bus_amo) {
                     s.bus_amo=false; // AMO 写完成，ld_val 已在 read 阶段写入 rd
+                }
+                // 第二段写完，8 字节非对齐访问还差最后一个字节，进第三段
+                if (s.acc_stage == 6) {
+                    const uint32_t pp = (uint32_t)(s.acc_va & 3);
+                    const uint32_t nn = (s.acc_f3 == 3) ? 8 : 4;
+                    if (pp + nn > 8) { s.acc_stage = 7; break; }
                 }
                 s.acc_stage = 0;
                 wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
@@ -688,7 +830,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     // 依赖 64 位值的地址计算和跳转会算错
     XLen v1=s.regs[rs1], v2=s.regs[rs2];
     SXLen s1=(SXLen)v1, s2=(SXLen)v2;
-    XLen npc=s.pc+4;
+    XLen npc=s.pc+s.inst_len;
 
         // 已知局限：这里假设宿主的浮点舍入方向是 RNE（默认值，本项目不调 fesetround）。
         // 若宿主被改成其他方向，"(t)float" 和 double 运算本身都会跟着变，
@@ -916,13 +1058,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     case RV::JAL: {
         XLen tgt=s.pc+(XLen)(SXLen)ij;
         if (tgt & 2u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; } // IALIGN=32
-        s.regs[rd]=s.pc+4; npc=tgt; break;
+        s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::JALR: {
         if(f3!=0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         XLen tgt=(v1+(XLen)(SXLen)ii)&~(XLen)1;
         if (tgt & 2u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }
-        s.regs[rd]=s.pc+4; npc=tgt; break;
+        s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::BRANCH: { if (f3 == 2 || f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         bool t=false; switch(f3){
@@ -980,11 +1122,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
         XLen va=v1+(XLen)(SXLen)is, pa;
 
-        if constexpr (XLEN == 64) {
-
-            if (f3 == 3 && (va & 7)) { takeTrap(s, RV::EXC_SAM, va); return; }
-
-        }
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
         // 总线只接受字对齐地址：先写字内剩余部分，跨字的高段留到 WAIT_MEM 补写
         uint32_t p=pa&3;
@@ -1429,7 +1566,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     s.phase = Phase::HALTED; // 停止取指，等中断唤醒
                     // PC 照常前进：中断返回若落回 WFI 本身，会再停一次机，
                     // 而这时中断源已经处理掉，就再也醒不过来了
-                    npc = s.pc + 4;
+                    npc = s.pc + s.inst_len;
                 }
                 break;
             default:
@@ -1716,10 +1853,6 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval) {
-    if (std::getenv("DCS_TRAP_DEBUG"))
-        std::fprintf(stderr, "[trap] cause=%llu tval=0x%llX pc=0x%llX inst=0x%X\n",
-                     (unsigned long long) cause, (unsigned long long) tval,
-                     (unsigned long long) s.pc, s.inst);
     bool is_irq = (cause >> (XLEN - 1)) != 0;
     uint8_t target_priv = RV::PRIV_M;
 

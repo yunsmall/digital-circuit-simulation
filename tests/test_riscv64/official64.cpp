@@ -160,16 +160,6 @@ TEST(RiscV64Official, AllElf) {
 
     int skipped = 0;
     for (const auto &p : elfs) {
-        // ma_data 要求硬件直接完成非对齐访存。规范允许实现选择报 misaligned，
-        // 本核选了报 trap（非对齐 LD/SD 要拆三段事务，当前状态机只拆两段，
-        // 硬拼会丢字节）。这是明确的不支持项，不是缺陷
-        if (p.filename().string().find("ma_data") != std::string::npos) {
-            std::fprintf(stderr, "[skip] %s: 需要硬件支持非对齐访存，本核按规范报 misaligned\n",
-                         p.filename().string().c_str());
-            skipped++;
-            continue;
-        }
-
         std::string err;
         uint32_t v = runElf(p.string(), err);
         if (!err.empty()) {

@@ -157,6 +157,8 @@ public:
 private:
     enum class Phase : uint8_t {
         FETCH, WAIT_FETCH, EXECUTE, WAIT_MEM, HALTED,
+        // C 扩展下，落在字内偏移 2 的 32 位指令跨两个字，要再读一个字来拼
+        FETCH_HI_GAP, WAIT_FETCH_HI,  // 跨字取指：两次读之间要拉低 stb 一拍
         // MMU_AD_GAP 是 A/D 写回前的空拍：必须先拉低 stb 结束读 PTE 那笔事务，
         // 再重新发起写事务，不能靠"事务中途把 we 翻成 1"——不是所有从设备都认这个语义
         // GAP 是"结束上一笔事务的空拍"：真实硬件完成一次读事务（ack）后必须先拉低 stb，
@@ -175,6 +177,9 @@ private:
         uint32_t fcsr;      // frm[7:5] | fflags[4:0]
         Phase phase;
         uint32_t inst;
+        // 指令字节数：C 扩展下一条指令可能是 2 字节。pc 增量和 JAL/JALR 的返回地址
+        // 都要用它，不能写死 +4
+        uint8_t inst_len;
         bool prev_clk;
 
         // 特权级
@@ -230,13 +235,24 @@ private:
         uint8_t bus_fp; // 访存结果写浮点寄存器（FLW）而不是整数寄存器
         bool wfi_halted; // 已执行 WFI，等待中断唤醒
         uint32_t fetch_pa; // 取指经过 MMU 翻译后的物理地址，总线重发时要用它而不是 pc
+        uint32_t fetch_word0; // 跨字 32 位指令拼接时暂存第一个字
+        XLen fetch_hi_addr;   // 跨字取指时第二个字的地址，显式保存避免重算
+        uint8_t fetch_gap_cnt;  // 跨字取指拉低 stb 之后，ack 撤销还要再等一拍
         uint8_t mmu_priv;  // 本次页表遍历使用的特权级（MPRV 时可能不同于当前特权级）
         uint32_t mmu_pte;      // 需要写回页表的 PTE（补 A/D 位）
         uint32_t mmu_pte_addr; // 该 PTE 的物理地址
         bool mmu_pte_is_l1;    // 写回的是 L1（大页）还是 L2 PTE
         // 指令缓存：直接映射，每行一条指令。循环体是最常见的取指热点，
         // 缓存下来可以完全跳过总线事务。
-        struct ICacheLine { uint32_t tag; uint32_t inst; bool valid; };
+        // 一个 4 字节字里可能装两条压缩指令（pc&3 为 0 和 2），
+        // 所以每条缓存行同时存两个位置解压后的结果，命中时不用再解压
+        struct ICacheLine {
+            uint32_t tag;
+            uint32_t raw;       // 原始 32 位字，32 位指令跨字时要用
+            uint32_t inst[2];   // [0]=pc&3==0 处的指令，[1]=pc&3==2 处的指令
+            uint8_t len[2];     // 对应的指令字节数
+            bool valid;
+        };
         ICacheLine icache[256];
         uint32_t ic_hits, ic_misses;
 
@@ -245,6 +261,12 @@ private:
         XLen acc_va;        // 原始（可能未对齐）物理地址
         // 存两次事务的拼接结果：SD 要 64 位，32 位会让 >>32 成为未定义行为
         uint64_t acc_raw;   // 第一次读回的字；写操作时是待写数据
+        // 读路径的字节累加器：按段依次左移 32 位拼进来，最后一次性右移 va&3。
+        // 这样 1/2/3 段走同一套公式，不用为每种对齐各写一遍移位
+        unsigned __int128 acc_wide;
+        uint8_t acc_seg;    // 已经收进来几段
+        // 8 字节非对齐访问跨 3 个总线字，第二段的数据要单独存一份才能拼出完整值
+        uint32_t acc_raw2;
         uint8_t acc_f3;     // funct3，决定访问宽度
         uint8_t acc_stage;  // 0=单次事务, 1=第二次事务已发起, 2=第二次事务完成
     };
