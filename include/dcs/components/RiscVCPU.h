@@ -23,6 +23,9 @@ namespace RV {
     constexpr uint32_t F7_FSQRT=0x2C, F7_FSGNJ=0x10, F7_FMINMAX=0x14;
     constexpr uint32_t F7_FCMP=0x50, F7_FCVT_W_S=0x60, F7_FCVT_S_W=0x68;
     constexpr uint32_t F7_FMV_X_W=0x70, F7_FMV_W_X=0x78;
+    // D 扩展的 funct7 就是 F 的 | 1（fmt=01），所以判断双精度看 f7 & 1，
+    // 取基础 funct7 用 f7 & ~1。这样 D 的分支可以和 F 一一对应，不用再排一张表
+    constexpr uint32_t FMT_D = 0x01;
 
     // ---- 浮点 CSR ----
     constexpr uint32_t CSR_FFLAGS=0x001, CSR_FRM=0x002, CSR_FCSR=0x003;
