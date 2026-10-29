@@ -277,7 +277,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                     uint32_t n = (s.acc_f3==RV::F3_SB)?1:(s.acc_f3==RV::F3_SH)?2:(s.acc_f3==3)?8:4;
                     uint32_t first = 4 - p;
                     uint32_t rest = n - first;
-                    dat = s.acc_raw >> (8 * first);
+                    dat = (uint32_t)(s.acc_raw >> (8 * first));
                     sel = (uint8_t)((1u << rest) - 1u);
                 }
                 wb_adr = a2; wb_dat = dat; wb_we = s.bus_we; wb_sel = sel; wb_stb = wb_cyc = true;
@@ -298,24 +298,25 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 uint32_t raw=in.dat;
                 if (s.bus_amo) [[unlikely]] {
                     // AMO: 计算写回值，发起写请求
+                    // RV64 的 LR.W/AMO*.W 是把 32 位值符号扩展到 XLEN 写回 rd
                     uint32_t ld_val=raw, new_val=0, f5=s.bus_amo_f5;
                     uint32_t rs2_val=s.bus_wdat;
                     switch (f5) {
-                    case RV::F5_LR:      s.lr_addr=s.bus_adr; s.lr_valid=true; s.regs[s.bus_rd]=ld_val; // LR: 像普通 LW 一样返回
+                    case RV::F5_LR:      s.lr_addr=s.bus_adr; s.lr_valid=true; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; // LR: 像普通 LW 一样返回
                                          wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.bus_amo=false; s.phase=Phase::FETCH; break;
                     case RV::F5_SC:      if(s.lr_valid && s.lr_addr==s.bus_adr) { s.regs[s.bus_rd]=0; new_val=rs2_val; s.lr_valid=false; }
                                          else { s.regs[s.bus_rd]=1; s.lr_valid=false; s.bus_amo=false; wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH; break; }
                                          goto amo_write;
                     // AMO 算术: 先保存旧值到 rd，然后 goto amo_write 写回新值
-                    case RV::F5_AMOSWAP: new_val=rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOADD:  new_val=ld_val+rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOXOR:  new_val=ld_val^rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOAND:  new_val=ld_val&rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOOR:   new_val=ld_val|rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOMIN:  new_val=((int32_t)ld_val<(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOMAX:  new_val=((int32_t)ld_val>(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOMINU: new_val=(ld_val<rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
-                    case RV::F5_AMOMAXU: new_val=(ld_val>rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=ld_val; goto amo_write;
+                    case RV::F5_AMOSWAP: new_val=rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOADD:  new_val=ld_val+rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOXOR:  new_val=ld_val^rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOAND:  new_val=ld_val&rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOOR:   new_val=ld_val|rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOMIN:  new_val=((int32_t)ld_val<(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOMAX:  new_val=((int32_t)ld_val>(int32_t)rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOMINU: new_val=(ld_val<rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
+                    case RV::F5_AMOMAXU: new_val=(ld_val>rs2_val)?ld_val:rs2_val; s.regs[s.bus_rd]=(XLen)(SXLen)(int32_t)ld_val; goto amo_write;
                     default: s.bus_amo=false; wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH; break;
                     }
                     break;
@@ -335,13 +336,19 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                         wb_stb = wb_cyc = false;
                         break;
                     }
-                    uint32_t value;
+                    XLen value;
                     if (s.acc_stage >= 6) {
-                        uint32_t sh = 8 * (s.acc_va & 3); // 跨字时 p 必不为 0，移位量 8/16/24 都安全
-                        value = (s.acc_raw >> sh) | (raw << (32 - sh));
+                        if ((s.acc_va & 3) == 0) {
+                            // 对齐但要读 8 字节（LD）：两次 32 位事务在高位拼，
+                            // 不能走下面的跨字移位——那里 va&3 为 0 时会出现 raw << 32
+                            value = (XLen) s.acc_raw | ((XLen) raw << 32);
+                        } else {
+                            XLen sh = 8 * (s.acc_va & 3);
+                            value = ((XLen) s.acc_raw >> sh) | ((XLen) raw << (32 - sh));
+                        }
                         s.acc_stage = 0;
                     } else {
-                        value = raw >> (8 * (s.acc_va & 3));
+                        value = (XLen) raw >> (8 * (s.acc_va & 3));
                     }
                     // 窄加载要按 XLEN 符号扩展到整寄存器：RV64 下只扩到 32 位再赋值，
                     // 高 32 位会被零填充，负的字节/半字会变成大正数
@@ -773,7 +780,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- LOAD ----
     case RV::LOAD: {
-        if (f3 == 3 || f3 > 5) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 保留的 load 宽度编码
+        // RV32 的 load 只定义了 0/1/2/4/5；RV64 多出 f3=3(LD) 和 6(LWU)
+        const bool load_ok = (XLEN == 64) ? (f3 != 7) : (f3 != 3 && f3 <= 5);
+        if (!load_ok) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return; // 缺页已 trap
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
@@ -801,7 +810,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- STORE ----
     case RV::STORE: {
-        if (f3 > 2) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; } // 保留的 store 宽度编码
+        // RV64 多出 f3=3(SD)
+        if (f3 > 2 && !(XLEN == 64 && f3 == 3)) [[unlikely]]
+        { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
         // 总线只接受字对齐地址：先写字内剩余部分，跨字的高段留到 WAIT_MEM 补写
@@ -1224,7 +1235,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             }
         } else {
             if (f3 == 4) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; } // funct3=4 未定义
-            uint32_t csr_addr=(inst>>20)&RV::M_F12, csr_val=csrRead(s, csr_addr);
+            uint32_t csr_addr=(inst>>20)&RV::M_F12; XLen csr_val=csrRead(s, csr_addr);
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
             // 只有 CSRRW/CSRRWI 一定写；CSRRS/CSRRC/CSRRSI/CSRRCI 在源操作数为 0 时只是读
             bool csr_write = (f3 == RV::F3_CSRRW || f3 == RV::F3_CSRRWI) || (rs1 != 0);
@@ -1237,7 +1248,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if ((csr_addr == RV::CSR_FFLAGS || csr_addr == RV::CSR_FRM || csr_addr == RV::CSR_FCSR)
                 && ((s.mstatus >> 13) & 3u) == 0) [[unlikely]]
             { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; }
-            uint32_t wval = (f3>=RV::F3_CSRRW&&f3<=RV::F3_CSRRC) ? v1 : (uint32_t)rs1;
+            XLen wval = (f3>=RV::F3_CSRRW&&f3<=RV::F3_CSRRC) ? v1 : (XLen)rs1;
             // 检查 CSR 访问权限 (最低两位 = 读写权限位)
             if ((csr_addr>>8)&3) { uint8_t min_priv=(uint8_t)((csr_addr>>8)&3); if(s.priv<min_priv) [[unlikely]] { takeTrap(s,RV::EXC_II,inst); npc=s.pc; break; }}
             // 计数器 CSR 在 S 态以下还要过 mcounteren 的对应位：CY(0)/TM(1)/IR(2)
@@ -1307,13 +1318,14 @@ template<int XLEN> requires SupportedXlen<XLEN>
 XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     switch (addr) {
     // cycle/instret 与 M 态的 mcycle/minstret 是同一对计数器，只是可见性不同
-    case 0xB00: case 0xC00: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
+    // RV64 的 cycle/mcycle 是完整的 64 位 CSR；RV32 才拆成低/高两个
+    case 0xB00: case 0xC00: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
     case 0xB80: case 0xC80: return (uint32_t) (s.cycles >> 32);
     // time 本应来自 CLINT 的 mtime，这里用 cycle 近似：本核时钟与 mtime 同源，
     // 恒返回 0 会让依赖 rdtime 的超时逻辑静默失效
-    case 0xC01: return (uint32_t) (s.cycles & 0xFFFFFFFFu);
+    case 0xC01: return (XLen)((XLEN == 64) ? s.cycles : (s.cycles & 0xFFFFFFFFu));
     case 0xC81: return (uint32_t) (s.cycles >> 32);
-    case 0xB02: case 0xC02: return (uint32_t) (s.instret & 0xFFFFFFFFu);
+    case 0xB02: case 0xC02: return (XLen)((XLEN == 64) ? s.instret : (s.instret & 0xFFFFFFFFu));
     case 0xB82: case 0xC82: return (uint32_t) (s.instret >> 32);
     case 0x306: return s.mcounteren; // mcounteren
     case 0x3A0: case 0x3A1: case 0x3A2: case 0x3A3: return s.pmpcfg[addr - 0x3A0];
