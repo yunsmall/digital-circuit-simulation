@@ -802,7 +802,9 @@ void RiscVCPU::execute(CpuState &s, uint32_t inst,
                      : (op == 0x47) ? prod - (double)c
                      : (op == 0x4B) ? -prod + (double)c
                                     : -prod - (double)c;
-        float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3);
+        // prod 与 c 精确抵消时零的符号也要按模式定（只有相加形式会抵消）
+        bool fma_cancel = prod != 0.0 && ((op == 0x43 || op == 0x4B) ? c == -prod : c == prod);
+        float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3, fma_cancel);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
         // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
         bool fma_snan = ((s.fregs[rs1] >> 23) & 0xFF) == 0xFF && (s.fregs[rs1] & 0x7FFFFFu) && !(s.fregs[rs1] & 0x400000u)
