@@ -929,7 +929,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             const bool z_imm_f3 = (f3 == 1 || f3 == 5);
             // Zbkb 的 zip/unzip 也在 OP-IMM：funct7=0x04、rs2=0，f3=1 是 zip、5 是 unzip。
             // 语义是把低半与高半的位交错/解交错
-            if (f7 == RV::F7_ZUW && (rs2 & 0x1F) == 0 && (f3 == 1 || f3 == 5)) {
+            // zip/unzip 的 rs2 不是 0 而是固定编码 0x0F（与 rev8 的 0x18 同类），
+            // 所以只能按 (funct7, funct3) 精确匹配
+            if (f7 == RV::F7_ZUW && (f3 == 1 || f3 == 5)) {
                 const int half = XLEN / 2;
                 XLen r = 0;
                 for (int i = 0; i < half; ++i) {
