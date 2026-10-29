@@ -44,3 +44,14 @@ TEST(RvcDecode, CNop) {
     EXPECT_EQ(rdOf(e), 0u);
     EXPECT_EQ(immI(e), 0);
 }
+
+// C.ADDI a0, -16 的立即数是 6 位有符号数，必须解成 -16 而不是 48
+TEST(RvcDecode, CAddiNegativeImm) {
+    // c.addi a0, -16：op=1, f3=0, rd=10, imm[5]=1, imm[4:0]=0b10000
+    // 编码 0x1541 = c.addi a0, -16（imm 的 6 位补码是 0b110000）
+    const uint16_t enc = 0x1541;
+    const uint32_t e = expand<32>(enc);
+    EXPECT_EQ(opOf(e), 0x13u);
+    EXPECT_EQ(rdOf(e), 10u);
+    EXPECT_EQ(immI(e), -16) << "C.ADDI 的负立即数没符号扩展";
+}

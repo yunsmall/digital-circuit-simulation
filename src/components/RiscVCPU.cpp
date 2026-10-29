@@ -1057,13 +1057,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     }
     case RV::JAL: {
         XLen tgt=s.pc+(XLen)(SXLen)ij;
-        if (tgt & 2u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; } // IALIGN=32
+        if (tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; } // 有 C 扩展时 IALIGN=16，只禁止奇地址
         s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::JALR: {
         if(f3!=0) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         XLen tgt=(v1+(XLen)(SXLen)ii)&~(XLen)1;
-        if (tgt & 2u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }
+        if (tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }   // IALIGN=16
         s.regs[rd]=s.pc+s.inst_len; npc=tgt; break;
     }
     case RV::BRANCH: { if (f3 == 2 || f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
@@ -1072,7 +1072,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         case RV::F3_BLT:t=(s1<s2);break; case RV::F3_BGE:t=(s1>=s2);break;
         case RV::F3_BLTU:t=(v1<v2);break; case RV::F3_BGEU:t=(v1>=v2);break;
         } if(t) { XLen tgt=s.pc+(XLen)(SXLen)ib;
-            if (tgt & 2u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }
+            if (tgt & 1u) [[unlikely]] { takeTrap(s, RV::EXC_IAM, tgt); return; }   // IALIGN=16
             npc=tgt; } } break;
 
     // ---- LOAD ----
@@ -1521,6 +1521,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- SYSTEM ----
     case RV::SYSTEM: {
+        if (std::getenv("DCS_CSR")) std::fprintf(stderr, "CSR inst=%08X f3=%u rd=%u rs1=%u csr=%03X pc=%llX\n", inst, f3, rd, rs1, (unsigned)(inst >> 20), (unsigned long long) s.pc);
         if (f3 == 0) {
             uint32_t f12=(inst>>20)&RV::M_F12;
             switch (f12) {
@@ -1773,7 +1774,9 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
     case RV::CSR_MTVEC:   s.mtvec = val & ~(XLen)2; break; // 保留 bit0（MODE），只清保留位 bit1
     case RV::CSR_MSCRATCH:s.mscratch = val; break;
-    case RV::CSR_MEPC:    s.mepc = val & ~(XLen)3; break; // IALIGN=32，低两位恒为 0
+    // 支持 C 扩展后 IALIGN=16，返回地址可以是 4n+2，只能清最低位；
+    // 按 IALIGN=32 清两位会把 bit1 抹掉，mret 回到错的指令，表现为 trap 死循环
+    case RV::CSR_MEPC:    s.mepc = val & ~(XLen)1; break;
     case RV::CSR_MCAUSE:  s.mcause = val; break;
     case RV::CSR_MTVAL:   s.mtval = val; break;
     case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~(XLen)0x000C6122u) | (val & (XLen)0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读

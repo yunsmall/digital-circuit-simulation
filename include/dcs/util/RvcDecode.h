@@ -18,7 +18,9 @@ constexpr uint32_t R3(uint32_t f) { return (f & 7u) + 8u; }
 // 这是 6 位有符号数，必须符号扩展——不扩的话 C.ADDI 的负数立即数会变成大正数
 constexpr int32_t imm_ci(uint32_t i) {
     const uint32_t raw = (((i >> 12) & 1u) << 5) | ((i >> 2) & 0x1Fu);
-    return (int32_t)((raw << 26) >> 26);
+    // raw 是 uint32_t，直接 (raw << 26) >> 26 是逻辑右移、拿不到负数；
+    // 必须先转成有符号再右移才是符号扩展
+    return ((int32_t)(raw << 26)) >> 26;
 }
 
 // 分支型：imm[8|4:3] 在 bit12:10，imm[7:6|2:1|5] 在 bit6:2
@@ -137,7 +139,9 @@ uint32_t expand(uint16_t c) {
             if (imm == 0) return ILLEGAL;
             // C.LUI 的立即数是 6 位有符号，左移 12 位后进 lui 的 imm[17:12]；
             // 符号必须先扩到 6 位，否则 0x3F 这类会变成负的 lui 而不是正的
-            return U(0x37, rd, (((int32_t)((c >> 12) & 1u) << 5 | ((c >> 2) & 0x1Fu)) << 26 >> 26) * 4096);
+            // C.LUI 的立即数位段与 CI 型相同（imm[17] 在 bit12、imm[16:12] 在 bit6:2），
+            // 复用 imm_ci 拿 6 位有符号值，再左移 12 位进 lui 的 imm[17:12]
+            return U(0x37, rd, imm_ci(c) * 4096);
         }
         case 4: {    // 算术/逻辑
             const uint32_t f2 = (c >> 10) & 3u;
