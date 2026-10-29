@@ -236,6 +236,12 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             break;
         }
         s.fetch_pa = fpa;
+        // 取指断点：命中就不执行这条指令，直接进 breakpoint 陷阱（mepc = 当前 pc）
+        if (triggerMatch(s, s.pc, RV::TRIG_EXECUTE)) [[unlikely]] {
+            takeTrap(s, RV::EXC_BP, s.pc);
+            s.phase = Phase::FETCH; wb_stb = wb_cyc = false;
+            break;
+        }
         {
             uint32_t ic_idx = (fpa >> 2) & 255u;
             uint32_t ic_tag = fpa >> 10;
@@ -1335,6 +1341,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         XLen va=v1+(XLen)(SXLen)ii, pa;
 
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return; // 缺页已 trap
+        // 数据断点：命中则这条访存不执行，直接进 breakpoint 陷阱
+        if (triggerMatch(s, va, RV::TRIG_LOAD)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
         // 总线只接受字对齐地址，字内偏移由 CPU 自己记着；跨字则在 WAIT_MEM 里再读一个字
         uint32_t p=pa&3;
         uint32_t n=(f3==RV::F3_LH||f3==RV::F3_LHU)?2:(f3==RV::F3_LB||f3==RV::F3_LBU)?1:(f3==3)?8:4;
@@ -1374,6 +1382,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         XLen va=v1+(XLen)(SXLen)is, pa;
 
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
+        if (triggerMatch(s, va, RV::TRIG_STORE)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
         // 总线只接受字对齐地址：先写字内剩余部分，跨字的高段留到 WAIT_MEM 补写
         uint32_t p=pa&3;
         uint32_t n=(f3==RV::F3_SB)?1:(f3==RV::F3_SH)?2:(f3==3)?8:4;
@@ -1434,6 +1443,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // LR 只读，只要求页有 R；SC 与其余 AMO 要写，要求 W
         bool amo_write = (((inst >> 27) & 0x1F) != RV::F5_LR);
         if (!mmuTranslate(s, va, pa, amo_write, false)) [[unlikely]] return;
+        // LR 属于 load 类，SC/其余 AMO 属于 store 类
+        if (triggerMatch(s, va, amo_is_load ? RV::TRIG_LOAD : RV::TRIG_STORE)) [[unlikely]]
+        { takeTrap(s, RV::EXC_BP, va); return; }
         // AMO: 先发起读请求，WAIT_MEM 中完成修改后自动回写
         wb_adr=pa&~(XLen)3; wb_dat=v2; wb_we=false; wb_sel=0x0F;
         wb_stb=wb_cyc=true; need_mem=true;
@@ -1457,6 +1469,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
+        if (triggerMatch(s, va, RV::TRIG_LOAD)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
         // FLH 只要求 2 字节对齐，其余要求 4 字节
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
         // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
@@ -1478,6 +1491,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         { takeTrap(s, RV::EXC_II, inst); return; }
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
+        if (triggerMatch(s, va, RV::TRIG_STORE)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
         if (s.lr_valid && s.lr_addr == (pa & ~(XLen)3)) s.lr_valid = false;
         // 总线只接受字对齐地址：FSH/FSW 按字内偏移搬字节，FSD 走拆段机制
@@ -2480,6 +2494,10 @@ static bool csrImplemented(uint32_t addr) {
     case RV::CSR_MIE: case RV::CSR_MTVEC: case RV::CSR_MSCRATCH: case RV::CSR_MEPC:
     case RV::CSR_MCAUSE: case RV::CSR_MTVAL: case RV::CSR_MIP:
         return true;
+    // Debug 触发模块的 CSR（mcontrol 子集）
+    case RV::CSR_TSELECT: case RV::CSR_TDATA1: case RV::CSR_TDATA2:
+    case RV::CSR_TDATA3: case RV::CSR_TINFO: case RV::CSR_TCONTROL:
+        return true;
     default:
         return false;
     }
@@ -2556,6 +2574,13 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_STVAL:   return s.stval;
     case RV::CSR_SIP:     return s.mip & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI);
     case RV::CSR_SATP:    return s.satp;
+    case RV::CSR_TSELECT: return s.tselect;
+    case RV::CSR_TDATA1:  return s.tdata1[s.tselect];
+    case RV::CSR_TDATA2:  return s.tdata2[s.tselect];
+    case RV::CSR_TDATA3:  return s.tdata3[s.tselect];
+    // 支持的触发类型位图：bit2 = mcontrol。tinfo 只读，写它由通用只读检查拦下
+    case RV::CSR_TINFO:   return (XLen)(1u << RV::TRIG_TYPE_MCONTROL);
+    case RV::CSR_TCONTROL:return s.tcontrol;
     default: return 0;
     }
 }
@@ -2625,6 +2650,13 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
         }
         break;
     }
+    // Debug 触发模块：tselect 选槽位，其余按当前槽位读写
+    case RV::CSR_TSELECT: s.tselect = (uint32_t)(val & (RV::TRIGGER_NUM - 1)); break;
+    case RV::CSR_TDATA1:  s.tdata1[s.tselect] = val; break;
+    case RV::CSR_TDATA2:  s.tdata2[s.tselect] = val; break;
+    case RV::CSR_TDATA3:  s.tdata3[s.tselect] = val; break;
+    // mte(bit3) 控制 M 态触发，其余位保留
+    case RV::CSR_TCONTROL: s.tcontrol = (uint32_t)(val & 0x3F); break;
     default: break;
     }
 }
@@ -2704,6 +2736,25 @@ bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval
         s.pc = (is_irq && (s.mtvec & 3) == 1) ? (s.mtvec & ~(XLen)3) + 4u * (cause & 0x1F) : (s.mtvec & ~(XLen)3);
     }
     return true;
+}
+
+// ============================================================
+// Debug 触发模块（Sdtrig 的可选子集：mcontrol type=2）
+// ============================================================
+template<int XLEN> requires SupportedXlen<XLEN>
+bool RiscVCPU<XLEN>::triggerMatch(const CpuState &s, XLen addr, uint32_t op_bit) {
+    // tcontrol.mte 未置位时 M 态触发整体关闭；规范里它控制 M 态能否被触发
+    if (!(s.tcontrol & 0x8u)) return false;
+    if (s.priv != RV::PRIV_M) return false;
+    for (int i = 0; i < RV::TRIGGER_NUM; i++) {
+        const XLen t = s.tdata1[i];
+        // type 在最高 4 位：RV32 是 31:28，RV64 是 63:60
+        if ((uint32_t)(t >> (XLEN - 4)) != RV::TRIG_TYPE_MCONTROL) continue;
+        if (!(t & RV::TRIG_M)) continue;      // 配置里没开 M 态匹配
+        if (!(t & op_bit)) continue;          // 这次访存类型不在触发条件里
+        if (s.tdata2[i] == addr) return true;
+    }
+    return false;
 }
 
 // ============================================================

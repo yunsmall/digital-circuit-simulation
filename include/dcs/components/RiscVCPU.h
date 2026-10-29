@@ -83,6 +83,15 @@ namespace RV {
     constexpr uint32_t CSR_SSCRATCH=0x140, CSR_SEPC=0x141, CSR_SCAUSE=0x142, CSR_STVAL=0x143;
     constexpr uint32_t CSR_SIP=0x144, CSR_SATP=0x180;
 
+    // ---- Debug 触发模块（Sdtrig 的可选部分）----
+    // 官方 breakpoint 用例要的就是这几个 CSR + mcontrol(type=2)
+    constexpr uint32_t CSR_TSELECT=0x7A0, CSR_TDATA1=0x7A1, CSR_TDATA2=0x7A2;
+    constexpr uint32_t CSR_TDATA3=0x7A3, CSR_TINFO=0x7A4, CSR_TCONTROL=0x7A5;
+    constexpr int TRIGGER_NUM = 4;         // 触发槽位数
+    constexpr uint32_t TRIG_TYPE_MCONTROL = 2;
+    constexpr uint32_t TRIG_M = 1u << 6;   // mcontrol.m：匹配 M 态访存
+    constexpr uint32_t TRIG_EXECUTE = 1u << 2, TRIG_STORE = 1u << 1, TRIG_LOAD = 1u << 0;
+
     // ---- 计数器 / 环境配置 / 只读标识 ----
     // 这些原来直接以字面量散落在 switch 里，和上面成对的命名混用，既难对照规范也容易写错
     constexpr uint32_t CSR_MCYCLE=0xB00, CSR_MINSTRET=0xB02;
@@ -242,6 +251,12 @@ private:
         uint32_t sstatus, sie, sip, sscratch;
         XLen stvec, sepc, scause, stval, satp;
 
+        // Debug 触发模块：tselect 选槽位，tdata1 存 mcontrol 配置（含 type），
+        // tdata2 存匹配地址。tcontrol.mte 置位后 M 态触发才生效
+        uint32_t tselect;
+        XLen tdata1[RV::TRIGGER_NUM], tdata2[RV::TRIGGER_NUM], tdata3[RV::TRIGGER_NUM];
+        uint32_t tcontrol;
+
         // Sv32/Sv39 TLB
         // ASID 在 RV32 是 satp[30:22] 共 9 位，RV64 是 satp[59:44] 共 16 位，
         // 用 uint8_t 会截断高位，导致 TLB 命中错误页表项
@@ -334,6 +349,8 @@ private:
     static bool takeTrap(CpuState &s, XLen cause, XLen tval);
     static bool mmuTranslate(CpuState &s, XLen vaddr, XLen &paddr,
                              bool is_write, bool is_exec);
+    // 检查是否有 mcontrol 触发槽命中（地址 + 操作类型 + 特权级 + tcontrol.mte）
+    static bool triggerMatch(const CpuState &s, XLen addr, uint32_t op_bit);
     // 处理一个刚读回的页表项：校验合法性/权限/A/D，装填 TLB 或推进到下一级。
     // 返回 true 表示 TLB 已装填（调用方把相位设回取指/执行）；false 表示
     // 已 trap 或者还要继续遍历，相位已经在函数里设好
