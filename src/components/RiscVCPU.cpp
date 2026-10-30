@@ -316,7 +316,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 do_execute();
                 break;
             }
-            s.ic_misses++; s.ic_last_miss = (uint32_t) fpa;
+            s.ic_misses++;
+            s.ic_miss_pc[s.ic_miss_seq++ & 7u] = (uint32_t) fpa;
         }
         // 总线只接受字对齐地址：压缩指令的 pc 可能是 4n+2，地址要抹掉低两位，
         // 具体取哪个半字由 fetch_pa 的 bit1 在 WAIT_FETCH 里决定
@@ -333,8 +334,21 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             const uint32_t half = (s.fetch_pa & 2u) ? hi16 : lo16;
             if ((half & 3u) == 3u) {
                 if (s.fetch_pa & 2u) {
-                    // 32 位指令落在字内偏移 2：它跨了两个字，必须再读下一个字拼起来。
-                    // 这一路不进 icache（一行只存一个字的两个半字位置，装不下跨字指令）
+                    // 32 位指令落在字内偏移 2：它跨了两个字，高半要到下一个字里取。
+                    // 先把首字所在行走完常规填充——不填的话这一行永远 valid=false，
+                    // 后续每次取到这条跨字指令都要重新走两笔总线事务（循环体里的
+                    // 分支指令就属于这种，实测能占掉两成的周期）
+                    {
+                        const uint32_t ic_idx = (uint32_t)(s.fetch_pa >> 2) & 255u;
+                        auto &line = s.icache[ic_idx];
+                        line.tag = (uint32_t)(s.fetch_pa >> 10);
+                        line.raw = in.dat;
+                        line.inst[0] = ((lo16 & 3u) == 3u) ? in.dat : rvc::expand<XLEN>((uint16_t)lo16);
+                        line.len[0] = ((lo16 & 3u) == 3u) ? 4 : 2;
+                        line.inst[1] = 0;
+                        line.len[1] = 0;   // 高半要等拼装完成才回填
+                        line.valid = true;
+                    }
                     s.fetch_word0 = in.dat;
                     s.fetch_hi_addr = (s.fetch_pa & ~(XLen)3) + 4;
                     s.fetch_gap_cnt = 0;
@@ -798,7 +812,9 @@ inline void splitDouble(double x, double &hi, double &lo) {
     hi = c - (c - x);
     lo = x - hi;
 }
-// 返回 a*b，err 是精确误差项（a*b = 返回值 + err）
+// 返回 a*b，err 是精确误差项（a*b = 返回值 + err）。
+// 只在正规数乘积范围内精确：结果落进次正规区间时，拆分的误差项会因渐进下溢失真，
+// 那时非 RNE 模式的舍入方向可能差一个 ulp（RNE 不受影响，因为根本用不到 err）
 inline double twoProduct(double a, double b, double &err) {
     const double p = a * b;
     double ah, al, bh, bl;
@@ -2072,7 +2088,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     else { setd(std::signbit(da) != std::signbit(db) ? -INFINITY : INFINITY); s.fcsr |= 0x08; }
                 } else {
                     double hi = da / db;
-                    if (hi == 0.0) {
+                    // 只有"非零被除数下溢成 0"才算 UF|NX；0/db 是精确的 +0
+                    if (hi == 0.0 && da != 0.0) {
                         // 商小到舍入成 0：fma 的余项退化成被除数本身，符号和商不一定一致，
                         // 直接按商的方向决定 RDN/RUP 该给哪个最小次正规数
                         const bool neg_q = std::signbit(da) != std::signbit(db);

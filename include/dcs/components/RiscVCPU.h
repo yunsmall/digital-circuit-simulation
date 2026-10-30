@@ -191,7 +191,8 @@ public:
     // 取指缓存命中/缺失计数，供性能分析用
     uint64_t icacheHits() const { return _state.ic_hits; }
     uint64_t icacheMisses() const { return _state.ic_misses; }
-    uint64_t icacheLastMiss() const { return _state.ic_last_miss; }
+    // 最近 8 次取指缺失的地址，供性能分析
+    const uint32_t *icacheRecentMisses() const { return _state.ic_miss_pc; }
     uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
     uint32_t mepc() const { return _state.mepc; }
     uint32_t mtval() const { return _state.mtval; }
@@ -331,7 +332,8 @@ private:
         };
         ICacheLine icache[256];
         uint32_t ic_hits, ic_misses;
-        uint32_t ic_last_miss;   // 最近一次取指缺失的地址，调试用
+        uint32_t ic_miss_pc[8];  // 最近 8 次取指缺失的地址（环形），调试用
+        uint32_t ic_miss_seq;
 
         // 非对齐访存拆成两次对齐事务时的中间状态。真实从设备只接受字对齐地址 +
         // 字节使能，跨字访问必须由主设备自己拆开，不能改总线语义去迁就 CPU。

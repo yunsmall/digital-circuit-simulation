@@ -217,3 +217,19 @@ TEST(FpRounding, HalfWriteSetsFsDirty) {
     f.run(60);
     EXPECT_EQ((f.cpu->mstatus() >> 13) & 3u, 3u) << "FADD.H 之后 FS 必须是 Dirty";
 }
+
+// 0.0 / 5.0 的商是精确的 +0：不能像"非零被除数下溢成 0"那样置 UF/NX
+TEST(FpRounding, FdivZeroByFiniteSetsNoFlags) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0x0000000000000000ULL),   // +0.0
+        f.loadImm(2, 0x4014000000000000ULL),   // 5.0
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),
+        enc_fp(2, 0, 2, 0, OP_FMV_W_X, 1),
+        enc_fp(3, RM_RNE, 1, 2, OP_FDIV, 1),
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ(f.cpu->freg64(3), 0x0000000000000000ULL) << "0/5 应得精确的 +0";
+    EXPECT_EQ(f.cpu->fcsr() & 0x1Fu, 0u) << "0/5 不应置任何标志（UF/NX/NV/DZ/OF）";
+}

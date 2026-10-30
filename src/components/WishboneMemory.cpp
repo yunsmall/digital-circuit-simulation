@@ -111,10 +111,10 @@ std::string WishboneMemory::genFuncDef_seq() const {
         _wbm_s_{0}.latched_addr = _a;
         if (!_we) {{
             _wbm_s_{0}.latched_dout = 0;
-            if ((unsigned)_a + {2}u <= {3}u)
+            if ((unsigned long long)_a + {2}ull <= {3}ull)
                 dcs_memcpy(&_wbm_s_{0}.latched_dout, _wbm_mem_{0} + _a, {2});
         }} else {{
-            if ((unsigned)_a + {2}u <= {3}u)
+            if ((unsigned long long)_a + {2}ull <= {3}ull)
                 for (int _b = 0; _b < {2}; _b++)
                     if (_sel & (1u << _b))
                         _wbm_mem_{0}[_a + _b] = (uint8_t)((_wdat >> (8 * _b)) & 0xFF);
@@ -124,7 +124,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
     }} else if (_werise) {{
         // AMO 写阶段：用已折算过的锁存地址
         const uint32_t _a = _wbm_s_{0}.latched_addr;
-        if ((unsigned)_a + {2}u <= {3}u)
+        if ((unsigned long long)_a + {2}ull <= {3}ull)
             for (int _b = 0; _b < {2}; _b++)
                 if (_sel & (1u << _b))
                     _wbm_mem_{0}[_a + _b] = (uint8_t)((_wdat >> (8 * _b)) & 0xFF);
@@ -135,7 +135,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
         else {{ _dout = _wbm_s_{0}.latched_dout; _ack8 = 1; }}
     }}
 )",
-                       id, mask, nb, (unsigned) _depth);
+                       id, mask, nb, (unsigned long long) _depth);
     // 输出直接写线网：这两个线网只由本元件驱动、init 时清零，
     // 只写有效字节即可，不必再补高位清零
     int dat_nid = outputs()[O_DAT]->netId();

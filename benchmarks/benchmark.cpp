@@ -250,7 +250,11 @@ void runOne(const std::string &path, long long ticks, int repeat, std::vector<Re
             if (f.cpu)
                 std::fprintf(stderr, "  [%s] icache 命中 %llu / 缺失 %llu\n", r.name.c_str(),
                              (unsigned long long) f.cpu->icacheHits(), (unsigned long long) f.cpu->icacheMisses());
-            if (f.cpu) std::fprintf(stderr, "  最后缺失地址: 0x%llx\n", (unsigned long long) f.cpu->icacheLastMiss());
+            if (f.cpu) {
+                std::fprintf(stderr, "  最近缺失:");
+                for (int k = 0; k < 8; k++) std::fprintf(stderr, " 0x%x", f.cpu->icacheRecentMisses()[k]);
+                std::fprintf(stderr, "\n");
+            }
         }
     }
     r.seconds = best;
