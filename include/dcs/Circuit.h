@@ -98,6 +98,8 @@ public:
     void tick(); // 调用 circuit_tick()，执行一个周期。有未清错误时直接返回
     // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
     void tickCycle(int clk_net_id);
+    // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）
+    void tickCycles(int clk_net_id, int n);
     void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
@@ -169,6 +171,7 @@ private:
 
     void (*_tick_fn)() = nullptr;
     void (*_tick_cycle_fn)(int) = nullptr;
+    void (*_tick_cycles_fn)(int, int) = nullptr;
     void (*_init_fn)() = nullptr;
     void (*_deinit_fn)() = nullptr;
     void (*_reset_fn)() = nullptr;

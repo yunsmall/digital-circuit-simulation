@@ -122,6 +122,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     auto sym = [s](const char *n) { return reinterpret_cast<void *>(tcc_get_symbol(s, n)); };
     r.tick = reinterpret_cast<void (*)()>(sym("circuit_tick"));
     r.tick_cycle = reinterpret_cast<void (*)(int)>(sym("circuit_tick_cycle"));
+    r.tick_cycles = reinterpret_cast<void (*)(int, int)>(sym("circuit_tick_cycles"));
     r.init = reinterpret_cast<void (*)()>(sym("circuit_init"));
     r.deinit = reinterpret_cast<void (*)()>(sym("circuit_deinit"));
     r.reset = reinterpret_cast<void (*)()>(sym("circuit_reset"));
@@ -232,6 +233,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     JitCompileResult r;
     r.tick = lookup.operator()<void (*)()>("circuit_tick");
     r.tick_cycle = lookup.operator()<void (*)(int)>("circuit_tick_cycle");
+    r.tick_cycles = lookup.operator()<void (*)(int, int)>("circuit_tick_cycles");
     r.init = lookup.operator()<void (*)()>("circuit_init");
     r.deinit = lookup.operator()<void (*)()>("circuit_deinit");
     r.reset = lookup.operator()<void (*)()>("circuit_reset");

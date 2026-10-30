@@ -305,14 +305,21 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     }
     oss << "}\n\n";
 
+    // 时钟线网只有 1 位，直接写第一个字节即可；其余字节在 init 时清零且无人写过。
+    // 连续跑多个周期时循环留在 JIT 里，省掉每周期一次跨模块调用
     oss << R"(void circuit_tick_cycle(int clk_id) {
-    unsigned long long _lo = 0, _hi = 1;
-    dcs_memcpy(_w[clk_id], &_lo, 8);
-    dcs_memset(_w[clk_id] + 8, 0, 8);
+    _w[clk_id][0] = 0;
     circuit_tick();
-    dcs_memcpy(_w[clk_id], &_hi, 8);
-    dcs_memset(_w[clk_id] + 8, 0, 8);
+    _w[clk_id][0] = 1;
     circuit_tick();
+}
+void circuit_tick_cycles(int clk_id, int n) {
+    for (int _i = 0; _i < n; _i++) {
+        _w[clk_id][0] = 0;
+        circuit_tick();
+        _w[clk_id][0] = 1;
+        circuit_tick();
+    }
 }
 
 void circuit_init(void) {

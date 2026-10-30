@@ -24,6 +24,8 @@ struct JitCompileResult {
     void (*tick)() = nullptr;
     // 一次调用走完一个时钟周期（低电平拍 + 高电平拍），省掉外部的两次往返
     void (*tick_cycle)(int) = nullptr;
+    // 一次调用连跑 n 个周期，循环留在 JIT 里
+    void (*tick_cycles)(int, int) = nullptr;
     void (*init)() = nullptr;
     void (*deinit)() = nullptr;
     void (*reset)() = nullptr;

@@ -136,30 +136,12 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     auto &s = *static_cast<CpuState*>(state_ptr);
     CpuIn in(inputs);
     if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
-    // 外部中断线每 tick 反映到 mip，否则停机期间收不到中断。逐位 set/clear 会变成
-    // 四轮 load-modify-store，而这几根线绝大多数拍都是低电平，合并成一次读改写
-    const uint32_t ext_irq = (in.irq ? RV::IRQ_MEI : 0u) | (in.mti ? RV::IRQ_MTI : 0u)
-                           | (in.msi ? RV::IRQ_MSI : 0u) | (in.seip ? RV::IRQ_SEI : 0u);
-    constexpr uint32_t EXT_MASK = RV::IRQ_MEI | RV::IRQ_MTI | RV::IRQ_MSI | RV::IRQ_SEI;
-    s.mip = (s.mip & ~EXT_MASK) | ext_irq;
-    // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
-    // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起
-    if (s.mideleg & RV::IRQ_STI) {
-        if (in.mti) s.mip |= RV::IRQ_STI;
-        else s.mip &= ~RV::IRQ_STI;
-    }
-    // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
-    // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动。
-    // 这里刻意不看 mstatus.MIE：全局关闭时也要退出 WFI，由后续中断判定决定去留
-    if (s.wfi_halted && (s.mip & s.mie)) {
-        s.wfi_halted = false;
-        s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
-    }
-
-    bool rising = !s.prev_clk && in.clk; s.prev_clk = in.clk;
-    if (rising) s.cycles++; // cycle 按时钟上升沿计数，与真实硬件的 mcycle 一致
+    const bool rising = !s.prev_clk && in.clk;
+    s.prev_clk = in.clk;
 
     if (!rising) {
+        // 下降沿只负责把当前相位的总线信号摆到总线上。中断线在时钟沿采样就够了，
+        // 这是真实硬件的做法，也让这一半拍不碰任何 CPU 状态
         XLen adr=0; uint32_t wdat=0; bool we=false,stb=false,cyc=false; uint8_t sel=0;
         switch (s.phase) {
         // FETCH 这一拍地址要等上升沿翻译完才能定，不能先按 pc 发请求，
@@ -173,12 +155,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         case Phase::WAIT_MEM: {
             // 与上升沿分支保持一致：拆分事务的拉低相位必须真的拉低 stb，
             // 否则同一时钟周期的另一半又把 stb 抬起来，从设备看不到事务边界。
-            // stage 4 是"下一次上升沿才发起第二次事务"，这一拍必须继续拉低，
-            // 否则会先用旧地址发一次假事务，从设备锁存旧地址后真正的事务再也不触发
-            // 这些相位要求 stb 保持低电平：拆分事务的两次拉低，以及第三段等旧 ack 撤销。
-            // 漏掉 7 的话下降沿会把 stb 又抬起来，从设备永远看不到事务结束
-            // 两拍拉低的相位都要在这里标出来：上升沿推进相位之后，下降沿会再读一次
-            // acc_stage，漏掉就会把下半拍的 stb 又抬回去，从设备看不到事务边界
+            // stage 4 是"下一次上升沿才发起第二次事务"，这一拍必须继续拉低；
+            // 漏掉 7/8 的话下降沿会把 stb 又抬起来，从设备永远看不到事务结束
             bool hold_off = (s.acc_stage >= 2 && s.acc_stage <= 4)
                          || (s.acc_stage == 7) || (s.acc_stage == 8);
             adr=s.bus_adr; wdat=s.bus_wdat; we=s.bus_we; sel=s.bus_sel;
@@ -199,6 +177,26 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         return;
     }
 
+    s.cycles++; // cycle 按时钟上升沿计数，与真实硬件的 mcycle 一致
+    // 外部中断线在上升沿反映到 mip，否则停机期间收不到中断。逐位 set/clear 会变成
+    // 四轮 load-modify-store，而这几根线绝大多数拍都是低电平，合并成一次读改写
+    const uint32_t ext_irq = (in.irq ? RV::IRQ_MEI : 0u) | (in.mti ? RV::IRQ_MTI : 0u)
+                           | (in.msi ? RV::IRQ_MSI : 0u) | (in.seip ? RV::IRQ_SEI : 0u);
+    constexpr uint32_t EXT_MASK = RV::IRQ_MEI | RV::IRQ_MTI | RV::IRQ_MSI | RV::IRQ_SEI;
+    s.mip = (s.mip & ~EXT_MASK) | ext_irq;
+    // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
+    // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起
+    if (s.mideleg & RV::IRQ_STI) {
+        if (in.mti) s.mip |= RV::IRQ_STI;
+        else s.mip &= ~RV::IRQ_STI;
+    }
+    // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
+    // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动。
+    // 这里刻意不看 mstatus.MIE：全局关闭时也要退出 WFI，由后续中断判定决定去留
+    if (s.wfi_halted && (s.mip & s.mie)) {
+        s.wfi_halted = false;
+        s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
+    }
 
     XLen wb_adr=0; uint32_t wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0;
 

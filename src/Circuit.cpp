@@ -77,6 +77,7 @@ void Circuit::jitCleanup() {
     // 仅清理 JIT 状态（函数指针 + 后端资源）
     _tick_fn = nullptr;
     _tick_cycle_fn = nullptr;
+    _tick_cycles_fn = nullptr;
     _init_fn = nullptr;
     _deinit_fn = nullptr;
     _reset_fn = nullptr;
@@ -422,6 +423,7 @@ CircuitError Circuit::compile() {
 
     _tick_fn = res.tick;
     _tick_cycle_fn = res.tick_cycle;
+    _tick_cycles_fn = res.tick_cycles;
     _init_fn = res.init;
     _deinit_fn = res.deinit;
     _reset_fn = res.reset;
@@ -461,6 +463,17 @@ void Circuit::tickCycle(int clk_net_id) {
     tick();
     setWire(clk_net_id, 1);
     tick();
+}
+
+void Circuit::tickCycles(int clk_net_id, int n) {
+    if (_tick_error.code != ErrorCode::OK)
+        return;
+    if (_tick_cycles_fn) {
+        _tick_cycles_fn(clk_net_id, n);
+        return;
+    }
+    for (int i = 0; i < n; i++)
+        tickCycle(clk_net_id);
 }
 
 void Circuit::onBusConflict(int net_id) {

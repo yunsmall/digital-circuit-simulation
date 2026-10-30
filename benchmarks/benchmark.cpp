@@ -36,7 +36,9 @@ struct Fixture {
     Net *halted_net = nullptr;
     double compile_ms = 0;   // 电路构建 + JIT 编译耗时
 
-    Fixture() {
+    // use_clkgen：时钟由电路内的 ClockGen 元件产生（每 tick 翻转），
+    // 对应"电路自己走时钟"的用法；默认由 tickCycles 在外部驱动
+    explicit Fixture(bool use_clkgen = false) {
         auto cpu_ptr = std::make_unique<RiscVCPU<64>>("cpu0");
         cpu = cpu_ptr.get();
         circuit->addComponent(std::move(cpu_ptr));
@@ -83,6 +85,12 @@ struct Fixture {
         circuit->connect(mem, "wb_cyc_i", wb_cyc);
         circuit->connect(mem, "wb_dat_o", wb_dat_i);
         circuit->connect(mem, "wb_ack_o", wb_ack);
+
+        if (use_clkgen) {
+            auto cg = std::make_unique<ClockGen>("clkgen0", 1, 1);
+            auto *p = circuit->addComponent(std::move(cg));
+            circuit->connect(p, "clk", clk_net);
+        }
     }
 
     uint32_t peek(uint32_t addr) const {
@@ -112,8 +120,9 @@ struct Fixture {
         return true;
     }
 
-    void reset() {
-        circuit->setWire(clk_net->id(), 0);
+    void reset(bool drive_clk = true) {
+        if (drive_clk)
+            circuit->setWire(clk_net->id(), 0);
         circuit->setWire(rst_net->id(), 1);
         circuit->tick();
         circuit->setWire(rst_net->id(), 0);
@@ -126,6 +135,31 @@ struct Result {
     double seconds = 0;
     long long ticks = 0;
 };
+
+// 同一个 CPU 电路，改用 ClockGen 元件产生时钟：每拍 tick 一次。
+// 与 tickCycles 的外部驱动方式对比，能看出"多跑一个元件函数"的代价
+void runClockGenCase(const std::string &path, long long ticks, int repeat, std::vector<Result> &out) {
+    Result r;
+    r.name = std::filesystem::path(path).stem().string() + "_clkgen";
+    Fixture f(true);
+    std::string err;
+    if (!f.load(path, err)) {
+        std::fprintf(stderr, "[%s] 装载失败: %s\n", r.name.c_str(), err.c_str());
+        return;
+    }
+    r.compile_ms = f.compile_ms;
+    double best = 1e30;
+    for (int rep = 0; rep < repeat; rep++) {
+        f.reset(false);
+        auto t0 = std::chrono::steady_clock::now();
+        for (long long i = 0; i < ticks; i++)
+            f.circuit->tick();
+        best = (std::min)(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
+    r.seconds = best;
+    r.ticks = ticks;
+    out.push_back(r);
+}
 
 // 纯电路场景：不加载 ELF，直接搭电路，测框架调度本身每拍的开销
 std::unique_ptr<Circuit> makeGateChain(int levels) {
@@ -236,6 +270,12 @@ int main(int argc, char **argv) {
 
     std::vector<Result> results;
     for (const auto &f : files) runOne(f, ticks, repeat, results);
+
+    // 用第一个 ELF 再跑一遍"电路内部时钟"的对比场景
+    if (!files.empty() && !explicit_list.empty())
+        runClockGenCase(files.front(), ticks, repeat, results);
+    else if (!files.empty() && explicit_list.empty())
+        runClockGenCase(files.front(), ticks, repeat, results);
 
     // 显式指定 ELF 时只跑这些，方便单场景剖析
     const bool explicit_files = !explicit_list.empty();
