@@ -72,6 +72,21 @@ cmake --build build --parallel --config RelWithDebInfo
 ctest --test-dir build -C RelWithDebInfo --output-on-failure
 ```
 
+## 性能基准
+
+`benchmarks/` 下有六个 ELF 负载场景和两个纯电路场景，用来防止性能回归。
+
+```bash
+bash benchmarks/build.sh          # 交叉编译基准 ELF（clang，rv64gc）
+./build/RelWithDebInfo/dcs_bench  # 默认每个场景 4000 万 tick、重复 3 次取最小值
+```
+
+`--ticks N` 改拍数，`--repeat R` 改轮数，也可以直接传某个 ELF 路径只跑那一项。
+表格里的"完成周期"是程序写 tohost 所需的周期数，比 tick 吞吐更能反映真实速度。
+
+驱动时钟优先用 `circuit->tickCycles(clk_net_id, n)`（循环在 JIT 内），
+比每拍 `setWire` + `tick` 快；`clkgen` 元件约慢 7%，只在需要分频/多时钟域时用。
+
 ## 作为子目录集成到其他 CMake 项目
 
 ```cmake

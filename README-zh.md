@@ -199,8 +199,17 @@ bash benchmarks/build.sh             # 交叉编译基准 ELF 到 benchmarks/out
 ./build/RelWithDebInfo/dcs_bench     # 默认每个场景 4000 万 tick，重复 3 次取最小值
 ```
 
-输出包含 JIT 编译耗时与每秒 tick 数；`--ticks N` 改拍数，`--repeat R` 改轮数，
-`--dir` 指定 ELF 目录，也可直接传 ELF 路径。
+输出包含 JIT 编译耗时、每秒 tick 数、完成周期数与 icache 命中率；
+`--ticks N` 改拍数，`--repeat R` 改轮数，`--dir` 指定 ELF 目录，也可直接传 ELF 路径。
+
+驱动时钟有两种方式，基准里都能看到：
+
+- `circuit->tickCycles(clk_net_id, n)` — 在 JIT 内部连跑 n 个周期，最省
+- 放一个 `clkgen` 元件让它自己走时钟，每拍调 `circuit->tick()` — 慢约 7%，
+  适合需要分频或多时钟域的电路
+
+参考数据（Windows / clang 22，RelWithDebInfo，4000 万 tick）：整数负载约 72 M tick/s，
+跑完 alu 场景 7202 万周期约 2.0 秒。
 
 ## JSON 电路格式
 

@@ -201,9 +201,18 @@ bash benchmarks/build.sh             # cross-compile the benchmark ELFs into ben
 ./build/RelWithDebInfo/dcs_bench     # 40M ticks per case by default, best of 3 repeats
 ```
 
-Output includes JIT compile time and ticks per second; `--ticks N` changes the tick
-count, `--repeat R` the number of rounds, `--dir` the ELF directory. Individual ELF
-paths may also be passed directly.
+Output includes JIT compile time, ticks per second, completed cycles and the icache
+hit rate; `--ticks N` changes the tick count, `--repeat R` the number of rounds,
+`--dir` the ELF directory. Individual ELF paths may also be passed directly.
+
+There are two ways to drive the clock, both shown by the benchmark:
+
+- `circuit->tickCycles(clk_net_id, n)` — run n cycles inside the JIT, cheapest
+- add a `clkgen` component and call `circuit->tick()` per tick — about 7% slower,
+  the right choice when you need a divided or multi-domain clock
+
+Reference numbers (Windows / clang 22, RelWithDebInfo, 40M ticks): ~72M ticks/s on
+integer workloads; the alu case completes its 72M cycles in about 2.0 s.
 
 ## JSON Circuit Format
 
