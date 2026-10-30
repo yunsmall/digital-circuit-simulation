@@ -16,6 +16,9 @@
 #include <clang/Frontend/CompilerInvocation.h>
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Lex/PreprocessorOptions.h>
+#if defined(__linux__)
+#include <llvm/ExecutionEngine/Orc/Debugging/PerfSupportPlugin.h>
+#endif
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/IR/LLVMContext.h>
@@ -118,10 +121,12 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     JitCompileResult r;
     auto sym = [s](const char *n) { return reinterpret_cast<void *>(tcc_get_symbol(s, n)); };
     r.tick = reinterpret_cast<void (*)()>(sym("circuit_tick"));
+    r.tick_cycle = reinterpret_cast<void (*)(int)>(sym("circuit_tick_cycle"));
     r.init = reinterpret_cast<void (*)()>(sym("circuit_init"));
     r.deinit = reinterpret_cast<void (*)()>(sym("circuit_deinit"));
     r.reset = reinterpret_cast<void (*)()>(sym("circuit_reset"));
     r.set_wire = reinterpret_cast<void (*)(int, const uint8_t *)>(sym("circuit_set_wire"));
+    r.set_wire_u64 = reinterpret_cast<void (*)(int, uint64_t)>(sym("circuit_set_wire_u64"));
     r.get_wire = reinterpret_cast<void (*)(int, uint8_t *)>(sym("circuit_get_wire"));
     if (!r.tick || !r.init || !r.set_wire || !r.get_wire) {
         cleanup();
@@ -177,6 +182,17 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         return {ErrorCode::JIT_LINK_FAILED, -1, llvm_err};
     }
     _impl->jit = std::move(*jit_or_err);
+#if defined(__linux__)
+    // JIT 出来的代码没有符号表，perf 只能看到一串地址。这个插件把每次链接的
+    // 代码范围写进 jitdump，perf record -k 1 之后用 perf inject --jit 就能还原函数名。
+    // Windows 上没有 perf，编译期直接跳过。
+    if (auto perf_plugin = llvm::orc::PerfSupportPlugin::Create(
+                _impl->jit->getExecutionSession().getExecutorProcessControl(),
+                _impl->jit->getMainJITDylib(), false, false)) {
+        static_cast<llvm::orc::ObjectLinkingLayer &>(_impl->jit->getObjLinkingLayer())
+                .addPlugin(std::move(*perf_plugin));
+    }
+#endif
 
     // 统一入口：注入总线冲突回调与各元件暴露的符号
     {
@@ -215,10 +231,12 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     };
     JitCompileResult r;
     r.tick = lookup.operator()<void (*)()>("circuit_tick");
+    r.tick_cycle = lookup.operator()<void (*)(int)>("circuit_tick_cycle");
     r.init = lookup.operator()<void (*)()>("circuit_init");
     r.deinit = lookup.operator()<void (*)()>("circuit_deinit");
     r.reset = lookup.operator()<void (*)()>("circuit_reset");
     r.set_wire = lookup.operator()<void (*)(int, const uint8_t *)>("circuit_set_wire");
+    r.set_wire_u64 = lookup.operator()<void (*)(int, uint64_t)>("circuit_set_wire_u64");
     r.get_wire = lookup.operator()<void (*)(int, uint8_t *)>("circuit_get_wire");
     if (!r.tick || !r.init || !r.set_wire || !r.get_wire) {
         cleanup();

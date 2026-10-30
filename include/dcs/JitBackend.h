@@ -22,10 +22,14 @@ struct JitCompileResult {
     int component_id = -1;
     std::string message;
     void (*tick)() = nullptr;
+    // 一次调用走完一个时钟周期（低电平拍 + 高电平拍），省掉外部的两次往返
+    void (*tick_cycle)(int) = nullptr;
     void (*init)() = nullptr;
     void (*deinit)() = nullptr;
     void (*reset)() = nullptr;
     void (*set_wire)(int, const uint8_t *) = nullptr;
+    // 标量快捷入口：高频驱动时钟这类线网时不用先拼 16 字节的缓冲区
+    void (*set_wire_u64)(int, uint64_t) = nullptr;
     void (*get_wire)(int, uint8_t *) = nullptr;
 };
 

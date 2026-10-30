@@ -96,9 +96,13 @@ public:
     // --- 仿真运行 ---
     void init(); // 调用 circuit_init()，清零所有状态
     void tick(); // 调用 circuit_tick()，执行一个周期。有未清错误时直接返回
+    // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
+    void tickCycle(int clk_net_id);
     void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
+    // 标量快捷路径：高频驱动时钟/复位这类 1 位线网时，不必每拍构造一次 vector
+    void setWire(int id, uint64_t value);
     std::vector<uint8_t> getWire(int id); // 读取线网值
 
     // --- 运行时错误 ---
@@ -164,10 +168,12 @@ private:
     static std::string _jit_include_dir; // JIT 头文件搜索路径（空=自动检测）
 
     void (*_tick_fn)() = nullptr;
+    void (*_tick_cycle_fn)(int) = nullptr;
     void (*_init_fn)() = nullptr;
     void (*_deinit_fn)() = nullptr;
     void (*_reset_fn)() = nullptr;
     void (*_set_wire_fn)(int, const uint8_t *) = nullptr;
+    void (*_set_wire_u64_fn)(int, uint64_t) = nullptr;
     void (*_get_wire_fn)(int, uint8_t *) = nullptr;
 
     Pin *findPin(Component *comp, const std::string &name);

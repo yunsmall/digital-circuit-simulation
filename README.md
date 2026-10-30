@@ -6,7 +6,7 @@ A digital circuit simulation framework with JIT-compiled execution. Build circui
 
 ## Features
 
-- **50+ built-in components**: gates, flip-flops, registers, counters, adders, multipliers, dividers, comparators, float32/float64 arithmetic, RAM, ROM, FIFO, barrel shifter, sign extension, priority encoder, multi-port RAM, and more
+- **70+ built-in components**: gates, flip-flops, registers, counters, adders, multipliers, dividers, comparators, float32/float64 arithmetic, RAM, ROM, FIFO, barrel shifter, sign extension, priority encoder, multi-port RAM, plus RISC-V CPU, Wishbone bus, UART/CLINT/PLIC and other platform components
 - **JIT compilation**: circuit → C code → native machine code, executed in memory
 - **Dual backend**: LLVM/Clang ORC JIT (default) or TinyCC (lightweight alternative)
 - **JSON import/export**: full circuit description, round-trip safe
@@ -16,7 +16,7 @@ A digital circuit simulation framework with JIT-compiled execution. Build circui
 - **Configurable bit-widths**: 1–64 bits per wire
 - **Combinational loop detection**: three-color DFS with cycle reporting
 - **Parameter validation**: invalid values rejected at JSON load time
-- **gtest suite**: 17 test targets covering all component types
+- **gtest suite**: 32 test targets covering all component types and the official riscv-tests
 
 ## Quick Start
 
@@ -105,6 +105,10 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 |------|-------------|------------|
 | `and`, `or`, `nand`, `nor`, `xor`, `xnor` | Multi-input gates | `inputs` (2–8), `bit_width` (1–64) |
 | `not` | Bitwise NOT | `bit_width` |
+| `abs` | Absolute value | `bit_width` |
+| `min`, `max` | Min/max | `bit_width`, `signed` (0/1) |
+| `redand`, `redor`, `redxor` | Reduction AND/OR/XOR | `bit_width` |
+| `lsl`, `lsr`, `asr` | Shifts (amount from input pin) | `bit_width` |
 | `buf` | Buffer | `bit_width` |
 | `tsbuf` | Tri-state buffer (oe-controlled) | `bit_width` |
 | `mux` | Multiplexer (2^N:1) | `n_selects` (1–4), `bit_width` |
@@ -128,7 +132,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | Type | Description | Parameters |
 |------|-------------|------------|
 | `fadd`, `fsub`, `fmul`, `fdiv` | Float32/64 arithmetic | `precision` (32/64) |
-| `fcmp` | Float comparison | `precision`, `op` (eq/ne/lt/gt/le/ge) |
+| `feq`, `fne`, `flt`, `fgt`, `fle`, `fge` | Float comparison | `precision` (32/64) |
+| `f2i`, `i2f` | Float/integer conversion | `precision`, `int_width`, `signed` |
 | `fconst` | Float constant | `precision`, `value` (e.g., "3.14") |
 
 ### Sequential Logic
@@ -143,6 +148,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `counter` | Up/down counter | `bit_width`, optional `has_load`/`has_en`/`has_updown`/`has_clr` |
 | `shift` | Shift register | `length`, optional `has_dir`/`has_clr` |
 | `clkgen` | Clock generator | `high_ticks`, `low_ticks` |
+| `clkdiv` | Clock divider | `divisor` |
+| `edgedet_rise`, `edgedet_fall`, `edgedet_both` | Edge detector | — |
 | `delay` | N-stage delay line | `bit_width`, `depth` (1–256), `use_clock` (0/1) |
 
 ### Memory
@@ -154,6 +161,26 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `mpram` | Multi-port RAM (1–4R + 1–2W, rd_valid flow control) | `addr_width`, `data_width`, `num_read_ports`, `num_write_ports`, `read_latency` |
 | `fifo` | Synchronous FIFO | `data_width`, `depth` (power of 2), `has_rst` |
 
+### RISC-V Platform
+
+| Type | Description | Parameters |
+|------|-------------|------------|
+| `riscv_cpu` | RV32IMA soft core, Wishbone master; the 64-bit variant is built through the C++ API | — |
+| `wishbone_mem` | Wishbone slave memory | `addr_width` (1–24), `data_width` (8/16/32) |
+| `wishbone_rom_adapter` | Wishbone adapter for ROM | `addr_width`, `data_width`, `read_latency` |
+| `wishbone_ic` | Wishbone address decoder/router | `segments` (e.g. `0:65536,0x80000000:65536`), `num_masters` |
+| `clint` | CLINT: mtime/mtimecmp/msip | — |
+| `plic` | PLIC interrupt controller | `num_sources` |
+| `uart` | 16550A-compatible UART | `baud_div` |
+| `spi` / `i2c` | SPI / I2C master | `clkdiv` |
+| `dma` | Memory-to-memory DMA | — |
+| `axi_lite_bridge` | AXI-Lite ↔ Wishbone bridge | — |
+| `wb_cache` | Wishbone cache | `lines` |
+
+The CPU implements M/S/U privilege levels, Sv32/Sv39 paging, Zicsr/Zifencei, the
+A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond extensions, and Sdtrig hardware breakpoints
+(mcontrol subset).
+
 ### Utility
 
 | Type | Description | Parameters |
@@ -162,6 +189,21 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `fprint` | Print float wire value | `precision` (32/64) |
 | `dll` | External DLL component | `path` |
 | `composite` | Reusable sub-circuit | `definition` (blueprint name) |
+
+## Benchmarks
+
+`benchmarks/` ships six ELF workloads (integer ALU, memory, branches, mul/div, double
+precision FP, mixed) and two pure-circuit cases (256-stage gate chain, 256 D flip-flops)
+to show throughput under different loads:
+
+```bash
+bash benchmarks/build.sh             # cross-compile the benchmark ELFs into benchmarks/out
+./build/RelWithDebInfo/dcs_bench     # 40M ticks per case by default, best of 3 repeats
+```
+
+Output includes JIT compile time and ticks per second; `--ticks N` changes the tick
+count, `--repeat R` the number of rounds, `--dir` the ELF directory. Individual ELF
+paths may also be passed directly.
 
 ## JSON Circuit Format
 
@@ -233,7 +275,26 @@ JSON / C++ API
 ### C Code Generation Helpers
 
 - `gen_read_wire(net_id, pin_w, net_w, var)` — read wire value (auto `= 0`)
-- `gen_write_wire(comp_id, out_idx, val, pin_w)` — write wire value
+**Ordinary components (all logic emitted as C)**
+
+- `gen_read_wire(net_id, pin_w, net_w, var)` — read a wire value (variable auto-initialized to `= 0`)
+- `genOutputWrite(out_idx, val, pin_w, drive = "true")` — write an output pin. Non-tri-state outputs go
+  straight into `_w[]` with the upper bytes cleared; tri-state outputs write `_c_out_` and set the enable
+  from `drive`. **This is the default for new components**
+- `gen_write_wire(comp_id, out_idx, val, pin_w)` — write `_c_out_` directly (only when you need to control
+  tri-state timing yourself)
+
+**High-performance paths for callback-style components (JIT only moves pins, logic lives in C++)**
+
+These bypass the upper-byte clearing done by `genOutputWrite`; only callback components meeting the
+preconditions may use them:
+
+- `genInputPtrArray(arr)` — static pointer table over input wires, so the callback reads wires directly
+- `genOutputPtrArray(count, clear)` — callback writes `_obuf`, which `genOutputWrite` then copies to the wires
+  (safe default, costs one extra copy per tick)
+- `genOutputWirePtrArray(arr)` — callback writes `_w[]` **directly** (maximum performance, skips that copy).
+  Preconditions: singly-driven outputs, callback writes every output every tick, and never writes more bytes
+  than the pin width
 - `c_int_type(width)` — width → C type (uint8/16/32/64_t)
 - `gen_mask(width)` — width → mask literal
 - `byte_count(width)` — width → byte count

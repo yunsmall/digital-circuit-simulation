@@ -6,7 +6,7 @@
 
 ## 特性
 
-- **50+ 内建元件**：门、触发器、寄存器、计数器、加减乘除、比较器、浮点、RAM、ROM、FIFO、桶形移位器、符号扩展、优先级编码器、多端口 RAM 等
+- **70+ 内建元件**：门、触发器、寄存器、计数器、加减乘除、比较器、浮点、RAM、ROM、FIFO、桶形移位器、符号扩展、优先级编码器、多端口 RAM，以及 RISC-V 软核、Wishbone 总线、UART/CLINT/PLIC 等平台元件
 - **JIT 编译**：电路 → C 代码 → 机器码，内存中完成
 - **双后端**：LLVM/Clang ORC JIT（默认）或 TinyCC（轻量替代）
 - **JSON 导入/导出**：完整电路描述，可往返
@@ -16,7 +16,7 @@
 - **可配置位宽**：1~64 位 / 线网
 - **组合环路检测**：三色 DFS + 报告
 - **参数校验**：非法值在 JSON 加载时报错
-- **gtest 测试**：17 个测试目标，覆盖全部元件类型
+- **gtest 测试**：32 个测试目标，覆盖全部元件类型与官方 riscv-tests 用例
 
 ## 快速开始
 
@@ -105,6 +105,10 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 |------|------|------|
 | `and`, `or`, `nand`, `nor`, `xor`, `xnor` | 多输入门 | `inputs`（2~8）, `bit_width`（1~64） |
 | `not` | 按位取反 | `bit_width` |
+| `abs` | 绝对值 | `bit_width` |
+| `min`, `max` | 最值 | `bit_width`, `signed`（0/1） |
+| `redand`, `redor`, `redxor` | 归约与/或/异或 | `bit_width` |
+| `lsl`, `lsr`, `asr` | 移位（移位量来自输入引脚） | `bit_width` |
 | `buf` | 缓冲器 | `bit_width` |
 | `tsbuf` | 三态缓冲（oe 控制） | `bit_width` |
 | `mux` | 多路选择器 (2^N:1) | `n_selects`（1~4）, `bit_width` |
@@ -128,7 +132,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | 类型 | 说明 | 参数 |
 |------|------|------|
 | `fadd`, `fsub`, `fmul`, `fdiv` | 浮点四则运算 | `precision`（32/64） |
-| `fcmp` | 浮点比较 | `precision`, `op`（eq/ne/lt/gt/le/ge） |
+| `feq`, `fne`, `flt`, `fgt`, `fle`, `fge` | 浮点比较 | `precision`（32/64） |
+| `f2i`, `i2f` | 浮点/整数互转 | `precision`, `int_width`, `signed` |
 | `fconst` | 浮点常量 | `precision`, `value`（如 "3.14"） |
 
 ### 时序逻辑
@@ -143,6 +148,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `counter` | 加减计数器 | `bit_width`，可选 `has_load`/`has_en`/`has_updown`/`has_clr` |
 | `shift` | 移位寄存器 | `length`，可选 `has_dir`/`has_clr` |
 | `clkgen` | 时钟发生器 | `high_ticks`, `low_ticks` |
+| `clkdiv` | 时钟分频 | `divisor` |
+| `edgedet_rise`, `edgedet_fall`, `edgedet_both` | 边沿检测 | — |
 | `delay` | N 级延时线 | `bit_width`, `depth`（1~256）, `use_clock`（0/1） |
 
 ### 存储器
@@ -154,6 +161,25 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `mpram` | 多端口 RAM（1~4 读 + 1~2 写，含 rd_valid 流控） | `addr_width`, `data_width`, `num_read_ports`, `num_write_ports`, `read_latency` |
 | `fifo` | 同步 FIFO | `data_width`, `depth`（2 的幂）, `has_rst` |
 
+### RISC-V 平台元件
+
+| 类型 | 说明 | 参数 |
+|------|------|------|
+| `riscv_cpu` | RV32IMA 软核，Wishbone 主设备；64 位版本通过 C++ API 构造 | — |
+| `wishbone_mem` | Wishbone 从设备存储器 | `addr_width`（1~24）, `data_width`（8/16/32） |
+| `wishbone_rom_adapter` | ROM 的 Wishbone 适配器 | `addr_width`, `data_width`, `read_latency` |
+| `wishbone_ic` | Wishbone 地址解码/路由 | `segments`（如 `0:65536,0x80000000:65536`）, `num_masters` |
+| `clint` | CLINT：mtime/mtimecmp/msip | — |
+| `plic` | PLIC 中断控制器 | `num_sources` |
+| `uart` | 16550A 兼容 UART | `baud_div` |
+| `spi` / `i2c` | SPI / I2C 主设备 | `clkdiv` |
+| `dma` | 存储到存储的 DMA | — |
+| `axi_lite_bridge` | AXI-Lite ↔ Wishbone 桥 | — |
+| `wb_cache` | Wishbone 缓存 | `lines` |
+
+CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond
+扩展，以及 Sdtrig 硬件断点（mcontrol 子集）。
+
 ### 工具
 
 | 类型 | 说明 | 参数 |
@@ -162,6 +188,19 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `fprint` | 打印浮点线网值 | `precision`（32/64） |
 | `dll` | 外部 DLL 元件 | `path` |
 | `composite` | 可复用子电路 | `definition`（蓝图名） |
+
+## 性能基准
+
+`benchmarks/` 提供六个 ELF 负载场景（整数 ALU、访存、分支、乘除、双精度浮点、混合）
+和两个纯电路场景（256 级门链、256 个 D 触发器），用于观察不同负载下的仿真吞吐：
+
+```bash
+bash benchmarks/build.sh             # 交叉编译基准 ELF 到 benchmarks/out
+./build/RelWithDebInfo/dcs_bench     # 默认每个场景 4000 万 tick，重复 3 次取最小值
+```
+
+输出包含 JIT 编译耗时与每秒 tick 数；`--ticks N` 改拍数，`--repeat R` 改轮数，
+`--dir` 指定 ELF 目录，也可直接传 ELF 路径。
 
 ## JSON 电路格式
 
@@ -233,7 +272,21 @@ JSON / C++ API
 ### C 代码生成辅助函数
 
 - `gen_read_wire(net_id, pin_w, net_w, var)` — 读线网值（变量自动 `= 0`）
-- `gen_write_wire(comp_id, out_idx, val, pin_w)` — 写线网值
+**常规元件（全部逻辑写在生成的 C 里）**
+
+- `gen_read_wire(net_id, pin_w, net_w, var)` — 读线网值（变量自动 `= 0`）
+- `genOutputWrite(out_idx, val, pin_w, drive = "true")` — 写输出引脚。非三态输出直接写 `_w[]` 并清零高位；
+  三态输出写 `_c_out_` 并把使能置成 `drive`。**新元件默认用这个**
+- `gen_write_wire(comp_id, out_idx, val, pin_w)` — 直接写 `_c_out_`（只有需要自己控制三态时序时才用）
+
+**回调型元件（JIT 只搬引脚，逻辑在 C++ 回调里）专用的高性能路径**
+
+这三个绕过了 `genOutputWrite` 的高位清零约定，只有满足前提的回调型元件能用：
+
+- `genInputPtrArray(arr)` — 输入线网的 static 指针表，回调直接读，省掉每拍打包
+- `genOutputPtrArray(count, clear)` — 输出先写 `_obuf`，再经 `genOutputWrite` 搬到线网（稳妥，多一轮拷贝）
+- `genOutputWirePtrArray(arr)` — 输出由回调**直接写 `_w[]`**（极限性能，省一轮拷贝）。前提：
+  输出线网单驱动、回调每拍写满所有输出、写的字节数不超过引脚宽度
 - `c_int_type(width)` — 位宽 → C 类型（uint8/16/32/64_t）
 - `gen_mask(width)` — 位宽 → 掩码字面量
 - `byte_count(width)` — 位宽 → 字节数

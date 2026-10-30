@@ -95,13 +95,9 @@ std::string WishboneMemory::genFuncDef_seq() const {
     code += std::format("static void {}() {{\n", funcName_seq());
 
     code += genInputPtrArray("_in");
-    // memTick 每拍写满两个输出，不需要预先清零
-    code += genOutputPtrArray(O_COUNT, false);
+    // 输出直接写线网：memTick 每拍写满两个输出，槽位高位靠 init/reset 的清零保持为 0
+    code += genOutputWirePtrArray("_op");
     code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, _in, _op);\n", id);
-    const int ow[O_COUNT] = {32, 1};
-    for (int i = 0; i < O_COUNT; i++)
-        code += std::format("    {{ uint32_t _v=0; dcs_memcpy(&_v,_obuf[{}],4); {} }}\n", i,
-                            genOutputWrite(i, "_v", ow[i]));
     code += "}\n";
     return code;
 }

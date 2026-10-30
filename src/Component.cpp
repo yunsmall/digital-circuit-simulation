@@ -133,6 +133,21 @@ std::string Component::genOutputPtrArray(int count, bool clear) const {
 }
 
 
+std::string Component::genOutputWirePtrArray(std::string_view arr) const {
+    // 回调直接写线网：省掉 _obuf 中转和随后的一轮拷贝。前提是这些线网只由本元件驱动、
+    // 且 _w 在 init 时清零——回调只写有效字节，槽位高位靠"从没被写过"保持 0
+    std::string s = "    static uint8_t _dcs_out_dummy[16] = {0};\n";
+    s += std::format("    static uint8_t *const {}[{}] = {{", arr, _outputs.size());
+    for (size_t i = 0; i < _outputs.size(); i++) {
+        int nid = _outputs[i]->netId();
+        s += i ? "," : "";
+        s += nid >= 0 ? std::format("_w[{}]", nid) : std::string("_dcs_out_dummy");
+    }
+    s += "};\n";
+    return s;
+}
+
+
 std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin_w,
                                       std::string_view drive) const {
     bool ts = out_idx >= 0 && out_idx < (int) _outputs.size() && _outputs[out_idx]->isTriState();

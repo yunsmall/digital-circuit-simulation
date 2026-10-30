@@ -305,7 +305,17 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     }
     oss << "}\n\n";
 
-    oss << R"(void circuit_init(void) {
+    oss << R"(void circuit_tick_cycle(int clk_id) {
+    unsigned long long _lo = 0, _hi = 1;
+    dcs_memcpy(_w[clk_id], &_lo, 8);
+    dcs_memset(_w[clk_id] + 8, 0, 8);
+    circuit_tick();
+    dcs_memcpy(_w[clk_id], &_hi, 8);
+    dcs_memset(_w[clk_id] + 8, 0, 8);
+    circuit_tick();
+}
+
+void circuit_init(void) {
     dcs_memset(_w, 0, sizeof(_w));
 )";
     // 清零所有 _c_out 和 _c_oe
@@ -356,6 +366,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
 
     oss << R"(void circuit_set_wire(int id, const uint8_t val[16]) {
     dcs_memcpy(_w[id], val, 16);
+}
+void circuit_set_wire_u64(int id, unsigned long long v) {
+    dcs_memcpy(_w[id], &v, 8);
+    dcs_memset(_w[id] + 8, 0, 8);
 }
 void circuit_get_wire(int id, uint8_t val[16]) {
     dcs_memcpy(val, _w[id], 16);

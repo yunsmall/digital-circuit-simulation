@@ -76,10 +76,12 @@ void Circuit::reset() {
 void Circuit::jitCleanup() {
     // 仅清理 JIT 状态（函数指针 + 后端资源）
     _tick_fn = nullptr;
+    _tick_cycle_fn = nullptr;
     _init_fn = nullptr;
     _deinit_fn = nullptr;
     _reset_fn = nullptr;
     _set_wire_fn = nullptr;
+    _set_wire_u64_fn = nullptr;
     _get_wire_fn = nullptr;
     _backend.cleanup();
     _compiled = false;
@@ -419,10 +421,12 @@ CircuitError Circuit::compile() {
         return {res.code, -1, {}, res.message};
 
     _tick_fn = res.tick;
+    _tick_cycle_fn = res.tick_cycle;
     _init_fn = res.init;
     _deinit_fn = res.deinit;
     _reset_fn = res.reset;
     _set_wire_fn = res.set_wire;
+    _set_wire_u64_fn = res.set_wire_u64;
     _get_wire_fn = res.get_wire;
     _compiled = true;
     return {ErrorCode::OK};
@@ -444,6 +448,19 @@ void Circuit::tick() {
         return;
     if (_tick_fn)
         _tick_fn();
+}
+
+void Circuit::tickCycle(int clk_net_id) {
+    if (_tick_error.code != ErrorCode::OK)
+        return;
+    if (_tick_cycle_fn) {
+        _tick_cycle_fn(clk_net_id);
+        return;
+    }
+    setWire(clk_net_id, 0);
+    tick();
+    setWire(clk_net_id, 1);
+    tick();
 }
 
 void Circuit::onBusConflict(int net_id) {
@@ -472,6 +489,18 @@ void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
     uint8_t buf[16] = {};
     for (size_t i = 0; i < value.size() && i < 16; i++)
         buf[i] = value[i];
+    _set_wire_fn(id, buf);
+}
+
+void Circuit::setWire(int id, uint64_t value) {
+    if (_set_wire_u64_fn) {
+        _set_wire_u64_fn(id, value);
+        return;
+    }
+    if (!_set_wire_fn)
+        return;
+    uint8_t buf[16] = {};
+    std::memcpy(buf, &value, sizeof(value));
     _set_wire_fn(id, buf);
 }
 

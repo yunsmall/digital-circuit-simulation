@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 23)
 option(DCS_BUILD_EXECUTABLE "构建主程序 dcs" ON)
 option(DCS_BUILD_TESTS "构建测试" ON)
 option(DCS_BUILD_VERILOG "构建 Verilator 集成测试 DLL" ON)
+option(DCS_BUILD_BENCHMARK "构建性能基准 dcs_bench" ON)
 
 # ---- 后端选择 ----
 # cmake -B build -DDCS_USE_TCC=ON
@@ -161,6 +162,13 @@ if(DCS_BUILD_EXECUTABLE)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs PRIVATE DCS_USE_TCC)
     endif()
+endif()
+
+# ---- 性能基准（不注册进 ctest，手动运行）----
+if(DCS_BUILD_BENCHMARK)
+    add_executable(dcs_bench benchmarks/benchmark.cpp)
+    target_link_libraries(dcs_bench PRIVATE dcs_lib)
+    set_target_properties(dcs_bench PROPERTIES CXX_STANDARD 23)
 endif()
 
 # ---- 测试（gtest + vcpkg）----
