@@ -134,14 +134,19 @@ inline void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, u
 template<int XLEN> requires SupportedXlen<XLEN>
 void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
     auto &s = *static_cast<CpuState*>(state_ptr);
-    CpuIn in(inputs);
-    if (in.rst) [[unlikely]] { cpuReset(state_ptr); packOut(outputs,0,0,false,0,false,false,false); return; }
-    const bool rising = !s.prev_clk && in.clk;
-    s.prev_clk = in.clk;
-
+    // rst / clk 直接读线网：下降沿不需要构造整个输入结构，也就省掉那 6 次读
+    if ((inputs[I_RST][0] & 1) != 0) [[unlikely]] {
+        cpuReset(state_ptr);
+        packOut(outputs,0,0,false,0,false,false,false);
+        return;
+    }
+    const bool clk_now = (inputs[I_CLK][0] & 1) != 0;
+    const bool rising = !s.prev_clk && clk_now;
+    s.prev_clk = clk_now;
     if (!rising) {
-        // 下降沿只负责把当前相位的总线信号摆到总线上。中断线在时钟沿采样就够了，
-        // 这是真实硬件的做法，也让这一半拍不碰任何 CPU 状态
+        // 下降沿要按"上升沿推进后的相位"重新摆总线信号。注意它和上升沿本拍给出的
+        // 信号不总是相同：例如 acc_stage 8→9 那一拍上升沿拉低 stb 等旧 ack 撤销，
+        // 而下降沿看到已是 9，必须把 stb 拉起来发起第三段事务
         XLen adr=0; uint32_t wdat=0; bool we=false,stb=false,cyc=false; uint8_t sel=0;
         switch (s.phase) {
         // FETCH 这一拍地址要等上升沿翻译完才能定，不能先按 pc 发请求，
@@ -153,10 +158,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         case Phase::FETCH_HI_GAP: adr=s.fetch_hi_addr; sel=0x0F; stb=false; cyc=true; break;
         case Phase::WAIT_FETCH_HI: adr=s.fetch_hi_addr; sel=0x0F; stb=cyc=true; break;
         case Phase::WAIT_MEM: {
-            // 与上升沿分支保持一致：拆分事务的拉低相位必须真的拉低 stb，
-            // 否则同一时钟周期的另一半又把 stb 抬起来，从设备看不到事务边界。
-            // stage 4 是"下一次上升沿才发起第二次事务"，这一拍必须继续拉低；
-            // 漏掉 7/8 的话下降沿会把 stb 又抬起来，从设备永远看不到事务结束
+            // 拆分事务的拉低相位必须真的拉低 stb，否则同一时钟周期的另一半又把 stb
+            // 抬起来，从设备看不到事务边界。compliant 的相位：2~4 两次拉低、7/8 等旧 ack
             bool hold_off = (s.acc_stage >= 2 && s.acc_stage <= 4)
                          || (s.acc_stage == 7) || (s.acc_stage == 8);
             adr=s.bus_adr; wdat=s.bus_wdat; we=s.bus_we; sel=s.bus_sel;
@@ -177,6 +180,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         return;
     }
 
+    CpuIn in(inputs);
     s.cycles++; // cycle 按时钟上升沿计数，与真实硬件的 mcycle 一致
     // 外部中断线在上升沿反映到 mip，否则停机期间收不到中断。逐位 set/clear 会变成
     // 四轮 load-modify-store，而这几根线绝大多数拍都是低电平，合并成一次读改写
@@ -200,10 +204,53 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
 
     XLen wb_adr=0; uint32_t wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0;
 
+    // 取指命中缓存时本拍就能执行，不必再等一个 EXECUTE 相位：取指和译码结果
+    // 都已经有了，多等一拍纯粹是让流水各走一步，白耗一个时钟周期
+    auto do_execute = [&]() {
+        XLen trap_cause = 0;
+        // 中断在指令边界采样
+        if (takeInterrupt(s, trap_cause)) [[unlikely]] {
+            takeTrap(s, trap_cause, 0);
+            s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+            return;
+        }
+        bool need_mem = false;
+        execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
+        if (s.phase == Phase::HALTED) {
+            // WFI 停机这一拍不能再拉高 stb：那会向从设备发一次虚假取指，
+            // 有状态的从设备（如缓存填充）可能就此卡在半完成
+            wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
+            wb_stb = wb_cyc = false;
+        }
+        else if (s.phase == Phase::MMU_WALK_LO) {
+            // mmuTranslate 起了页表遍历，输出第一次 PTE 读请求并立即转为等待状态
+            wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+            s.phase = Phase::WAIT_MMU_LO;
+        }
+        else if (need_mem) [[unlikely]] {
+            s.bus_adr = wb_adr; s.bus_wdat = wb_dat; s.bus_we = wb_we; s.bus_sel = wb_sel;
+            s.phase = Phase::WAIT_MEM;
+        }
+        else { s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false; }
+    };
+
     switch (s.phase) {
     case Phase::FETCH: {
-        // 取指同样过 MMU：S/U 态开启 satp 后 pc 是虚拟地址
+        // 取指同样过 MMU：S/U 态开启 satp 后 pc 是虚拟地址。
+        // M 态的取指不做翻译（MPRV 也只作用于数据访存），把这条快捷路径放在调用点，
+        // 省掉每拍一次函数调用——这是最频繁的一段翻译
         XLen fpa=0;
+        if (s.priv == RV::PRIV_M) {
+            if constexpr (XLEN == 64) {
+                if (((uint64_t) s.pc >> 32) != 0) [[unlikely]] {
+                    takeTrap(s, RV::EXC_IAF, s.pc);
+                    s.phase = Phase::FETCH; wb_stb = wb_cyc = false;
+                    break;
+                }
+            }
+            fpa = s.pc;
+            goto fetch_translated;
+        }
         if (!mmuTranslate(s, s.pc, fpa, false, true)) [[unlikely]] {
             if (s.phase == Phase::MMU_WALK_LO) {
                 // mmuTranslate 起了页表遍历：本拍发起第一笔 PTE 读，立即转入等待
@@ -230,6 +277,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             wb_adr=s.fetch_pa; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
             break;
         }
+    fetch_translated:
         s.fetch_pa = fpa;
         // 取指断点：命中就不执行这条指令，直接进 breakpoint 陷阱（mepc = 当前 pc）
         if (triggerMatch(s, s.pc, RV::TRIG_EXECUTE)) [[unlikely]] {
@@ -253,8 +301,9 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 }
                 s.inst = s.icache[ic_idx].inst[half];
                 s.inst_len = s.icache[ic_idx].len[half];
-                s.phase = Phase::EXECUTE; // 命中就不再发起总线读
-                wb_stb = wb_cyc = false;
+                // 命中时本拍直接执行：取指和译码都已经有了结果，再等一个 EXECUTE
+                // 相位只是让流水各走一拍，白白多耗一个时钟周期
+                do_execute();
                 break;
             }
             s.ic_misses++;
@@ -344,30 +393,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         }
         break;
 
-    case Phase::EXECUTE: {
-        XLen trap_cause=0;
-        if (takeInterrupt(s, trap_cause)) [[unlikely]] {
-            takeTrap(s, trap_cause, 0);
-            s.phase=Phase::FETCH; wb_sel=0x0F; wb_stb=wb_cyc=false;
-            break;
-        }
-        bool need_mem=false;
-        execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
-        if (s.phase == Phase::HALTED) {
-            // WFI 停机这一拍不能再拉高 stb：那会向从设备发一次虚假取指，
-            // 有状态的从设备（如缓存填充）可能就此卡在半完成
-            wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
-            wb_stb = wb_cyc = false;
-        }
-        else if (s.phase == Phase::MMU_WALK_LO) {
-            // mmuTranslate 起了页表遍历，输出第一次 PTE 读请求并立即转为等待状态
-            wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
-            s.phase = Phase::WAIT_MMU_LO;
-        }
-        else if (need_mem) [[unlikely]] { s.bus_adr=wb_adr; s.bus_wdat=wb_dat; s.bus_we=wb_we; s.bus_sel=wb_sel; s.phase=Phase::WAIT_MEM; }
-        else { s.phase=Phase::FETCH; wb_sel=0x0F; wb_stb=wb_cyc=false; }
-        break;
-    }
+    case Phase::EXECUTE: do_execute(); break;
 
     case Phase::WAIT_MEM:
         // 两次事务之间的相位：主从都是时序元件，_w 传递有一拍延迟，

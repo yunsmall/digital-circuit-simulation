@@ -3,7 +3,7 @@
 .section .text.init
 .globl _start
 _start:
-    la      sp, _end
+    li      sp, 0x10000         // 栈顶放在 64KB 存储器末尾，向下增长不会盖住 .bss/.data/tohost
     li      t0, 0x6000          // mstatus.FS = Dirty，否则浮点指令按非法指令 trap
     csrs    mstatus, t0
     call    bench_main

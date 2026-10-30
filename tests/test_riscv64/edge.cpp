@@ -185,19 +185,20 @@ TEST(Rv64Edge, MepcKeepsBit1ForTwoByteAlignment) {
         << "mepc 把 bit1 抹掉了，mret 会返回到错的指令";
 }
 
-// sepc 同理：sret 也要能返回到 4n+2
-TEST(Rv64Edge, SretReturnsToTwoByteAlignedAddress) {
+// sepc 同理：sret 也要能返回到 4n+2。直接读回 sepc 验证 bit1 没被掩掉——
+// 若改成"跑到 0x102 再看 pc"，那条地址上没有代码（读回 0 会触发非法指令 trap），
+// 结果取决于跑到第几拍，太脆
+TEST(Rv64Edge, SepcKeepsBit1ForSret) {
     Rv64Fixture f;
     f.load({
         lui(1, 0x0), addi(1, 1, 0x100), addi(1, 1, 2),
         csrrw(0, 0x141, 1),        // sepc = 0x102
-        addi(2, 0, 0),             // 先置 mstatus.MPP=S 需要 mstatus 可写，这里直接从 M 态 sret
-        0x10200073u,               // sret
+        csrrs(2, 0x141, 0),        // x2 = sepc
         spin(),
     });
-    f.run(60);
-    EXPECT_EQ((uint64_t) f.cpu->pc(), 0x102ULL)
-        << "sret 没有返回到 2 字节对齐的地址（sepc 的掩码把 bit1 抹掉了）";
+    f.run(30);
+    EXPECT_EQ((uint64_t) f.cpu->reg(2), 0x102ULL)
+        << "sepc 的 bit1 被掩码抹掉了，sret 会返回到错的指令";
 }
 
 

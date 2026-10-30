@@ -53,10 +53,6 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
 
     _mem.resize(_depth, 0);
 
-    std::memset(&_mstate, 0, sizeof(_mstate));
-    _mstate.mem = _mem.data();
-    _mstate.mem_size = _mem.size();
-    _mstate.data_bytes = byte_count(_data_width);
 }
 
 WishboneMemory::~WishboneMemory() = default;
@@ -66,38 +62,88 @@ bool WishboneMemory::prepare(std::string & /*error*/) {
     return true;
 }
 
-std::vector<Component::JitSymbol> WishboneMemory::extraJitSymbols() const {
-    return {{"_dcs_wbm_tick", reinterpret_cast<void *>(&WishboneMemory::memTick)}};
-}
-
 // ============================================================
-// C 代码生成（最小化：只做引脚搬运）
+// C 代码生成：访存协议整体内联进 JIT
 // ============================================================
 
 std::string WishboneMemory::genStateDecl() const {
-    return std::format("static void *_wbm_state_{0} = (void *)0x{1:X}ULL;\n", _id,
-                       reinterpret_cast<uintptr_t>(&_mstate));
+    // 内存缓冲与每拍状态都放在 C 侧：JIT 代码按固定地址直接读写
+    return std::format(
+            "static uint8_t *const _wbm_mem_{0} = (uint8_t *)0x{1:X}ULL;\n"
+            "typedef struct {{ unsigned char prev_stb, prev_we, ack_pending; "
+            "unsigned int latched_addr, latched_dout; }} _WBM_S{0};\n"
+            "static _WBM_S{0} _wbm_s_{0};\n",
+            _id, reinterpret_cast<uintptr_t>(_mem.data()));
 }
 
 std::string WishboneMemory::genInitCode() const {
     // 握手状态位必须复位：circuit_reset 后若还留着上一轮的 prev_stb / ack_pending，
-    // 首个事务会被误判成"事务进行中"。用偏移量整段清零，不额外注入 JIT 符号。
-    return std::format("    dcs_memset((uint8_t*)_wbm_state_{} + {}, 0, {});\n",
-                       _id, rtOffset(), rtSize());
+    // 首个事务会被误判成"事务进行中"
+    return std::format("    dcs_memset(&_wbm_s_{}, 0, sizeof(_wbm_s_{}));\n", _id, _id);
 }
 
 std::string WishboneMemory::genFuncDef_seq() const {
-    int id = _id;
+    const int id = _id;
+    const int nb = byte_count(_data_width);
+    const uint32_t mask = (uint32_t) _depth - 1;
 
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
-    code += "extern void _dcs_wbm_tick(void *, const uint8_t *const *, uint8_t *const *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
-
-    code += genInputPtrArray("_in");
-    // 输出直接写线网：memTick 每拍写满两个输出，槽位高位靠 init/reset 的清零保持为 0
-    code += genOutputWirePtrArray("_op");
-    code += std::format("    _dcs_wbm_tick(_wbm_state_{0}, _in, _op);\n", id);
+    code += "    " + gen_read_wire(inputs()[I_ADR]->netId(), 32, 32, "_adr") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_WDAT]->netId(), 32, 32, "_wdat") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_WE]->netId(), 1, 1, "_we") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_SEL]->netId(), 4, 4, "_sel") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
+    code += std::format(R"(
+    // stb 上升沿：新事务；同一事务内 we 翻转：AMO 的写阶段
+    const bool _active = _stb && _cyc;
+    const bool _rise = _active && !_wbm_s_{0}.prev_stb;
+    const bool _werise = _active && _we && !_wbm_s_{0}.prev_we;
+    _wbm_s_{0}.prev_stb = _active;
+    _wbm_s_{0}.prev_we = _active && _we;
+    uint32_t _dout = 0;
+    uint8_t _ack8 = 0;
+    if (_rise) {{
+        // 从设备只有 addr_width 根地址线，高位在硬件上就是别名回来，按容量折算
+        const uint32_t _a = _adr & {1}u;
+        _wbm_s_{0}.latched_addr = _a;
+        if (!_we) {{
+            _wbm_s_{0}.latched_dout = 0;
+            if ((unsigned)_a + {2}u <= {3}u)
+                dcs_memcpy(&_wbm_s_{0}.latched_dout, _wbm_mem_{0} + _a, {2});
+        }} else {{
+            if ((unsigned)_a + {2}u <= {3}u)
+                for (int _b = 0; _b < {2}; _b++)
+                    if (_sel & (1u << _b))
+                        _wbm_mem_{0}[_a + _b] = (uint8_t)((_wdat >> (8 * _b)) & 0xFF);
+            _wbm_s_{0}.latched_dout = 0;
+        }}
+        _wbm_s_{0}.ack_pending = 1;
+    }} else if (_werise) {{
+        // AMO 写阶段：用已折算过的锁存地址
+        const uint32_t _a = _wbm_s_{0}.latched_addr;
+        if ((unsigned)_a + {2}u <= {3}u)
+            for (int _b = 0; _b < {2}; _b++)
+                if (_sel & (1u << _b))
+                    _wbm_mem_{0}[_a + _b] = (uint8_t)((_wdat >> (8 * _b)) & 0xFF);
+    }}
+    // 事务有效期间保持 ack；stb 撤销时立刻撤销，避免主设备把残留 ack 当成新结果
+    if (_wbm_s_{0}.ack_pending) {{
+        if (!_active) _wbm_s_{0}.ack_pending = 0;
+        else {{ _dout = _wbm_s_{0}.latched_dout; _ack8 = 1; }}
+    }}
+)",
+                       id, mask, nb, (unsigned) _depth);
+    // 输出直接写线网：这两个线网只由本元件驱动、init 时清零，
+    // 只写有效字节即可，不必再补高位清零
+    int dat_nid = outputs()[O_DAT]->netId();
+    int ack_nid = outputs()[O_ACK]->netId();
+    if (dat_nid >= 0)
+        code += std::format("    dcs_memcpy(_w[{}], &_dout, 4);\n", dat_nid);
+    if (ack_nid >= 0)
+        code += std::format("    _w[{}][0] = _ack8;\n", ack_nid);
     code += "}\n";
     return code;
 }
@@ -106,92 +152,6 @@ std::unique_ptr<Component> WishboneMemory::clone(const std::string &new_name) co
     auto m = std::make_unique<WishboneMemory>(new_name, _addr_width, _data_width);
     std::memcpy(m->_mem.data(), _mem.data(), _mem.size());
     return m;
-}
-
-// ============================================================
-// C++ 回调: 访存逻辑
-// ============================================================
-
-void WishboneMemory::memTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
-    auto &ms = *static_cast<MemState *>(state_ptr);
-
-    // 输入直接就是线网
-    uint32_t adr, wdat;
-    bool we, stb, cyc;
-    uint8_t sel;
-    std::memcpy(&adr, inputs[I_ADR], 4);
-    std::memcpy(&wdat, inputs[I_WDAT], 4);
-    we = (inputs[I_WE][0] & 1) != 0;
-    sel = inputs[I_SEL][0];
-    stb = (inputs[I_STB][0] & 1) != 0;
-    cyc = (inputs[I_CYC][0] & 1) != 0;
-
-    // 默认输出
-    uint32_t dout = 0;
-    bool ack = false;
-
-    // 存储器容量是 2 的幂，用掩码把主设备地址折算进来
-    auto foldAddr = [&](uint32_t a) -> size_t { return (size_t) a & (ms.mem_size - 1); };
-
-    // stb 上升沿检测：新事务到来
-    bool stb_active = stb && cyc;
-    bool stb_rise = stb_active && !ms.prev_stb;
-    // we 上升沿检测：同一事务内 we 翻转（AMO 读后写）
-    bool we_rise = stb_active && we && !ms.prev_we;
-    ms.prev_stb = stb_active;
-    ms.prev_we = stb_active && we;
-
-    if (stb_rise) {
-        // 从设备只有 addr_width 根地址线，主设备送来的更高位在这一层就不存在了。
-        // 折算进容量而不是判定越界：真实电路上没接的地址线不会让从设备"不响应"，
-        // 只会让高地址与低地址互为别名。官方 riscv-tests 用 DRAM_BASE(0x80000000)
-        // 计算访存地址，而测试夹具的存储器只有 64KB，正是靠这个别名才能落到镜像上
-        const size_t addr = foldAddr(adr);
-        // 锁存地址（后续 AMO 写阶段可能用到）
-        ms.latched_addr = (uint32_t) addr;
-        if (!we) {
-            // 读：锁存结果，保持直到 stb 拉低
-            ms.latched_dout = 0;
-            if (addr + ms.data_bytes <= ms.mem_size)
-                std::memcpy(&ms.latched_dout, ms.mem + addr, ms.data_bytes);
-            ms.ack_pending = true;
-        } else {
-            // 写：立即完成，锁存 ack
-            // 按数据宽度写，不能硬编码 4 字节：8/16 位配置会越界并写错字节数
-            if (addr + ms.data_bytes <= ms.mem_size) {
-                for (int b = 0; b < ms.data_bytes; ++b)
-                    if (sel & (1u << b))
-                        ms.mem[addr + b] = (uint8_t)((wdat >> (8 * b)) & 0xFF);
-            }
-            ms.latched_dout = 0;
-            ms.ack_pending = true;
-        }
-    } else if (we_rise) {
-        // AMO 写阶段：同一事务内 we 从 0 翻 1，用已锁存的（已折算过的）地址
-        size_t addr = (size_t) ms.latched_addr;
-        if (addr + ms.data_bytes <= ms.mem_size) {
-            for (int b = 0; b < ms.data_bytes; ++b)
-                if (sel & (1u << b))
-                    ms.mem[addr + b] = (uint8_t)((wdat >> (8 * b)) & 0xFF);
-        }
-        // ack 保持高（读阶段已设置），CPU 通过 bus_we 状态区分读写确认
-    }
-
-    // 事务有效期间保持 ack；stb 撤销时立刻撤销 ack。
-    // 不这样做的话，主设备发起下一次事务的第一拍会看到上一次的残留 ack，
-    // 把旧数据当成新事务的结果读取。
-    if (ms.ack_pending) {
-        if (!stb_active) {
-            ms.ack_pending = false;
-        } else {
-            dout = ms.latched_dout;
-            ack = true;
-        }
-    }
-
-    // 输出直接写线网
-    std::memcpy(outputs[O_DAT], &dout, 4);
-    outputs[O_ACK][0] = ack ? 1 : 0;
 }
 
 } // namespace dsc

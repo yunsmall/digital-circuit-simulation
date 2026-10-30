@@ -1,7 +1,7 @@
 // WishboneMemory — Wishbone 从设备存储器
 //
-// 访存逻辑全部在 C++ 回调中实现（不受 TCC 优化限制），
-// JIT C 代码仅负责引脚 ↔ 回调函数的字节搬运。
+// 访存逻辑直接生成进 JIT 代码（纯 JIT 模式）：每拍一次的回调调用实测占掉
+// 仿真时间的两成以上，内联后省掉调用约定与指针数组间接。
 //
 // 时序: stb 上升沿当拍完成读写，下一拍 ack=1+dat 传播到主设备
 //
@@ -34,7 +34,6 @@ public:
 
     // ---- Component 接口 ----
     bool prepare(std::string &error) override;
-    std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;
@@ -50,28 +49,6 @@ private:
     int _depth;
     std::vector<uint8_t> _mem;
     bool _prepared = false;
-
-    // 访存状态（C 侧 JIT 代码会嵌入指针）
-    struct MemState {
-        // mem/mem_size/data_bytes 是构造时确定的，复位不能动它们；
-        // 运行状态从 rt_offset 开始，复位时整段清零。用偏移量清零而不是回调，
-        // 是为了不引入额外的 JIT 符号——实测那会让每个电路多出一倍的编译开销。
-        uint8_t *mem;
-        size_t mem_size;
-        int data_bytes;
-        bool prev_stb;       // 上一拍 stb（上升沿检测）
-        bool prev_we;        // 上一拍 we（用于检测 AMO 的 we 翻转）
-        bool ack_pending;    // 有应答待发送（保持 ack 直到 stb 拉低）
-        uint32_t latched_dout;  // 已锁存的读数据（ack 期间保持）
-        uint32_t latched_addr;  // 已锁存的地址（用于 AMO 写阶段）
-    };
-    // 运行状态从这里的偏移开始，复位时整段清零（mem/mem_size/data_bytes 是构造时常量，不能清）
-    static constexpr size_t rtOffset() { return offsetof(MemState, prev_stb); }
-    static constexpr size_t rtSize() { return sizeof(MemState) - offsetof(MemState, prev_stb); }
-    MemState _mstate;
-
-    // ---- C++ 回调（注册为 JIT 符号） ----
-    static void memTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
 };
 
 } // namespace dsc

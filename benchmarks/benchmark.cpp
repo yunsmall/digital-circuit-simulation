@@ -35,6 +35,7 @@ struct Fixture {
     Net *wb_sel = nullptr, *wb_stb = nullptr, *wb_cyc = nullptr, *wb_ack = nullptr;
     Net *halted_net = nullptr;
     double compile_ms = 0;   // 电路构建 + JIT 编译耗时
+    uint32_t tohost = 0;     // tohost 折叠到存储器内的地址，用来判断程序跑完
 
     // use_clkgen：时钟由电路内的 ClockGen 元件产生（每 tick 翻转），
     // 对应"电路自己走时钟"的用法；默认由 tickCycles 在外部驱动
@@ -112,6 +113,7 @@ struct Fixture {
             src += chunk; remain -= chunk; off = (off + chunk) & (cap - 1);
         }
         auto c0 = std::chrono::steady_clock::now();
+        tohost = static_cast<uint32_t>(img.tohost & (cap - 1));
         auto err2 = circuit->compile();
         compile_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
         if (err2.code != ErrorCode::OK) { err = err2.message; return false; }
@@ -134,6 +136,7 @@ struct Result {
     double compile_ms = 0;   // 电路构建 + JIT 编译的耗时，和仿真速度分开看
     double seconds = 0;
     long long ticks = 0;
+    long long done_cycles = 0;   // 跑到 tohost 写 1 所需的周期数；0 表示没跑完
 };
 
 // 同一个 CPU 电路，改用 ClockGen 元件产生时钟：每拍 tick 一次。
@@ -222,13 +225,26 @@ void runOne(const std::string &path, long long ticks, int repeat, std::vector<Re
         f.reset();
         auto t0 = std::chrono::steady_clock::now();
         long long i = 0;
-        for (; i < ticks; i++)
+        long long done = 0;
+        for (; i < ticks; i++) {
             f.circuit->tickCycle(f.clk_net->id());
+            // 每 1024 个周期查一次 tohost：检查本身要读存储器，别每拍都做
+            if (f.tohost && (i & 1023) == 0 && f.peek(f.tohost & 0xFFFFu) != 0) {
+                done = i;
+                break;
+            }
+        }
         auto t1 = std::chrono::steady_clock::now();
         double sec = std::chrono::duration<double>(t1 - t0).count();
         best = (std::min)(best, sec);
         // 每个时钟周期做两次 circuit_tick（低电平拍 + 高电平拍）
-        if (rep == 0) r.ticks = i * 2;
+        if (rep == 0) {
+            r.ticks = i * 2;
+            r.done_cycles = done;
+            if (f.cpu)
+                std::fprintf(stderr, "  [%s] icache 命中 %llu / 缺失 %llu\n", r.name.c_str(),
+                             (unsigned long long) f.cpu->icacheHits(), (unsigned long long) f.cpu->icacheMisses());
+        }
     }
     r.seconds = best;
     out.push_back(r);
@@ -309,11 +325,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::printf("\n%-14s %14s %12s %10s %14s\n", "场景", "tick 数", "编译(ms)", "耗时(s)", "M tick/秒");
-    std::printf("%s\n", std::string(70, '-').c_str());
+    std::printf("\n%-14s %13s %12s %10s %12s %12s\n", "场景", "完成周期", "编译(ms)", "耗时(s)", "M tick/秒", "M 周期/秒");
+    std::printf("%s\n", std::string(82, '-').c_str());
     for (const auto &r : results) {
         const double mts = (double) r.ticks / r.seconds / 1e6;
-        std::printf("%-14s %14lld %12.1f %10.3f %14.2f\n", r.name.c_str(), r.ticks, r.compile_ms, r.seconds, mts);
+        const double mcyc = r.done_cycles > 0 ? (double) r.done_cycles / r.seconds / 1e6 : 0.0;
+        std::printf("%-14s %13lld %12.1f %10.3f %12.2f %12.2f\n", r.name.c_str(), r.done_cycles, r.compile_ms,
+                    r.seconds, mts, mcyc);
     }
     std::printf("\n");
     return 0;

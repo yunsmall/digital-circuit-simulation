@@ -6,6 +6,13 @@
 #include <string>
 #include "dcs/Component.h"
 
+// 每拍都要调用的函数不需要栈保护：序言/尾声里的 canary 读写实测占到采样周期的一小半
+#if defined(__clang__) || defined(__GNUC__)
+#define DCS_NO_STACK_PROTECTOR __attribute__((no_stack_protector))
+#else
+#define DCS_NO_STACK_PROTECTOR
+#endif
+
 namespace dsc {
 
 namespace RV {
@@ -181,6 +188,9 @@ public:
     // 双精度寄存器是 64 位的，freg() 只给低 32 位，浮点测试要用完整位模式
     uint64_t freg64(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
     uint32_t fcsr() const { return _state.fcsr; }
+    // 取指缓存命中/缺失计数，供性能分析用
+    uint64_t icacheHits() const { return _state.ic_hits; }
+    uint64_t icacheMisses() const { return _state.ic_misses; }
     uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
     uint32_t mepc() const { return _state.mepc; }
     uint32_t mtval() const { return _state.mtval; }
@@ -339,7 +349,8 @@ private:
     CpuState _state;
     bool _prepared = false;
 
-    static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs);
+    static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs)
+            DCS_NO_STACK_PROTECTOR;
     static void cpuReset(void *state_ptr);
     static void execute(CpuState &s, uint32_t inst,
                         XLen &wb_adr, uint32_t &wb_dat, bool &wb_we,
