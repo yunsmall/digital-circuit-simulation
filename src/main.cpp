@@ -242,10 +242,20 @@ int simulate(const std::string &path, int ticks, int delay_ms, bool monitor, con
                 load_off = (load_off + chunk) & (cap - 1);
             }
         }
-        // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
+        // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
+        // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
+        bool cpu_matched = false;
         for (auto &c: circuit->components()) {
-            if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) { c32->setPc((uint32_t) img.entry); break; }
-            if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) { c64->setPc(img.entry); break; }
+            if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
+                if (!img.is64) { c32->setPc((uint32_t) img.entry); cpu_matched = true; }
+            } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+                if (img.is64) { c64->setPc(img.entry); cpu_matched = true; }
+            }
+        }
+        if (!cpu_matched) {
+            std::cerr << std::format("错误: ELF 是 {}-bit，但电路里没有对应位宽的 riscv_cpu（JSON 里用 \"xlen\": \"{}\"）\n",
+                                     img.is64 ? 64 : 32, img.is64 ? 64 : 32);
+            return 1;
         }
         tohost_addr = static_cast<uint32_t>(img.tohost & (cap - 1));
         std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,

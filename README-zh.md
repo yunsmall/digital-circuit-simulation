@@ -165,7 +165,7 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 
 | 类型 | 说明 | 参数 |
 |------|------|------|
-| `riscv_cpu` | RV32IMA 软核，Wishbone 主设备；64 位版本通过 C++ API 构造 | — |
+| `riscv_cpu` | RISC-V 软核，Wishbone 主设备 | `xlen`（32 或 64） |
 | `wishbone_mem` | Wishbone 从设备存储器 | `addr_width`（1~24）, `data_width`（8/16/32） |
 | `wishbone_rom_adapter` | ROM 的 Wishbone 适配器 | `addr_width`, `data_width`, `read_latency` |
 | `wishbone_ic` | Wishbone 地址解码/路由 | `segments`（如 `0:65536,0x80000000:65536`）, `num_masters` |

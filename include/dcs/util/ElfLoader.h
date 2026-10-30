@@ -15,6 +15,7 @@ struct ElfImage {
     uint64_t base = 0;         // 映像起始地址（所有装载段地址的最小值，向下 4KB 对齐）
     uint64_t entry = 0;        // 入口地址（绝对地址）
     uint64_t tohost = 0;       // tohost 符号的绝对地址，riscv-tests 靠它报告结果；找不到为 0
+    bool is64 = false;      // 映像来自 ELF64（调用方据此核对电路里的 CPU 位宽）
     bool ok = false;
     std::string error;
 };

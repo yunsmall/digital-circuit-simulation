@@ -165,7 +165,7 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 
 | Type | Description | Parameters |
 |------|-------------|------------|
-| `riscv_cpu` | RV32IMA soft core, Wishbone master; the 64-bit variant is built through the C++ API | — |
+| `riscv_cpu` | RISC-V soft core, Wishbone master | `xlen` (32 or 64) |
 | `wishbone_mem` | Wishbone slave memory | `addr_width` (1–24), `data_width` (8/16/32) |
 | `wishbone_rom_adapter` | Wishbone adapter for ROM | `addr_width`, `data_width`, `read_latency` |
 | `wishbone_ic` | Wishbone address decoder/router | `segments` (e.g. `0:65536,0x80000000:65536`), `num_masters` |

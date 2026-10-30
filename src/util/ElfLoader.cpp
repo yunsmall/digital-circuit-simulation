@@ -99,6 +99,7 @@ ElfImage loadElf64(const std::string &path) {
         img.error = "无法解析 ELF 文件: " + path;
         return img;
     }
+    img.is64 = true;
     if (reader.get_class() != ELFIO::ELFCLASS64 || reader.get_encoding() != ELFIO::ELFDATA2LSB) {
         img.error = "只支持 ELF64 小端";
         return img;
