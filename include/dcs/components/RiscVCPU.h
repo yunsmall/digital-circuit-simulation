@@ -13,6 +13,14 @@
 #define DCS_NO_STACK_PROTECTOR
 #endif
 
+// 每拍调用一次、参数多、序言重的函数需要强制内联。
+// MSVC 用 __forceinline，GCC/Clang 用 always_inline 属性
+#if defined(_MSC_VER) && !defined(__clang__)
+#define DCS_FORCE_INLINE __forceinline
+#else
+#define DCS_FORCE_INLINE inline __attribute__((always_inline))
+#endif
+
 namespace dsc {
 
 namespace RV {
@@ -356,7 +364,7 @@ private:
     static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs)
             DCS_NO_STACK_PROTECTOR;
     static void cpuReset(void *state_ptr);
-    static void execute(CpuState &s, uint32_t inst,
+    static DCS_FORCE_INLINE void execute(CpuState &s, uint32_t inst,
                         XLen &wb_adr, uint32_t &wb_dat, bool &wb_we,
                         uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc,
                         bool &need_mem);
