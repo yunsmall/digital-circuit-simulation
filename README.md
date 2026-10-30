@@ -211,8 +211,23 @@ There are two ways to drive the clock, both shown by the benchmark:
 - add a `clkgen` component and call `circuit->tick()` per tick — about 7% slower,
   the right choice when you need a divided or multi-domain clock
 
-Reference numbers (Windows / clang 22, RelWithDebInfo, 40M ticks): ~72M ticks/s on
-integer workloads; the alu case completes its 72M cycles in about 2.0 s.
+Reference numbers (Windows / clang 22, RelWithDebInfo). "Completed cycles" is the
+number of clock cycles needed to finish the whole program, which reflects real speed
+better than tick throughput:
+
+| Case | Cycles | Time | Cycles/instr |
+|------|--------|------|--------------|
+| alu (integer) | 32.0M | 1.14 s | 1.0 |
+| branch (branch-heavy) | 26.7M | 0.97 s | 1.0 |
+| fp (double precision) | 32.0M | 1.19 s | 1.0 |
+| mem (memory) | 4.6M | 0.13 s | 1.0 |
+| mixed | 11.8M | 0.35 s | 1.0 |
+| muldiv (mul/div) | 56.0M | 2.72 s | 3.5 |
+
+Once the instruction is in the icache it costs exactly one cycle; muldiv is higher
+because a 64-bit division itself takes several cycles. Compared with the initial
+version on the same machine and configuration: alu went from 9.22 s to 1.14 s,
+about 5× overall.
 
 ## JSON Circuit Format
 
