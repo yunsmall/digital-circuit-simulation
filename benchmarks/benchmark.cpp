@@ -154,13 +154,24 @@ void runClockGenCase(const std::string &path, long long ticks, int repeat, std::
     double best = 1e30;
     for (int rep = 0; rep < repeat; rep++) {
         f.reset(false);
+        if (f.tohost)
+            std::memset(f.mem->writableMemPtr() + (f.tohost & 0xFFFFu), 0, 4);
+        long long done = 0;
         auto t0 = std::chrono::steady_clock::now();
-        for (long long i = 0; i < ticks; i++)
+        for (long long i = 0; i < ticks; i++) {
             f.circuit->tick();
+            // 每 2048 个 tick（1024 个周期）查一次 tohost
+            if (f.tohost && (i & 2047) == 0 && f.peek(f.tohost & 0xFFFFu) != 0) {
+                done = i / 2;
+                break;
+            }
+        }
         best = (std::min)(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+        if (rep == 0) r.done_cycles = done;
     }
     r.seconds = best;
-    r.ticks = ticks;
+    // 提前完成时只用实际跑过的 tick 数算速率，否则分母虚高
+    r.ticks = r.done_cycles > 0 ? r.done_cycles * 2 : ticks;
     out.push_back(r);
 }
 
