@@ -41,6 +41,14 @@ ElfImage loadElf32(const std::string &path) {
     }
     lo &= ~0xFFFu; // 对齐到页，避免 base 落在段中间
 
+    // 稀疏布局可能把映像拉得极大（.text 在低地址、另有一个段在高地址）：
+    // 铺平整个区间等于按最远地址分配内存，一个构造过的 ELF 就能把内存吃光
+    constexpr uint64_t MAX_IMAGE_SPAN = 256ull << 20;
+    if (hi < lo || hi - lo > MAX_IMAGE_SPAN) {
+        img.error = "映像跨度异常: 段分布过于稀疏或地址溢出";
+        return img;
+    }
+
     img.base = lo;
     img.entry = static_cast<uint64_t>(reader.get_entry());
     img.data.assign(hi - lo, 0);
@@ -110,6 +118,14 @@ ElfImage loadElf64(const std::string &path) {
         return img;
     }
     lo &= ~0xFFFu; // 对齐到页，避免 base 落在段中间
+
+    // 稀疏布局可能把映像拉得极大（.text 在低地址、另有一个段在高地址）：
+    // 铺平整个区间等于按最远地址分配内存，一个构造过的 ELF 就能把内存吃光
+    constexpr uint64_t MAX_IMAGE_SPAN = 256ull << 20;
+    if (hi < lo || hi - lo > MAX_IMAGE_SPAN) {
+        img.error = "映像跨度异常: 段分布过于稀疏或地址溢出";
+        return img;
+    }
 
     img.base = lo;
     img.entry = static_cast<uint64_t>(reader.get_entry());

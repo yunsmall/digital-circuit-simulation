@@ -745,6 +745,36 @@ inline double roundByRm(double x, uint32_t rm) {
     }
 }
 
+// 把"宿主 RNE 舍入结果 + 精确余项"按 rm 调整为最终值。
+// 非 RNE 模式不能对已经舍入过的值再套 trunc/floor/ceil：那等于对丢过信息的数再舍入，
+// 精度找不回来。正确做法是拿精确余项的符号判断该不该往哪个方向补一个 ulp。
+// hi 是 RNE 结果，lo 满足 真实值 = hi + lo 且 |lo| ≤ ulp(hi)/2。
+inline double adjustByRm(double hi, double lo, uint32_t rm) {
+    if (lo == 0.0 || rm == 0 || !std::isfinite(hi)) return hi;
+    const bool lo_pos = lo > 0.0;
+    if (hi == 0.0) {
+        // 真实值非零却舍入成 0：只有向上/向下舍入可能给出最小次正规数
+        const double mn = std::numeric_limits<double>::denorm_min();
+        if (rm == 2) return lo_pos ? 0.0 : -mn;   // RDN
+        if (rm == 3) return lo_pos ? mn : 0.0;    // RUP
+        return 0.0;                                // RTZ/RMM 都还是 0
+    }
+    switch (rm) {
+    case 1: // RTZ：真实值比 |hi| 小（余项与 hi 反号）才退一位
+        return (lo_pos != (hi > 0)) ? std::nextafter(hi, 0.0) : hi;
+    case 2: // RDN：真实值更小就往下补
+        return lo_pos ? hi : std::nextafter(hi, -INFINITY);
+    case 3: // RUP：真实值更大就往上补
+        return lo_pos ? std::nextafter(hi, INFINITY) : hi;
+    default: { // RMM：RNE 在非中点时已经是最近值，只有中点才改成远离零
+        const double away = hi > 0 ? std::nextafter(hi, INFINITY) : std::nextafter(hi, -INFINITY);
+        if (std::fabs(lo) * 2.0 != std::fabs(away - hi)) return hi;
+        // 中点上如果 hi 已经在远离零那一侧（余项与 hi 反号），保留 hi
+        return (lo_pos != (hi > 0)) ? hi : away;
+    }
+    }
+}
+
 // 把 double 按 rm 舍入成 half 位模式；fflags 用 RISC-V 的位布局累加（NX=1, OF=4, NV=0x10）
 inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
     const bool neg = std::signbit(v);
@@ -1728,6 +1758,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (fmt == 2) {
             if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
             if (xrm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
+            const uint32_t hflags_before = s.fcsr;
             const uint32_t op = f7 & ~3u;
             const double ha = fregRead(rs1, 2), hb = fregRead(rs2, 2);
             auto is_snan_h = [](uint64_t u) {
@@ -1774,7 +1805,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             case RV::F7_FDIV: setHalfOp(ha / hb); break;
             case RV::F7_FSQRT: setHalfOp(std::sqrt(ha)); break;
             case RV::F7_FSGNJ: {
-                uint16_t ua = (uint16_t) s.fregs[rs1], ub = (uint16_t) s.fregs[rs2];
+                // 非 NaN-boxed 的寄存器按规范整体当作 canonical NaN，其符号位为 0；
+                // 直接取低 16 位会把别的精度的尾数当成 half 的数值域
+                auto box_h = [](uint64_t u) -> uint16_t {
+                    return (u >> 16) == 0xFFFFFFFFFFFFULL ? (uint16_t) u : (uint16_t) 0x7E00;
+                };
+                uint16_t ua = box_h(s.fregs[rs1]), ub = box_h(s.fregs[rs2]);
                 uint16_t sg;
                 if (f3 == 0) sg = ub & 0x8000;              // FSGNJ
                 else if (f3 == 1) sg = (~ub) & 0x8000;      // FSGNJN
@@ -1784,7 +1820,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FMINMAX: {
-                if (std::isnan(ha) && std::isnan(hb)) { s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL; break; }
+                // 两个都是 NaN 时也要检查 sNaN：规范要求任一 sNaN 输入都置 NV
+                if (std::isnan(ha) && std::isnan(hb)) {
+                    s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL;
+                    if (hsnan) s.fcsr |= 0x10;
+                    break;
+                }
                 if (std::isnan(ha)) { setHalf(hb); if (hsnan) s.fcsr |= 0x10; break; }
                 if (std::isnan(hb)) { setHalf(ha); if (hsnan) s.fcsr |= 0x10; break; }
                 // ±0 相等：fmin 取负零、fmax 取正零（IEEE 754 规定 -0 < +0）
@@ -1864,6 +1905,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             default:
                 takeTrap(s, RV::EXC_II, inst); return;
             }
+            // FS=Dirty 只在浮点状态确实被改动时置位：FCMP/FCLASS/FMV.X.H 只读寄存器，
+            // FCVT.W.H 只在产生了新的异常标志时才算修改
+            const uint32_t hflags_new = s.fcsr & ~hflags_before;
+            const bool h_writes_freg = op != RV::F7_FCMP && op != RV::F7_FMV_X_W
+                                    && (op != RV::F7_FCVT_W_S || (hflags_new & 0x11));
+            if (h_writes_freg) s.mstatus |= (3u << 13);
             break;
         }
         if (fmt == 3) { takeTrap(s, RV::EXC_II, inst); return; } // Q 扩展未实现
@@ -1871,6 +1918,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // D 扩展与 XLEN 无关：架构上 f 寄存器始终是 64 位宽，RV32 也有 D
         if (is_d) {
             if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; }
+            const uint32_t dflags_before = s.fcsr;
             auto u2d = [](uint64_t u) { double d; std::memcpy(&d, &u, 8); return d; };
             auto d2u = [](double d) { uint64_t u; std::memcpy(&u, &d, 8); return u; };
             const uint32_t op = f7 & ~1u;   // 去掉 fmt 位，得到与 F 一致的操作码
@@ -1883,21 +1931,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             const bool dsnan = is_snan_d(s.fregs[rs1])
                             || (op != RV::F7_FSQRT && is_snan_d(s.fregs[rs2]));
 
-            // 按 rm 把精确值舍入成 double。宿主默认就是 RNE，直接算即可；
-            // 其余模式用 nearbyint 那样的思路手动修正，避免依赖宿主的浮点环境
-            auto round_to_double = [&](double exact) -> double {
-                switch (eff_rm) {
-                case 0: return exact;                                  // RNE：宿主默认
-                case 1: return std::trunc(exact);                       // RTZ
-                case 2: return std::floor(exact);                       // RDN
-                case 3: return std::ceil(exact);                        // RUP
-                default: {                                              // RMM：中点远离 0
-                    double t = std::trunc(exact), f = exact - t;
-                    if (std::fabs(f) >= 0.5) t += (exact > 0 ? 1.0 : -1.0);
-                    return t;
-                }
-                }
-            };
             // FCVT 要把浮点舍入成整数，语义和"舍入到 double 精度"完全不同：
             // 前者要处理小数部分并按 rm 选整，后者在 double 上本来就是恒等
             auto round_to_int = [&](double v) -> double {
@@ -1921,70 +1954,89 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             };
             auto setd = [&](double v) { s.fregs[rd] = d2u(v); };
             // 双精度没有更宽的宿主类型可用（long double 在 MSVC/clang-cl 上也是 64 位），
-            // 所以"结果是否不精确"不能靠比较舍入前后——exact 本身已经是舍入过的值。
-            // 这里用 TwoSum / 精确余数来判定：err != 0 就说明真实结果无法用 double 表示
-            auto inexact_add = [](double x, double y) -> bool {
-                double s = x + y;
-                double bb = s - x;
-                double err = (x - (s - bb)) + (y - bb);   // Kahan TwoSum 的误差项
-                return err != 0.0;
-            };
-            auto inexact_mul = [](double x, double y) -> bool {
-                double p = x * y;
-                if (!std::isfinite(p) || x == 0.0 || y == 0.0) return false;
-                return std::fma(x, y, -p) != 0.0;         // fma 给出精确余项
-            };
-            auto inexact_div = [](double x, double y) -> bool {
-                double q = x / y;
-                if (!std::isfinite(q) || y == 0.0) return false;
-                return std::fma(-q, y, x) != 0.0;         // x - q*y 的精确余项
-            };
-            auto setd_flags = [&](double exact, int inexact_kind = 0, double ox = 0.0, double oy = 0.0) {
-                if (std::isnan(exact)) {
+            // 所以"结果是否不精确"不能靠比较舍入前后——hi 本身已经是舍入过的值。
+            // 每个运算额外给出精确余项 lo（TwoSum / fma），真实结果就是 hi + lo：
+            // lo != 0 即不精确，非 RNE 模式再靠 lo 的符号决定往哪个方向补一个 ulp
+            auto setd_flags = [&](double hi, double lo, double ox = 0.0, double oy = 0.0) {
+                if (std::isnan(hi)) {
                     s.fregs[rd] = 0x7FF8000000000000ULL;   // canonical NaN
                     if (dsnan || (!std::isnan(da) && !std::isnan(db))) s.fcsr |= 0x10;
                     return;
                 }
-                double r = std::isinf(exact) ? exact : round_to_double(exact);
+                double r = std::isinf(hi) ? hi : adjustByRm(hi, lo, eff_rm);
                 setd(r);
                 if (std::isinf(r)) {
-                    // 有限输入算出无穷才是溢出；exact 本身可能已是 inf，不能用它判断
+                    // 有限输入算出无穷才是溢出；hi 本身可能已是 inf，不能用它判断
                     if (std::isfinite(ox) && std::isfinite(oy)) { s.fcsr |= 0x04; s.fcsr |= 0x01; }
                     return;
                 }
-                // 粗判：舍入前后不同一定不精确；相同则再用精确余项判一次
-                bool nx = (r != exact);
-                if (!nx && inexact_kind == 1) nx = inexact_add(ox, oy);
-                else if (!nx && inexact_kind == 2) nx = inexact_mul(ox, oy);
-                else if (!nx && inexact_kind == 3) nx = inexact_div(ox, oy);
-                if (nx) {
-                    s.fcsr |= 0x01;
-                    if (exact != 0.0 && std::fabs(r) < std::numeric_limits<double>::min())
-                        s.fcsr |= 0x02;                          // UF
+                if (lo != 0.0) {
+                    s.fcsr |= 0x01;   // NX
+                    if (std::fabs(r) < std::numeric_limits<double>::min()) s.fcsr |= 0x02;   // UF
                 }
+            };
+            // TwoSum：hi 是宿主 RNE 结果，lo 是精确的误差项，hi + lo 等于 x + y 的精确值
+            auto two_sum = [](double x, double y, double &lo) -> double {
+                double s = x + y;
+                double bv = s - x;
+                lo = (x - (s - bv)) + (y - bv);
+                return s;
             };
 
             switch (op) {
-            case RV::F7_FADD: setd_flags(da + db, 1, da, db); break;
-            case RV::F7_FSUB: setd_flags(da - db, 1, da, -db); break;
-            case RV::F7_FMUL: setd_flags(da * db, 2, da, db); break;
+            case RV::F7_FADD: {
+                double lo;
+                double hi = two_sum(da, db, lo);
+                setd_flags(hi, lo, da, db);
+                break;
+            }
+            case RV::F7_FSUB: {
+                double lo;
+                double hi = two_sum(da, -db, lo);
+                setd_flags(hi, lo, da, -db);
+                break;
+            }
+            case RV::F7_FMUL: {
+                double hi = da * db;
+                double lo = std::isfinite(hi) ? std::fma(da, db, -hi) : 0.0;
+                setd_flags(hi, lo, da, db);
+                break;
+            }
             case RV::F7_FDIV:
                 if (db == 0.0) {
                     if (da == 0.0) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                     else { setd(std::signbit(da) != std::signbit(db) ? -INFINITY : INFINITY); s.fcsr |= 0x08; }
-                } else setd_flags(da / db, 3, da, db);
+                } else {
+                    double hi = da / db;
+                    if (hi == 0.0) {
+                        // 商小到舍入成 0：fma 的余项退化成被除数本身，符号和商不一定一致，
+                        // 直接按商的方向决定 RDN/RUP 该给哪个最小次正规数
+                        const bool neg_q = std::signbit(da) != std::signbit(db);
+                        const double mn = std::numeric_limits<double>::denorm_min();
+                        double r = 0.0;
+                        if (eff_rm == 2 && neg_q) r = -mn;
+                        else if (eff_rm == 3 && !neg_q) r = mn;
+                        setd(r);
+                        s.fcsr |= 0x03;   // UF | NX
+                    } else {
+                        double lo = std::isfinite(hi) ? std::fma(-hi, db, da) : 0.0;
+                        setd_flags(hi, lo, da, db);
+                    }
+                }
                 break;
             case RV::F7_FSQRT:
                 if (da < 0.0) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                 else if (std::isnan(da)) { s.fregs[rd] = 0x7FF8000000000000ULL; if (dsnan) s.fcsr |= 0x10; }
                 else {
-                    // sqrt 的结果本身就是舍入后的值，拿它当"精确值"比较永远相等，
-                    // NX 就永远置不上。平方回去比才能判断是否精确
-                    double r0 = std::sqrt(da);
-                    setd(r0);
-                    // 不能用 r0*r0 != da 判断：舍入会让两边相等、把不精确误判成精确。
-                    // fma(r0,r0,-da) 给出 r0*r0 - da 的精确值，非零才说明 sqrt 真的不精确
-                    if (std::fma(r0, r0, -da) != 0.0) s.fcsr |= 0x01;   // NX
+                    double hi = std::sqrt(da);
+                    // hi² - a 由 fma 精确给出；真实 sqrt 与 hi 之差是 -(hi²-a)/(2*hi)，
+                    // 取其符号与大小交给 adjustByRm，非 RNE 模式才知道往哪边补
+                    double lo = 0.0;
+                    if (hi != 0.0 && std::isfinite(hi)) {
+                        double r2 = std::fma(hi, hi, -da);
+                        if (r2 != 0.0) lo = -r2 / (2.0 * hi);
+                    }
+                    setd_flags(hi, lo, da, da);
                 }
                 break;
             case RV::F7_FSGNJ: {
@@ -1998,7 +2050,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             }
             case RV::F7_FMINMAX: {
                 if (f3 > 1) { takeTrap(s, RV::EXC_II, inst); return; }
-                if (std::isnan(da) && std::isnan(db)) { s.fregs[rd] = 0x7FF8000000000000ULL; break; }
+                // 两个都是 NaN 也要检查 sNaN：规范要求任一 sNaN 输入都置 NV
+                if (std::isnan(da) && std::isnan(db)) {
+                    s.fregs[rd] = 0x7FF8000000000000ULL;
+                    if (dsnan) s.fcsr |= 0x10;
+                    break;
+                }
                 if (std::isnan(da)) { setd(db); if (dsnan) s.fcsr |= 0x10; break; }
                 if (std::isnan(db)) { setd(da); if (dsnan) s.fcsr |= 0x10; break; }
                 if (da == 0.0 && db == 0.0) {   // ±0 时按符号选，min 取 -0、max 取 +0
@@ -2051,14 +2108,24 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 // rs2 选源宽度：0=W 1=WU 2=L 3=LU
                 if (rs2 >= 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
-                double src;
-                if (rs2 == 0) src = (double)(int32_t) v1;
-                else if (rs2 == 1) src = (double)(uint32_t) v1;
-                else if (rs2 == 2) src = (double)(int64_t) v1;
-                else src = (double)(uint64_t) v1;
-                double r = round_to_double(src);
-                setd(r);
-                if (r != src) s.fcsr |= 0x01;
+                // 整数可能超出 double 的精确整数范围（2^53）。余项必须用整数减法算，
+                // 拿 (double)v1 和自己比恒相等，NX 与舍入都无从判断
+                double hi, rem = 0.0;
+                if (rs2 == 0) hi = (double)(int32_t) v1;            // 32 位整数总能精确表示
+                else if (rs2 == 1) hi = (double)(uint32_t) v1;
+                else if (rs2 == 2) {
+                    const int64_t iv = (int64_t) v1;
+                    hi = (double) iv;
+                    // 只有 iv = INT64_MAX 会舍成 2^63，此时 (int64_t)hi 越界是 UB，单独给差值
+                    rem = (hi >= 9223372036854775808.0) ? -1.0 : (double)(iv - (int64_t) hi);
+                } else {
+                    const uint64_t uv = (uint64_t) v1;
+                    hi = (double) uv;
+                    // 同理，uv = UINT64_MAX 舍成 2^64 时不能转回 uint64
+                    rem = (hi >= 18446744073709551616.0) ? -1.0 : (double)(uv - (uint64_t) hi);
+                }
+                setd(adjustByRm(hi, rem, eff_rm));
+                if (rem != 0.0) s.fcsr |= 0x01;   // NX
                 break;
             }
             case RV::F7_FMV_X_W:
@@ -2084,6 +2151,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             default: takeTrap(s, RV::EXC_II, inst); return;
             }
+            // FS=Dirty 只在浮点状态确实被改动时置位：FCMP/FCLASS/FMV.X.D 只读寄存器，
+            // FCVT.W.D 系列只在产生了新的异常标志时才算修改
+            const uint32_t dflags_new = s.fcsr & ~dflags_before;
+            const bool d_writes_freg = op != RV::F7_FCMP && op != RV::F7_FMV_X_W
+                                    && (op != RV::F7_FCVT_W_S || (dflags_new & 0x11));
+            if (d_writes_freg) s.mstatus |= (3u << 13);
             break;
         }
         uint32_t flags_before = s.fcsr; // 用于判断本次是否新置了异常标志

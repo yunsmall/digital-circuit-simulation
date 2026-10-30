@@ -46,9 +46,9 @@ std::string PriorityEncoder::genFuncDef_comb() const {
 
     // 写输出
     if (o_nid >= 0)
-        code += std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _out_bits), _id);
+        code += std::format("    {}\n", genOutputWrite(0, "_out", _out_bits));
     if (v_nid >= 0)
-        code += std::format("    {}\n    _c_oe_{}_1 = true;\n", genOutputWrite(1, "_valid", 1), _id);
+        code += std::format("    {}\n", genOutputWrite(1, "_valid", 1));
     code += "}\n";
     return code;
 }

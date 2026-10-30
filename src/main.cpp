@@ -6,7 +6,9 @@
 //   dcs --list-types                列出元件类型
 //   dcs --dll-info <path>           查看 DLL 元件引脚信息
 //   dcs --help                      帮助
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
@@ -226,12 +228,20 @@ int simulate(const std::string &path, int ticks, int delay_ms, bool monitor, con
         const size_t cap = mem->memSize();
         // 镜像可以链接在 DRAM_BASE(0x80000000) 这类高地址：存储器只有低 addr_width 根
         // 地址线，高位在硬件上就是别名回来，装载偏移取容量低位
-        const size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
-        if (load_off + img.data.size() > cap) {
-            std::cerr << std::format("错误: 映像 {} 字节超出存储器容量 {}\n", img.data.size(), cap);
-            return 1;
+        size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
+        // 映像跨过容量边界时按硬件别名语义回卷，而不是拒绝装载：
+        // 同一地址被写两次以靠后的内容为准，和运行期 foldAddr 的行为一致
+        {
+            const uint8_t *src = img.data.data();
+            size_t remain = img.data.size();
+            while (remain > 0) {
+                const size_t chunk = (std::min)(remain, cap - load_off);
+                std::memcpy(mem->writableMemPtr() + load_off, src, chunk);
+                src += chunk;
+                remain -= chunk;
+                load_off = (load_off + chunk) & (cap - 1);
+            }
         }
-        std::memcpy(mem->writableMemPtr() + load_off, img.data.data(), img.data.size());
         // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
         for (auto &c: circuit->components()) {
             if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) { c32->setPc((uint32_t) img.entry); break; }

@@ -178,6 +178,8 @@ public:
     void setPc(XLen v) { _state.pc = v; }
     bool halted() const;
     uint32_t freg(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
+    // 双精度寄存器是 64 位的，freg() 只给低 32 位，浮点测试要用完整位模式
+    uint64_t freg64(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
     uint32_t fcsr() const { return _state.fcsr; }
     uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
     uint32_t mepc() const { return _state.mepc; }

@@ -41,7 +41,6 @@ std::string SignExt::genFuncDef_comb() const {
     code += "    _out &= " + gen_mask(_dst) + ";\n";
     if (o_nid >= 0) {
         code += "    " + genOutputWrite(0, "_out", _dst) + "\n";
-        code += "    _c_oe_" + std::to_string(_id) + "_0 = true;\n";
     }
     code += "}\n";
     return code;

@@ -29,7 +29,6 @@ std::string Constant::genFuncDef_comb() const {
     code += std::format("static void {}() {{\n", funcName_comb());
     code += std::format("    {} _c = 0x{:X}ULL;\n", c_int_type(_bit_width), _value & mask);
     code += std::format("    {}\n", genOutputWrite(0, "_c", _bit_width));
-    code += std::format("    _c_oe_{}_0 = true;\n", _id);
     code += "}\n";
     return code;
 }
@@ -58,7 +57,7 @@ std::string Switch::genFuncDef_comb() const {
     int o0 = outputs()[0]->netId();
     std::string write;
     if (o0 >= 0)
-        write = std::format("    {}\n    _c_oe_{}_0 = _en;\n", genOutputWrite(0, "_out", _bit_width), _id);
+        write = std::format("    {}\n", genOutputWrite(0, "_out", _bit_width, "_en"));
     // 悬空 en 必须读常量 0，退回 _w[0] 会读到别的元件的驱动值
     std::string read_en = en >= 0
                                  ? std::format("    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en)
@@ -109,7 +108,6 @@ std::string Merge::genFuncDef_comb() const {
     for (int i = 0; i < _num_bits; i++)
         code += std::format("    _out |= (({})_b{}) << {};\n", c_int_type(_num_bits), i, i);
     code += std::format("    {}\n", genOutputWrite(0, "_out", _num_bits));
-    code += std::format("    _c_oe_{}_0 = true;\n", _id);
     code += "}\n";
     return code;
 }
@@ -142,7 +140,6 @@ std::string Split::genFuncDef_comb() const {
         if (nid >= 0) {
             code += std::format("    uint8_t _b{} = (_in >> {}) & 1;\n", i, i);
             code += std::format("    {}\n", genOutputWrite(i, std::format("_b{}", i), 1));
-            code += std::format("    _c_oe_{}_{} = true;\n", _id, i);
         }
     }
     code += "}\n";

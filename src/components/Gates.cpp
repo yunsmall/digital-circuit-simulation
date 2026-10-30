@@ -133,10 +133,9 @@ std::string GateTSBUF::genFuncDef_comb() const {
     {}
     {}
     {}
-    _c_oe_{}_0 = _oe;
 }})",
                        funcName_comb(), gen_read_wire(in_nid, _bit_width, in_nw, "_in"), read_oe,
-                       genOutputWrite(0, "_in", _bit_width), _id);
+                       genOutputWrite(0, "_in", _bit_width, "_oe"));
 }
 
 std::unique_ptr<Component> GateTSBUF::clone(const std::string &n) const {

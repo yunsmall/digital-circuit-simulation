@@ -72,7 +72,7 @@ std::string Mux::genFuncDef_comb() const {
 
     std::string write;
     if (out_nid >= 0)
-        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bit_width), _id);
+        write = std::format("    {}\n", genOutputWrite(0, "_out", _bit_width));
 
     return std::format(R"(static void {}(void) {{
 {}
@@ -119,9 +119,8 @@ std::string Adder::genFuncDef_comb() const {
     std::string cout_write;
     if (cout_nid >= 0)
         cout_write = std::format("    uint8_t _cout8 = _cout ? 1 : 0;\n"
-                                 "    {}\n"
-                                 "    _c_oe_{}_1 = true;\n",
-                                 genOutputWrite(1, "_cout8", 1), _id);
+                                 "    {}\n",
+                                 genOutputWrite(1, "_cout8", 1));
 
     // 有符号模式下 cout 报的是溢出（同号相加得到异号），而不是无符号进位
     // 无符号报最高位进位，有符号报溢出（同号相加得到异号）

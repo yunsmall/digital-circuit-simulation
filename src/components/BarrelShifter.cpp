@@ -39,7 +39,7 @@ std::string BarrelShifter::genFuncDef_comb() const {
 
     std::string write;
     if (o_nid >= 0)
-        write = std::format("    {}\n    _c_oe_{}_0 = true;\n", genOutputWrite(0, "_out", _bw), _id);
+        write = std::format("    {}\n", genOutputWrite(0, "_out", _bw));
     else
         write = "    // 输出悬空\n";
 

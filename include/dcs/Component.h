@@ -161,9 +161,11 @@ public:
         return _params;
     }
 
-    // 写输出引脚：非三态时同时写 _c_out_<id>_<i> 和它所连的 _w[]（组合逻辑同拍可见），
-    // 三态时只写 _c_out_ 并把 _c_oe_<id>_<i> 置真，由总线决议决定 _w[] 的最终值
-    [[nodiscard]] std::string genOutputWrite(int out_idx, std::string_view val, int pin_w) const;
+    // 写输出引脚。非三态输出直接写它所连的 _w[]，组合逻辑同拍就能读到；
+    // 三态输出只写 _c_out_，并把三态使能置成 drive（默认常驱动），
+    // 由总线决议阶段按使能决定 _w[] 的最终值
+    [[nodiscard]] std::string genOutputWrite(int out_idx, std::string_view val, int pin_w,
+                                             std::string_view drive = "true") const;
 
     // 模式 B 回调直接接收线网指针数组：省掉每 tick 把引脚打包进 16 字节槽、
     // 再把输出解包出来的拷贝。依赖的不变式是 _w[] 高位恒 0、_c_out_* 在 init 时清零。
