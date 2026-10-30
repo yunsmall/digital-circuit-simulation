@@ -217,17 +217,17 @@ better than tick throughput:
 
 | Case | Cycles | Time | Cycles/instr |
 |------|--------|------|--------------|
-| alu (integer) | 32.0M | 1.14 s | 1.0 |
+| alu (integer) | 32.0M | 1.06 s | 1.0 |
 | branch (branch-heavy) | 26.7M | 0.97 s | 1.0 |
-| fp (double precision) | 32.0M | 1.19 s | 1.0 |
+| fp (double precision) | 32.0M | 1.15 s | 1.0 |
 | mem (memory) | 4.6M | 0.13 s | 1.0 |
 | mixed | 11.8M | 0.35 s | 1.0 |
 | muldiv (mul/div) | 56.0M | 2.72 s | 3.5 |
 
 Once the instruction is in the icache it costs exactly one cycle; muldiv is higher
 because a 64-bit division itself takes several cycles. Compared with the initial
-version on the same machine and configuration: alu went from 9.22 s to 1.14 s,
-about 5× overall.
+version on the same machine and configuration: alu went from 9.22 s to 1.06 s,
+about 5–8× overall.
 
 ## JSON Circuit Format
 
