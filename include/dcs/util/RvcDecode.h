@@ -54,6 +54,12 @@ constexpr uint32_t S(int f3, int rs1, int rs2, int32_t imm) {
          | ((uint32_t)rs1 << 15) | ((uint32_t)f3 << 12)
          | ((uint32_t)(imm & 0x1F) << 7) | 0x23u;
 }
+// 浮点存储（FSD）：与整数存储的位段一致，只有 opcode 不同（0x27 而不是 0x23）
+constexpr uint32_t SF(int f3, int rs1, int rs2, int32_t imm) {
+    return ((uint32_t)((imm >> 5) & 0x7F) << 25) | ((uint32_t)rs2 << 20)
+         | ((uint32_t)rs1 << 15) | ((uint32_t)f3 << 12)
+         | ((uint32_t)(imm & 0x1F) << 7) | 0x27u;
+}
 constexpr uint32_t B(int f3, int rs1, int rs2, int32_t imm) {
     return ((uint32_t)((imm >> 12) & 1) << 31) | ((uint32_t)((imm >> 5) & 0x3F) << 25)
          | ((uint32_t)rs2 << 20) | ((uint32_t)rs1 << 15) | ((uint32_t)f3 << 12)
@@ -118,7 +124,16 @@ uint32_t expand(uint16_t c) {
                 return S(3, rs1_p, rs2_p, (int32_t)u);   // sd
             }
         }
-        default: return ILLEGAL;   // C.FLD/C.FSD 属于 D 扩展，暂不支持
+        case 1: {    // C.FLD -> fld rd', uimm(rs1')
+            // uimm[5:3] 在 c[12:10]，uimm[7:6] 在 c[6:5]。RV32 的 FLEN=64 时编码相同
+            uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
+            return I(0x07, rd_p, 3, rs1_p, (int32_t)u);
+        }
+        case 5: {    // C.FSD -> fsd rs2', uimm(rs1')
+            uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
+            return SF(3, rs1_p, rs2_p, (int32_t)u);
+        }
+        default: return ILLEGAL;
         }
     }
 
@@ -192,6 +207,11 @@ uint32_t expand(uint16_t c) {
         if (b12 == 0 && rd == 0) return ILLEGAL;
         return I(0x13, rd, 1, rd, (int32_t)(((c >> 12) & 1u) << 5 | ((c >> 2) & 0x1Fu)));
     }
+    case 1: {        // C.FLDSP -> fld rd, uimm(x2)
+        // uimm[5] 在 c[12]，uimm[4:3] 在 c[6:5]，uimm[8:6] 在 c[4:2]
+        uint32_t u = (((c >> 12) & 1u) << 5) | (((c >> 5) & 3u) << 3) | (((c >> 2) & 7u) << 6);
+        return I(0x07, rd, 3, 2, (int32_t)u);
+    }
     case 2: {        // C.LWSP -> lw rd, uimm(x2)；rd==0 是保留
         if (rd == 0) return ILLEGAL;
         uint32_t u = (((c >> 12) & 1u) << 5) | (((c >> 4) & 7u) << 2) | (((c >> 2) & 3u) << 6);
@@ -223,6 +243,11 @@ uint32_t expand(uint16_t c) {
             return I(0x67, 1, 0, rd, 0);         // C.JALR -> jalr x1, 0(rs1)
         }
         return R(0x33, rd, 0, rd, rs2z, 0);      // C.ADD -> add rd, rd, rs2
+    }
+    case 5: {        // C.FSDSP -> fsd rs2, uimm(x2)
+        // uimm[5:3] 在 c[12:10]，uimm[8:6] 在 c[9:7]
+        uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 7) & 7u) << 6);
+        return SF(3, 2, rs2, (int32_t)u);
     }
     case 6: {        // C.SWSP -> sw rs2, uimm(x2)
         uint32_t u = (((c >> 9) & 0xFu) << 2) | (((c >> 7) & 3u) << 6);

@@ -55,3 +55,36 @@ TEST(RvcDecode, CAddiNegativeImm) {
     EXPECT_EQ(rdOf(e), 10u);
     EXPECT_EQ(immI(e), -16) << "C.ADDI 的负立即数没符号扩展";
 }
+
+// C.FLD/C.FSD/C.FLDSP/C.FSDSP 属于 D 扩展的压缩形式。以前这里直接返回 ILLEGAL，
+// clang 用 rv64gc 编译出的代码会因此触发非法指令 trap
+TEST(RvcDecode, CFld) {
+    // f3=001, rs1'=x9, rd'=x10, uimm=0
+    const uint32_t e = expand<64>(0x2088);
+    EXPECT_EQ(opOf(e), 0x07u) << "C.FLD 应解成 fld";
+    EXPECT_EQ((e >> 12) & 7u, 3u) << "fld 的 funct3 必须是 3（双精度）";
+    EXPECT_EQ(rdOf(e), 10u);
+    EXPECT_EQ((e >> 15) & 0x1Fu, 9u) << "基址寄存器是 rs1'";
+}
+
+TEST(RvcDecode, CFsd) {
+    // f3=101, rs1'=x9, rs2'=x10, uimm=0
+    const uint32_t e = expand<64>(0xA088);
+    EXPECT_EQ(opOf(e), 0x27u) << "C.FSD 应解成 fsd";
+    EXPECT_EQ((e >> 12) & 7u, 3u);
+}
+
+TEST(RvcDecode, CFldsp) {
+    // f3=001, rd=x10, uimm=0
+    const uint32_t e = expand<64>(0x2502);
+    EXPECT_EQ(opOf(e), 0x07u) << "C.FLDSP 应解成 fld";
+    EXPECT_EQ(rdOf(e), 10u);
+    EXPECT_EQ((e >> 15) & 0x1Fu, 2u) << "基址固定是 sp";
+}
+
+TEST(RvcDecode, CFsdsp) {
+    // f3=101, rs2=x10, uimm=0
+    const uint32_t e = expand<64>(0xA02A);
+    EXPECT_EQ(opOf(e), 0x27u) << "C.FSDSP 应解成 fsd";
+    EXPECT_EQ((e >> 15) & 0x1Fu, 2u);
+}

@@ -223,6 +223,9 @@ void runOne(const std::string &path, long long ticks, int repeat, std::vector<Re
     r.compile_ms = f.compile_ms;
     for (int rep = 0; rep < repeat; rep++) {
         f.reset();
+        // 每轮开始前清掉上一轮写的 tohost，否则第二轮第一拍就会被判成"已完成"
+        if (f.tohost)
+            std::memset(f.mem->writableMemPtr() + (f.tohost & 0xFFFFu), 0, 4);
         auto t0 = std::chrono::steady_clock::now();
         long long i = 0;
         long long done = 0;
@@ -241,9 +244,13 @@ void runOne(const std::string &path, long long ticks, int repeat, std::vector<Re
         if (rep == 0) {
             r.ticks = i * 2;
             r.done_cycles = done;
+            if (f.cpu && done == 0)
+                std::fprintf(stderr, "  [%s] 未完成: pc=0x%llx mcause=%u mepc=0x%x mtval=0x%x\n", r.name.c_str(),
+                             (unsigned long long) f.cpu->pc(), f.cpu->mcause(), f.cpu->mepc(), f.cpu->mtval());
             if (f.cpu)
                 std::fprintf(stderr, "  [%s] icache 命中 %llu / 缺失 %llu\n", r.name.c_str(),
                              (unsigned long long) f.cpu->icacheHits(), (unsigned long long) f.cpu->icacheMisses());
+            if (f.cpu) std::fprintf(stderr, "  最后缺失地址: 0x%llx\n", (unsigned long long) f.cpu->icacheLastMiss());
         }
     }
     r.seconds = best;

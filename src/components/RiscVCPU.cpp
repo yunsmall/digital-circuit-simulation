@@ -293,8 +293,18 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 // 一个 4 字节字里可能有两条压缩指令，所以按字内位置取对应那一份
                 s.ic_hits++;
                 const uint32_t half = (fpa & 2u) ? 1u : 0u;
-                // len==0 表示这一半是跨字 32 位指令，缓存里装不下，退回总线去读
+                // len==0 表示这一半是跨字 32 位指令。相邻的下一个字通常也在缓存里
+                //（顺序执行时刚取过），用两行的原始字拼装就行，不必每次退回总线——
+                // 循环体里只要有一条这样的指令落在 4n+2，每次迭代都要付一次总线事务
                 if (s.icache[ic_idx].len[half] == 0) [[unlikely]] {
+                    const uint32_t ni = (ic_idx + 1) & 255u;
+                    const uint32_t ntag = (fpa + 4) >> 10;
+                    if (s.icache[ni].valid && s.icache[ni].tag == ntag) {
+                        s.inst = (s.icache[ic_idx].raw >> 16) | (s.icache[ni].raw << 16);
+                        s.inst_len = 4;
+                        do_execute();
+                        break;
+                    }
                     wb_adr = fpa & ~(XLen)3; wb_sel = 0x0F; wb_stb = wb_cyc = true;
                     s.phase = Phase::WAIT_FETCH;
                     break;
@@ -306,7 +316,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
                 do_execute();
                 break;
             }
-            s.ic_misses++;
+            s.ic_misses++; s.ic_last_miss = (uint32_t) fpa;
         }
         // 总线只接受字对齐地址：压缩指令的 pc 可能是 4n+2，地址要抹掉低两位，
         // 具体取哪个半字由 fetch_pa 的 bit1 在 WAIT_FETCH 里决定
@@ -386,6 +396,16 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
             // 跨字 32 位指令：低半来自第一个字的高 16 位，高半来自新读到的字
             s.inst = (s.fetch_word0 >> 16) | (in.dat << 16);
             s.inst_len = 4;
+            // 把拼好的指令回填到首字所在的缓存行。不回填的话，循环体里每条落在
+            // 4n+2 的 32 位指令每次执行都要走两笔总线事务（实测占一成的周期）
+            {
+                const uint32_t ic_idx = (uint32_t)(s.fetch_pa >> 2) & 255u;
+                const uint32_t ic_tag = (uint32_t)(s.fetch_pa >> 10);
+                if (s.icache[ic_idx].valid && s.icache[ic_idx].tag == ic_tag) {
+                    s.icache[ic_idx].inst[1] = s.inst;
+                    s.icache[ic_idx].len[1] = 4;
+                }
+            }
             wb_stb = wb_cyc = false;
             s.phase = Phase::EXECUTE;
         } else {
@@ -768,6 +788,24 @@ inline double roundByRm(double x, uint32_t rm) {
     case 3: return std::ceil(x);
     default: { double t = std::trunc(x), f = x - t; if (std::fabs(f) >= 0.5) t += (x > 0 ? 1.0 : -1.0); return t; }
     }
+}
+
+// Dekker 拆分：把 x 拆成 hi + lo，两半各占一半有效位，使乘积的误差项可以精确算出。
+// 不用 std::fma：基线 x86-64 没有 FMA 指令，库里的 fma 是软件实现，
+// 一次要上百个周期——浮点基准里它是最大的一笔开销
+inline void splitDouble(double x, double &hi, double &lo) {
+    const double c = 134217729.0 * x;   // 2^27 + 1
+    hi = c - (c - x);
+    lo = x - hi;
+}
+// 返回 a*b，err 是精确误差项（a*b = 返回值 + err）
+inline double twoProduct(double a, double b, double &err) {
+    const double p = a * b;
+    double ah, al, bh, bl;
+    splitDouble(a, ah, al);
+    splitDouble(b, bh, bl);
+    err = ((ah * bh - p) + ah * bl + al * bh) + al * bl;
+    return p;
 }
 
 // 把"宿主 RNE 舍入结果 + 精确余项"按 rm 调整为最终值。
@@ -2022,8 +2060,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FMUL: {
-                double hi = da * db;
-                double lo = std::isfinite(hi) ? std::fma(da, db, -hi) : 0.0;
+                double lo = 0.0;
+                double hi = twoProduct(da, db, lo);
+                if (!std::isfinite(hi)) lo = 0.0;
                 setd_flags(hi, lo, da, db);
                 break;
             }
@@ -2044,7 +2083,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         setd(r);
                         s.fcsr |= 0x03;   // UF | NX
                     } else {
-                        double lo = std::isfinite(hi) ? std::fma(-hi, db, da) : 0.0;
+                        double lo = 0.0;
+                        if (std::isfinite(hi)) {
+                            double perr, p = twoProduct(hi, db, perr);
+                            lo = (da - p) - perr;   // a - q*b，两段都精确
+                        }
                         setd_flags(hi, lo, da, db);
                     }
                 }
@@ -2058,8 +2101,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     // 取其符号与大小交给 adjustByRm，非 RNE 模式才知道往哪边补
                     double lo = 0.0;
                     if (hi != 0.0 && std::isfinite(hi)) {
-                        double r2 = std::fma(hi, hi, -da);
-                        if (r2 != 0.0) lo = -r2 / (2.0 * hi);
+                        double rerr, r2 = twoProduct(hi, hi, rerr);
+                        double diff = (da - r2) - rerr;   // a - hi²
+                        if (diff != 0.0) lo = diff / (2.0 * hi);
                     }
                     setd_flags(hi, lo, da, da);
                 }
