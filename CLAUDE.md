@@ -83,9 +83,11 @@ cmake --build build_clang --parallel 6
   会把寄存器多推几拍。
 - 端口位宽从类型表的 `range` 读，packed 多维按各维长度连乘；上限 128 位（dcs 线网槽是
   16 字节）。unpacked 数组端口按维展开成 `name_0`、`name_1`……，元素本来就是独立信号。
-- `inout` 端口从 AST 的 `assign pad = oe ? 数据 : 'z` 里拆出使能和数据，生成**三态输出**引脚。
-  只支持"模块内部不读这个 pad"的情况：Verilator 是两态模型，`z` 会被写成 0，回读不到外部
-  驱动值，所以内部读了就明确报错，让人拆成独立输入/输出端口。
+- `inout` 端口用 Verilator 官方的 `--pins-inout-enables`：顶层 inout 会被拆成
+  `pad`(input)、`pad__out`、`pad__en`（按位使能）。生成器映射成输入引脚 `pad_i` +
+  三态输出引脚 `pad`，两者接同一条总线；阶段 2b 会在"内部驱动值 → 总线决议 → 重新读入"
+  之间迭代到不动点，所以 `din` 读到的就是总线上的实际值，和真实硬件一致。
+  逐位混合使能在 dcs 里表达不了（三态使能是整根线的），按"任一位使能就整根线驱动"处理。
 - 三态输出在环路检测里按"可断开"处理（见 `Component::getCombinationalDeps`）：双向端口
   天然成环，三态在 oe=0 时确实断开，经过三态总线的环靠阶段 2b 的迭代上限兜底。
 - 引脚名用 AST 里的 `verilogName`，访问模型成员用 `name`：端口名撞 C++ 关键字时两者不同。
@@ -177,6 +179,33 @@ project(digital_circuit_simulation VERSION X.Y.Z)
 3. **自注册** — 在元件 .cpp 末尾用 `DCS_REGISTER_COMPONENT(meta, creator)` 登记，类型名、参数、引脚、分类、描述和实现都放在同一个文件里，不需要改动其它文件
 4. **测试** — 参考已有结构（见下方）
 5. CMake 的 `file(GLOB DCS_SOURCES ...)` 会自动拾取新文件，**但新增后需重新执行 `cmake -B build ...` 配置**，`add_dcs_test` 同理需重新配置
+
+### 第三方引入本库时注册元件
+
+自注册是公开头文件里的机制，外部项目不需要改本库任何文件：
+
+```cpp
+#include <dcs/ComponentFactory.h>
+
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"my_gate", {{"bit_width", "8"}}, {"in"}, {"out"},
+     std::string("audio"), "第三方元件示例"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p)
+            -> std::unique_ptr<dsc::Component> {
+        return std::make_unique<MyGate>(n, dsc::paramInt(p, "bit_width", 8));
+    });
+}
+```
+
+- **静态库符号丢弃**：如果元件编进第三方自己的静态库，链接器会丢掉没被引用的目标文件，
+  自注册也就不会执行。要么对那个库用 `$<LINK_LIBRARY:WHOLE_ARCHIVE,...>`，要么提供一个
+  被引用的入口函数。直接编进可执行文件则没有这个问题。
+- **分类**：`Meta.category` 是字符串。内置的 10 类仍可用 `ComponentCategory` 枚举
+  （构造函数会转成 `"gate"` 这类 key）；第三方想加自己的分类，直接给字符串 key，
+  再用 `ComponentFactory::instance().registerCategory("audio", "音频")` 登记显示名，
+  不需要改本库的枚举。没登记过的 key 在 `--list-types` 里原样显示。
+- 参数解析可用 `dsc::paramInt` / `dsc::paramStr`；参数校验规则和引脚定义都在 Meta 里。
 
 ### 测试规范
 

@@ -148,3 +148,21 @@ TEST(JsonRoundTrip, AllRegisteredTypes) {
     }
 }
 
+
+// 第三方引入了这个库以后：可以直接用自己的字符串分类，不需要改库里的枚举；
+// 没登记过的分类按 key 原样显示
+TEST(ComponentFactory, CustomCategory) {
+    auto &f = dsc::ComponentFactory::instance();
+    f.registerCategory("audio", "音频");
+    EXPECT_EQ(f.categoryDisplayName("audio"), "音频");
+    EXPECT_EQ(f.categoryDisplayName("not_registered"), "not_registered");
+
+    // 字符串分类
+    dsc::ComponentFactory::Meta custom{"my_comp", {}, {}, {}, std::string("audio"), "第三方元件"};
+    EXPECT_EQ(custom.category, "audio");
+
+    // 内置枚举仍然照旧
+    dsc::ComponentFactory::Meta builtin{"builtin_comp", {}, {}, {}, dsc::ComponentCategory::Gate, ""};
+    EXPECT_EQ(builtin.category, "gate");
+    EXPECT_EQ(f.categoryDisplayName(builtin.category), "门电路");
+}

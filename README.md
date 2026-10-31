@@ -84,7 +84,8 @@ cmake --build build --parallel 6
 The wrapper exposes the module's ports as dcs pins. Direction, width and whether
 the module is sequential are read from Verilator's exported AST, so the clock can
 be named anything. Ports go up to 128 bits; unpacked arrays are expanded into
-individual pins and `inout` ports become tristate outputs.
+individual pins, and `inout` ports are split into `pad_i` + tristate `pad`
+via Verilator's `--pins-inout-enables`, wired to the same net for bidirectional use.
 
 ### CLI Usage
 

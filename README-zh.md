@@ -83,7 +83,8 @@ cmake --build build --parallel 6
 
 模块的端口会变成 dcs 引脚，端口方向、位宽和"有没有沿触发的 always 块"都从
 Verilator 导出的 AST 里读，所以时钟叫什么名字都行。端口位宽上限 128 位；
-unpacked 数组端口会按维展开成独立引脚，`inout` 会拆成三态输出（模块内部读它则报错）。
+unpacked 数组端口会按维展开成独立引脚，`inout` 用 Verilator 官方的
+`--pins-inout-enables` 拆成输入 `pad_i` + 三态输出 `pad`，接同一条总线即可双向通信。
 生成的元件每拍调一次 Verilator 的 `eval()`，模型的寄存器状态由 Verilator 自己维护。
 
 ### CLI 用法

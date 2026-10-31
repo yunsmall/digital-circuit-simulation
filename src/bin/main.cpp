@@ -38,7 +38,7 @@ void listTypes() {
     const auto &metas = f.metas();
     std::cout << std::format("已注册元件类型: {} 种\n\n", metas.size());
     for (auto &[name, meta]: metas) {
-        std::cout << std::format("  [{}]  ({})\n", meta.type_name, dsc::categoryName(meta.category));
+        std::cout << std::format("  [{}]  ({})\n", meta.type_name, f.categoryDisplayName(meta.category));
         if (!meta.description.empty())
             std::cout << std::format("    {}\n", meta.description);
         if (meta.params.empty()) {
@@ -87,7 +87,7 @@ void listTypesJson() {
     for (auto &[name, meta]: f.metas()) {
         nlohmann::json j;
         j["type"] = meta.type_name;
-        j["category"] = dsc::categoryKey(meta.category);
+        j["category"] = meta.category;
         j["description"] = meta.description;
         j["params"] = nlohmann::json::array();
         for (auto &p: meta.params)

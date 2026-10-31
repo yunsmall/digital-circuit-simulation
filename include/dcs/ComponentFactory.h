@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -50,6 +51,40 @@ enum class ComponentCategory {
     Misc,       // 杂项（打印/复合/DLL 等）
 };
 
+// 分类名称（供 CLI / 外部工具展示）
+// 英文分类键：给机器读取（--list-types --json、外部工具），不受显示语言影响
+inline const char *categoryKey(ComponentCategory c) {
+    switch (c) {
+        case ComponentCategory::Gate:       return "gate";
+        case ComponentCategory::Reduction:  return "reduction";
+        case ComponentCategory::Arithmetic: return "arithmetic";
+        case ComponentCategory::Sequential: return "sequential";
+        case ComponentCategory::Float:      return "float";
+        case ComponentCategory::Memory:     return "memory";
+        case ComponentCategory::DataPath:   return "datapath";
+        case ComponentCategory::Bus:        return "bus";
+        case ComponentCategory::CPU:        return "cpu";
+        case ComponentCategory::Misc:       return "misc";
+    }
+    return "unknown";
+}
+
+inline const char *categoryName(ComponentCategory c) {
+    switch (c) {
+        case ComponentCategory::Gate:       return "门电路";
+        case ComponentCategory::Reduction:  return "归约运算";
+        case ComponentCategory::Arithmetic: return "算术运算";
+        case ComponentCategory::Sequential: return "时序逻辑";
+        case ComponentCategory::Float:      return "浮点运算";
+        case ComponentCategory::Memory:     return "存储元件";
+        case ComponentCategory::DataPath:   return "数据通路";
+        case ComponentCategory::Bus:        return "总线互连";
+        case ComponentCategory::CPU:        return "处理器核";
+        case ComponentCategory::Misc:       return "杂项";
+    }
+    return "未知";
+}
+
 class ComponentFactory {
 public:
     // 参数描述
@@ -65,8 +100,22 @@ public:
         std::vector<ParamMeta> params; // 构造参数
         std::vector<std::string> input_pins; // 引脚名列表（空 = 自动从实例获取）
         std::vector<std::string> output_pins;
-        ComponentCategory category = ComponentCategory::Misc;
+        // 分类 key。内置分类用 ComponentCategory 枚举，第三方元件可以直接给字符串，
+        // 再用 registerCategory() 登记显示名，不需要改本库的枚举
+        std::string category = "misc";
         std::string description; // 元件功能简介（空 = 未填写）
+
+        Meta() = default;
+        Meta(std::string t, std::vector<ParamMeta> ps, std::vector<std::string> in,
+             std::vector<std::string> out, ComponentCategory c, std::string desc) :
+            type_name(std::move(t)), params(std::move(ps)), input_pins(std::move(in)),
+            output_pins(std::move(out)), category(categoryKey(c)), description(std::move(desc)) {
+        }
+        Meta(std::string t, std::vector<ParamMeta> ps, std::vector<std::string> in,
+             std::vector<std::string> out, std::string c, std::string desc) :
+            type_name(std::move(t)), params(std::move(ps)), input_pins(std::move(in)),
+            output_pins(std::move(out)), category(std::move(c)), description(std::move(desc)) {
+        }
     };
 
     // params: 参数名 → 值的字符串映射，creator 自行解析
@@ -74,6 +123,16 @@ public:
             const std::string &name, const std::unordered_map<std::string, std::string> &params)>;
 
     static ComponentFactory &instance(); // 实现在 ComponentFactory.cpp，保证此 .obj 被链接
+
+    // 分类表：内置分类在单例构造时登记；第三方元件可以注册自己的分类，
+    // 不需要改动本库的枚举。未登记的分类直接按 key 显示
+    void registerCategory(const std::string &key, const std::string &display_name) {
+        _categories[key] = display_name;
+    }
+    [[nodiscard]] std::string categoryDisplayName(const std::string &key) const {
+        auto it = _categories.find(key);
+        return it == _categories.end() ? key : it->second;
+    }
 
     void registerType(Meta meta, Creator creator) {
         _creators[meta.type_name] = std::move(creator);
@@ -150,44 +209,22 @@ public:
     }
 
 private:
-    ComponentFactory() = default;
     std::unordered_map<std::string, Creator> _creators;
     std::unordered_map<std::string, Meta> _metas;
+    std::map<std::string, std::string> _categories;
+
+    ComponentFactory() {
+        const ComponentCategory builtin[] = {
+                ComponentCategory::Gate,       ComponentCategory::Reduction,
+                ComponentCategory::Arithmetic, ComponentCategory::Sequential,
+                ComponentCategory::Float,      ComponentCategory::Memory,
+                ComponentCategory::DataPath,   ComponentCategory::Bus,
+                ComponentCategory::CPU,        ComponentCategory::Misc,
+        };
+        for (auto c: builtin)
+            _categories[categoryKey(c)] = categoryName(c);
+    }
 };
-
-// 分类名称（供 CLI / 外部工具展示）
-// 英文分类键：给机器读取（--list-types --json、外部工具），不受显示语言影响
-inline const char *categoryKey(ComponentCategory c) {
-    switch (c) {
-        case ComponentCategory::Gate:       return "gate";
-        case ComponentCategory::Reduction:  return "reduction";
-        case ComponentCategory::Arithmetic: return "arithmetic";
-        case ComponentCategory::Sequential: return "sequential";
-        case ComponentCategory::Float:      return "float";
-        case ComponentCategory::Memory:     return "memory";
-        case ComponentCategory::DataPath:   return "datapath";
-        case ComponentCategory::Bus:        return "bus";
-        case ComponentCategory::CPU:        return "cpu";
-        case ComponentCategory::Misc:       return "misc";
-    }
-    return "unknown";
-}
-
-inline const char *categoryName(ComponentCategory c) {
-    switch (c) {
-        case ComponentCategory::Gate:       return "门电路";
-        case ComponentCategory::Reduction:  return "归约运算";
-        case ComponentCategory::Arithmetic: return "算术运算";
-        case ComponentCategory::Sequential: return "时序逻辑";
-        case ComponentCategory::Float:      return "浮点运算";
-        case ComponentCategory::Memory:     return "存储元件";
-        case ComponentCategory::DataPath:   return "数据通路";
-        case ComponentCategory::Bus:        return "总线互连";
-        case ComponentCategory::CPU:        return "处理器核";
-        case ComponentCategory::Misc:       return "杂项";
-    }
-    return "未知";
-}
 
 // 元件自注册：在元件的 .cpp 里写一次，程序启动时自动登记到工厂。
 // 工厂是 Meyer's Singleton，静态初始化顺序安全。

@@ -42,17 +42,20 @@ def run_verilator(args, workdir: pathlib.Path) -> None:
         raise SystemExit("verilator 失败")
 
 
-def verilate(src: pathlib.Path, top: str, workdir: pathlib.Path) -> pathlib.Path:
+def verilate(src: pathlib.Path, top: str, workdir: pathlib.Path):
     """生成模型源码，并额外导出一份 AST（端口/时序信息都从 AST 读）。"""
-    run_verilator(["--cc", "--Mdir", workdir, "--top-module", top, src], workdir)
-    if not (workdir / f"V{top}.h").exists():
+    # --pins-inout-enables：顶层 inout 会被拆成 input + <name>__en + <name>__out，
+    # 这是 Verilator 官方支持的双向端口建模方式，正好对应 dcs 的三态总线
+    common = ["--cc", "--pins-inout-enables", "--top-module", top, src]
+    run_verilator([*common, "--Mdir", workdir], workdir)
+    header = workdir / f"V{top}.h"
+    if not header.exists():
         raise SystemExit(f"没有生成 V{top}.h（--top 是否和模块名一致？）")
 
     # --json-only-output 本身不产出 C++，所以要和上一步分开跑
     ast = workdir / "ast.json"
-    run_verilator(["--cc", "--json-only-output", ast, "--Mdir", workdir / "ast",
-                   "--top-module", top, src], workdir)
-    return ast
+    run_verilator([*common, "--json-only-output", ast, "--Mdir", workdir / "ast"], workdir)
+    return ast, header
 
 
 def const_int(node):
@@ -172,35 +175,23 @@ def parse_design(ast_path: pathlib.Path, top: str):
     if not ports:
         raise SystemExit("顶层模块没有端口")
 
-    # inout 端口要拆成三态输出 + 输入两半。三态使能不是端口，但 Verilator 的 AST
-    # 完整保留了 "assign pad = oe ? dout : 'z" 的结构，可以从这里取出来
-    inout_names = {p["name"] for p in ports if p["dir"] == "inout"}
-    if inout_names:
-        drivers = find_inout_drivers(mod, inout_names)
-        in_names = {p["name"] for p in ports if p["dir"] == "input"}
-        expanded = []
-        for p in ports:
-            if p["dir"] != "inout":
-                expanded.append(p)
-                continue
-            if p["name"] not in drivers:
-                raise SystemExit(
-                    f"inout 端口 {p['name']} 没有找到 \"assign 端口 = oe ? 数据 : 'z\" 形式的驱动，"
-                    f"无法自动推断三态使能")
-            oe, data = drivers[p["name"]]
-            missing = [s for s in (oe, data) if s not in in_names]
-            if missing:
-                raise SystemExit(
-                    f"inout 端口 {p['name']} 的驱动信号 {', '.join(missing)} 不是输入端口；"
-                    f"dcs 只能从引脚取值，请把它改成模块输入")
-            # Verilator 是两态模型：assign 写 z 时端口值会变成 0，回读不到外部
-            # 驱动值，所以只支持"只写不读"的 pad；模块内部读它就没法正确建模
-            if inout_is_read(mod, p["name"]):
-                raise SystemExit(
-                    f"inout 端口 {p['name']} 在模块内部被读取。Verilator 的两态模型"
-                    f"表示不了高阻，回读不到外部驱动值，请把它拆成独立的输入/输出端口")
-            expanded.append(dict(p, dir="output", tristate=True, oe_sig=oe, data_sig=data))
-        ports = expanded
+    # inout 端口靠 Verilator 的 --pins-inout-enables 拆成三件套：
+    #   <name>      input    外部驱动进来的值
+    #   <name>__out output   本模块驱动的值
+    #   <name>__en  output   按位的驱动使能
+    # dcs 侧对应：输入引脚 <name>_i 接总线，三态输出引脚 <name> 接同一条总线，
+    # 阶段 2b 会在两者之间迭代到不动点，和真实硬件的收敛过程一致
+    expanded = []
+    for p in ports:
+        if p["dir"] != "inout":
+            expanded.append(p)
+            continue
+        if "[" in p["cpp"]:
+            raise SystemExit(f"inout 数组端口 {p['name']} 暂不支持，请拆成多个标量端口")
+        expanded.append(dict(p, dir="input", name=p["name"] + "_i"))
+        expanded.append(dict(p, dir="output", tristate=True, name=p["name"],
+                             data_sig=p["cpp"] + "__out", oe_sig=p["cpp"] + "__en"))
+    ports = expanded
 
     # 沿触发的 always 才算时序。Verilator 会自己保存上一拍时钟做边沿检测，
     # 这里只用来决定元件类型，不影响每拍 eval 的驱动方式
@@ -217,63 +208,6 @@ def parse_design(ast_path: pathlib.Path, top: str):
                     if v.get("type") == "VARREF" and v.get("name") not in clocks:
                         clocks.append(v.get("name"))
     return ports, clocks
-
-
-def inout_is_read(mod, name):
-    """模块内部是否读过这个 inout 端口（驱动它的那次写不算）。"""
-
-    def walk(obj):
-        if isinstance(obj, dict):
-            if obj.get("type") == "VARREF" and obj.get("name") == name:
-                if "RD" in str(obj.get("access", "")):
-                    return True
-            return any(walk(v) for v in obj.values())
-        if isinstance(obj, list):
-            return any(walk(v) for v in obj)
-        return False
-
-    return walk(mod)
-
-
-def is_all_z(node):
-    """CONST 节点是不是全 z（"8'bzzzzzzzz"）。"""
-    if not isinstance(node, dict) or node.get("type") != "CONST":
-        return False
-    return re.fullmatch(r"\s*\d*'[bB][zZ]+\s*", node.get("name", "")) is not None
-
-
-def find_inout_drivers(mod, inout_names):
-    """从 "assign pad = oe ? data : 'z" 里取出 (oe, data) 两个信号名。"""
-    drivers = {}
-    for node in as_list(mod.get("stmtsp")):
-        if node.get("type") != "ALWAYS":
-            continue
-        for stmt in as_list(node.get("stmtsp")):
-            if stmt.get("type") != "ASSIGNW":
-                continue
-            lhs = as_list(stmt.get("lhsp"))
-            rhs = as_list(stmt.get("rhsp"))
-            if len(lhs) != 1 or len(rhs) != 1 or lhs[0].get("type") != "VARREF":
-                continue
-            name = lhs[0].get("name")
-            if name not in inout_names:
-                continue
-            cond = rhs[0]
-            if cond.get("type") != "COND":
-                continue
-            c = (as_list(cond.get("condp")) or [None])[0]
-            t = (as_list(cond.get("thenp")) or [None])[0]
-            e = (as_list(cond.get("elsep")) or [None])[0]
-            if not is_all_z(e):
-                continue
-            if not (isinstance(c, dict) and isinstance(t, dict)):
-                continue
-            if c.get("type") != "VARREF" or t.get("type") != "VARREF":
-                raise SystemExit(
-                    f"inout 端口 {name} 的三态驱动只支持 \"assign 端口 = 信号 ? 信号 : 'z\"，"
-                    f"条件或数据是表达式时无法拆出使能引脚")
-            drivers[name] = (c.get("name"), t.get("name"))
-    return drivers
 
 
 def ctype(width: int) -> str:
@@ -341,6 +275,16 @@ struct @NAME@::State {
     VerilatedContext ctx;
     std::unique_ptr<V@TOP@> model;
 };
+
+// __en 是按位给出驱动使能的，而 dcs 的三态是整根线驱动；只要有一位使能就整根线驱动。
+// 全 0 / 全 1 是常见情形，逐位混合的驱动 dcs 表达不了
+static bool dcsAnyBits(const void *p, std::size_t n) {
+    auto *b = static_cast<const unsigned char *>(p);
+    for (std::size_t i = 0; i < n; i++)
+        if (b[i])
+            return true;
+    return false;
+}
 
 // 端口在 Verilator 模型里是引用成员（VL_IN8 展开成 "CData &a"），
 // 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚。
@@ -451,7 +395,8 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
             # 值和使能分别来自模型里的数据信号、三态条件信号
             read_out.append(
                 f"    std::memcpy(out + {val_off}, &m->{p['data_sig']}, {(p['width'] + 7) // 8});")
-            read_out.append(f"    out[{oe_off}] = (unsigned char) m->{p['oe_sig']};")
+            read_out.append(
+                f"    out[{oe_off}] = dcsAnyBits(&m->{p['oe_sig']}, {(p['width'] + 7) // 8});")
 
     load = []
     for i, p in enumerate(ins):
@@ -522,8 +467,17 @@ def main():
     out = pathlib.Path(args.outdir)
     work = pathlib.Path(args.workdir) if args.workdir else pathlib.Path("build_verilog_gen") / top
 
-    ast = verilate(src, top, work)
+    ast, header = verilate(src, top, work)
     ports, clocks = parse_design(ast, top)
+
+    # Verilator 只把"简单三态结构"拆成 input+__en+__out；没拆开的话端口里不会有 __en，
+    # 生成出来的代码会编译失败，不如在这里给出明确原因
+    header_text = header.read_text(encoding="utf-8", errors="replace")
+    for p in ports:
+        if p.get("tristate") and p["oe_sig"] not in header_text:
+            raise SystemExit(
+                f"Verilator 没有把 inout 端口 {p['name']} 拆成 __en/__out，"
+                f"它只支持 \"assign 端口 = 使能 ? 数据 : 'z\" 这类简单三态结构")
 
     for p in ports:
         if p["width"] > 128:

@@ -386,7 +386,8 @@ if(DCS_BUILD_VERILOG)
         foreach(_d ${_dcs_vgen_tops})
             file(GLOB _dcs_vsrcs "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen/${_d}/*.v")
             verilate(dcs_verilog_models SOURCES ${_dcs_vsrcs}
-                     TOP_MODULE ${_d} PREFIX V${_d})
+                     TOP_MODULE ${_d} PREFIX V${_d}
+                     VERILATOR_ARGS --pins-inout-enables)
         endforeach()
         target_sources(dcs_lib PRIVATE $<TARGET_OBJECTS:dcs_verilog_models>)
     endif()

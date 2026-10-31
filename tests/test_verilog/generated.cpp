@@ -77,26 +77,31 @@ TEST(GeneratedComponent, Wide128Ports) {
 }
 
 TEST(GeneratedComponent, IobufTristate) {
-    // inout 端口从 AST 拆出 "oe ? 数据 : 'z"，生成三态输出 pad。
-    // 两个实例挂同一条总线，谁的 oe=1 谁说了算
+    // inout 由 Verilator 的 --pins-inout-enables 拆成 input(pad)+__out+__en，
+    // dcs 侧对应 pad_i（外部值）和三态输出 pad。两个实例挂同一条总线：
+    // 谁都 oe=1 谁驱动，另一侧高阻，din 读到的永远是总线上的实际值
     dsc::Circuit c;
     auto *bus = c.createNet("bus");
 
     struct Side {
         dsc::Net *dout;
         dsc::Net *oe;
+        dsc::Net *din;
         dsc::Component *comp;
     } sides[2];
 
     for (int i = 0; i < 2; ++i) {
         sides[i].dout = c.createNet(std::format("dout{}", i));
         sides[i].oe = c.createNet(std::format("oe{}", i));
+        sides[i].din = c.createNet(std::format("din{}", i));
         auto comp = makeComponent("gen_iobuf", std::format("io{}", i));
         ASSERT_TRUE(comp);
         sides[i].comp = c.addComponent(std::move(comp));
         c.connect(sides[i].comp, "dout", sides[i].dout);
         c.connect(sides[i].comp, "oe", sides[i].oe);
+        c.connect(sides[i].comp, "din", sides[i].din);
         c.connect(sides[i].comp, "pad", bus);
+        c.connect(sides[i].comp, "pad_i", bus);
     }
 
     auto err = c.compile();
@@ -109,12 +114,16 @@ TEST(GeneratedComponent, IobufTristate) {
     c.setWire(sides[1].oe->id(), {0, 0});
     c.tick();
     EXPECT_EQ(c.getWire(bus->id())[0], 0x5A);
+    EXPECT_EQ(c.getWire(sides[0].din->id())[0], 0x5A);
+    EXPECT_EQ(c.getWire(sides[1].din->id())[0], 0x5A);
 
     // 交换驱动权
     c.setWire(sides[0].oe->id(), {0, 0});
     c.setWire(sides[1].oe->id(), {1, 0});
     c.tick();
     EXPECT_EQ(c.getWire(bus->id())[0], 0x33);
+    EXPECT_EQ(c.getWire(sides[0].din->id())[0], 0x33);
+    EXPECT_EQ(c.getWire(sides[1].din->id())[0], 0x33);
 }
 
 TEST(GeneratedComponent, Counter8Sequential) {
