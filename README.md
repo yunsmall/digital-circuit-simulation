@@ -70,6 +70,21 @@ cmake -B build \
 
 Disable with `-DDCS_BUILD_VERILOG=OFF`.
 
+### Generating components from Verilog
+
+`tools/verilog2dcs.py` turns a Verilog module into a native dcs component
+(Verilator model + generated wrapper), no DLL involved:
+
+```bash
+python tools/verilog2dcs.py verilog_test/adder8.v --type gen_adder8
+cmake -B build ...            # re-run configure: new files are picked up by GLOB
+cmake --build build --parallel 6
+```
+
+The wrapper exposes the module's ports as dcs pins. Modules with a
+`clk`/`clock` input become sequential components; everything else is
+combinational. Ports are limited to 64 bits and `inout` is not supported yet.
+
 ### CLI Usage
 
 ```bash

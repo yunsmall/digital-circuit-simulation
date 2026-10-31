@@ -1,8 +1,10 @@
 // Misc — 常量、开关、合并、拆分元件实现
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Misc.h"
+#include <charconv>
 #include <format>
 #include <stdexcept>
+#include <string_view>
 
 namespace dsc {
 
@@ -161,8 +163,18 @@ DCS_REGISTER_COMPONENT(
                            uint64_t v = 0;
                            auto it = p.find("value");
                            if (it != p.end()) {
-                               const auto &s = it->second;
-                               auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, 0);
+                               std::string_view s = it->second;
+                               // from_chars 的 base 只接受 2..36，base=0 是前置条件违规
+                               // （MSVC 下直接解析失败），0x/0b 前缀得自己剥掉
+                               int base = 10;
+                               if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+                                   base = 16;
+                                   s.remove_prefix(2);
+                               } else if (s.size() > 2 && s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) {
+                                   base = 2;
+                                   s.remove_prefix(2);
+                               }
+                               auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, base);
                                // 解析失败就当 0：非数字由 validateParams 报错，不该在这抛
                                if (ec != std::errc{} || ptr != s.data() + s.size())
                                    v = 0;

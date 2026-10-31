@@ -57,6 +57,38 @@ cmake -B build \
 cmake -B build -DDCS_BUILD_VERILOG=OFF ...
 ```
 
+### 从 Verilog 生成元件
+
+`tools/verilog2dcs.py` 把一个 Verilog 模块变成 dcs 元件：调 `verilator_bin --cc` 生成模型，
+从 `V<top>.h` 的 `VL_IN/VL_OUT` 宏读出端口，然后写出包装代码。
+
+```bash
+python tools/verilog2dcs.py verilog_test/adder8.v --type gen_adder8
+cmake -B build_clang ...      # 新增目录后要重新配置，CMake 才扫得到
+cmake --build build_clang --parallel 6
+```
+
+产物与约定：
+
+- `include/dcs/components/verilog/<Name>.h`、`src/verilog_gen/<Name>.cpp`：元件本体。
+  可执行文件里能用的类型名由 `--type` 指定（默认是模块名小写）。
+- `verilog_gen/<top>/`：Verilog 源副本 + `dcs_component.txt`（记录元件类名）。
+  CMake 按这个清单把元件 cpp 和 Verilator 模型编进同一个 target。
+- 元件 cpp 故意放在 `src/verilog_gen/`：`src/components/*/*.cpp` 的 GLOB 扫不到这里，
+  否则会被编进 dcs_lib 而拿不到 `V<top>.h` 的生成路径。
+- 有 `clk`/`clock`/`clk_i`/`i_clk`/`clk_in` 输入就当**时序元件**（输出引脚标 sequential），
+  否则是组合元件。端口位宽上限 64，`inout` 暂不支持。
+- 生成的元件直接继承 `Component`：Verilator 模型指针要放进 `genStateDecl`，
+  而 `CombinationalComponent` 把 `genStateDecl` 标成了 `final`。
+- 每拍每个元件只跨 JIT 一次：JIT 把输入打包进 static 数组，调 C++ 回调
+  （写端口 → `eval()` → 读端口），再把输出写回线网。**必须每拍都 eval**——
+  Verilator 模型内部记录上一拍的时钟值做边沿检测，在外面做边沿门控会让它
+  永远看不到下降沿，此后所有上升沿都不成立。
+- 所有模型共用一个 CMake target：`verilate()` 会把 `verilated.cpp` 这类运行时源文件
+  塞进 target，一个模型一个 target 会重复定义符号。
+- Windows 的 COFF 没有弱符号，`verilated.cpp` 弱引用 `sc_time_stamp()`，
+  需要 `src/verilog_gen/verilated_stub.cpp` 提供定义，否则链接失败。
+
 ## 测试
 
 ```bash

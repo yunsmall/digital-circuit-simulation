@@ -354,4 +354,39 @@ endif()
 # ---- Verilator 集成（可选）----
 if(DCS_BUILD_VERILOG)
     add_subdirectory(verilog_test)
+
+    # tools/verilog2dcs.py 生成的元件：verilog_gen/<top>/ 放 Verilog 源和
+    # dcs_component.txt（记录元件类名）。元件 cpp 必须和模型编进同一个 target，
+    # 才能拿到 verilate() 生成的 V<top>.h 的头文件路径
+    file(GLOB _dcs_vgen_dirs RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen"
+         "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen/*")
+    set(_dcs_vgen_comps "")
+    set(_dcs_vgen_tops "")
+    foreach(_d ${_dcs_vgen_dirs})
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen/${_d}/dcs_component.txt")
+            file(READ "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen/${_d}/dcs_component.txt" _comp)
+            string(STRIP "${_comp}" _comp)
+            list(APPEND _dcs_vgen_comps
+                 "${CMAKE_CURRENT_SOURCE_DIR}/src/verilog_gen/${_comp}.cpp")
+            list(APPEND _dcs_vgen_tops "${_d}")
+        endif()
+    endforeach()
+
+    # 所有模型和元件 cpp 编进同一个 target：verilate() 会把 verilated.cpp 这类
+    # 运行时源文件塞进 target，一个模型一个 target 就会重复定义一堆符号。
+    # 同一个 target 里 CMake 按路径去重，运行时只编一次
+    if(_dcs_vgen_comps)
+        add_library(dcs_verilog_models OBJECT
+            ${_dcs_vgen_comps}
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/verilog_gen/verilated_stub.cpp")
+        target_include_directories(dcs_verilog_models PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        foreach(_d ${_dcs_vgen_tops})
+            file(GLOB _dcs_vsrcs "${CMAKE_CURRENT_SOURCE_DIR}/verilog_gen/${_d}/*.v")
+            verilate(dcs_verilog_models SOURCES ${_dcs_vsrcs}
+                     TOP_MODULE ${_d} PREFIX V${_d})
+        endforeach()
+        target_sources(dcs_lib PRIVATE $<TARGET_OBJECTS:dcs_verilog_models>)
+    endif()
 endif()

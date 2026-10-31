@@ -70,6 +70,21 @@ cmake -B build \
 
 不需要时关掉：`-DDCS_BUILD_VERILOG=OFF`。
 
+### 从 Verilog 生成元件
+
+`tools/verilog2dcs.py` 把一个 Verilog 模块直接变成 dcs 元件（Verilator 模型 + 生成的包装代码），
+不需要 DLL：
+
+```bash
+python tools/verilog2dcs.py verilog_test/adder8.v --type gen_adder8
+cmake -B build ...            # 新增文件后要重新配置，GLOB 才扫得到
+cmake --build build --parallel 6
+```
+
+模块的端口会变成 dcs 引脚；带 `clk`/`clock` 输入的模块作为时序元件，
+其余作为组合元件。端口位宽上限 64 位，`inout` 暂不支持。
+生成的元件每拍调一次 Verilator 的 `eval()`，模型的寄存器状态由 Verilator 自己维护。
+
 ### CLI 用法
 
 ```bash
