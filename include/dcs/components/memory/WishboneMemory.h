@@ -5,6 +5,18 @@
 //
 // 时序: stb 上升沿当拍完成读写，下一拍 ack=1+dat 传播到主设备
 //
+// ---- 与 Wishbone B4 的对应关系（classic 模式）----
+//   * 最小信号集 ACK_O/CLK_I/CYC_I/STB_I/RST_I 齐全（B4 p.35）；
+//   * ACK_O 由 CYC_I & STB_I 产生，随 STB_I 撤销而撤销（RULE 3.35 / RULE 3.50）；
+//   * ADR 只到字边界，字节由 SEL 选（RULE 3.100，Figure 3-19）；
+//   * 主设备在事务完成前保持 STB/CYC，收到 ACK 才撤销。
+// 未实现的信号在规范里是可选或属于其它模式：
+//   * ERR_O / RTY_O —— PERMISSION 3.20 / 3.25，标记为 MAY；
+//   * STALL_I —— 3.1.3.2 pipelined 模式，classic 不需要；
+//   * CTI/BTE burst —— Chapter 4 Registered Feedback 扩展。
+//
+// 硬件数据引脚与内部暂存都是 32 位，data_width 只支持 8/16/32。
+//
 // Wishbone 从设备引脚:
 //   输入: clk(1), wb_adr_i(32), wb_dat_i(32), wb_we_i(1),
 //          wb_sel_i(4), wb_stb_i(1), wb_cyc_i(1)

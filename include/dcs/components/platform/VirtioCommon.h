@@ -59,6 +59,26 @@ std::string genStateDecl(const DeviceSpec &spec);
 std::string genInitCode(const DeviceSpec &spec, void *state);
 std::string genSeq(const DeviceSpec &spec);
 
+// ---- virtio-blk 的请求解析（两个 blk 元件共用） ----
+// 介质访问语句由调用方提供，代码里可用 _io_off（介质字节偏移）和 _c（本块长度），
+// read_stmt 负责把 _c 字节读进 _vio_mp_buf_<id>，write_stmt 反之；
+// 失败时由语句自己设置 _vio_status_byte_<id>。
+struct BlkParams {
+    std::string id;
+    std::string func_name;
+    std::string node_name;
+    std::vector<int> in_nets;
+    uint32_t features = 0;
+    uint64_t size_bytes = 0;
+    std::string state_decl; // 设备私有变量，必须含 _vio_type_<id>/_vio_sec_<id>/_vio_status_byte_<id>
+    std::string init_code;
+    std::string read_stmt;
+    std::string write_stmt;
+    std::function<std::string(int out_idx, const std::string &expr, uint32_t width)> out_write;
+};
+
+DeviceSpec makeBlkSpec(const BlkParams &p);
+
 // 队列字段访问表达式：_vio_q_<id>[q].<field>
 std::string qv(const std::string &id, int q, const char *field);
 

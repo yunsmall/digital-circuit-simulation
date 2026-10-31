@@ -288,4 +288,86 @@ std::string genSeq(const DeviceSpec &s) {
     return c;
 }
 
+DeviceSpec makeBlkSpec(const BlkParams &p) {
+    const std::string &id = p.id;
+    DeviceSpec s;
+    s.id = id;
+    s.func_name = p.func_name;
+    s.node_name = p.node_name;
+    s.dev_id = 2;
+    s.nq = 1;
+    s.features = p.features;
+    s.in_nets = p.in_nets;
+    s.state_decl = p.state_decl;
+    s.init_code = p.init_code;
+    s.config_read = std::format(
+            "            case 0x100: _dout = {}u; break;\n"
+            "            case 0x104: _dout = 0; break;\n",
+            (uint32_t) (p.size_bytes / 512));
+    s.out_write = p.out_write;
+
+    QueueSpec q;
+    q.wake = "";
+    // desc0 是 16 字节请求头；之后带 NEXT 的都是数据段，链尾没有 NEXT 的是状态字节
+    q.desc = std::format(
+            "                if (_qv->step == 0) {{\n"
+            "                    _qv->step = 1; _qv->phase = {0};\n"
+            "                }} else if (_qv->dflags & 1) {{\n"
+            "                    _qv->phase = {1};\n"
+            "                }} else {{\n"
+            "                    _qv->phase = {2};\n"
+            "                }}\n",
+            Q_DEV, Q_DEV + 1, Q_DEV + 2);
+    q.start = std::format(
+            "        case {0}: _a = _qv->daddr; _l = 16; _wr = 0; break;\n"
+            "        case {3}: {{\n"
+            "            uint32_t _c = _qv->dlen - _qv->off;\n"
+            "            if (_c > 64) _c = 64;\n"
+            "            _qv->chunk = _c;\n"
+            "            _a = _qv->daddr + _qv->off; _l = _c;\n"
+            "            if (_vio_type_{1} == 0) {{\n"
+            "                uint32_t _io_off = _vio_sec_{1} * 512u + _qv->written;\n"
+            "{2}"
+            "                _wr = 1;\n"
+            "            }} else _wr = 0;\n"
+            "            break;\n"
+            "        }}\n"
+            "        case {4}: _a = _qv->daddr; _l = 1; _wr = 1; _vio_mp_buf_{1}[0] = _vio_status_byte_{1}; break;\n",
+            Q_DEV, id, p.read_stmt, Q_DEV + 1, Q_DEV + 2);
+    q.done = std::format(
+            "            case {0}: {{ // 请求头读完，进入数据段\n"
+            "                _vio_type_{1} = (uint32_t)_vio_mp_buf_{1}[0] | ((uint32_t)_vio_mp_buf_{1}[1] << 8) |\n"
+            "                                ((uint32_t)_vio_mp_buf_{1}[2] << 16) | ((uint32_t)_vio_mp_buf_{1}[3] << 24);\n"
+            "                _vio_sec_{1} = (uint32_t)_vio_mp_buf_{1}[8] | ((uint32_t)_vio_mp_buf_{1}[9] << 8) |\n"
+            "                               ((uint32_t)_vio_mp_buf_{1}[10] << 16) | ((uint32_t)_vio_mp_buf_{1}[11] << 24);\n"
+            "                _qv->written = 0; _vio_status_byte_{1} = 0;\n"
+            "                if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            "                else _qv->phase = {3};\n"
+            "                break;\n"
+            "            }}\n"
+            "            case {3}: {{ // 数据段读完\n"
+            "                uint32_t _c = _qv->chunk;\n"
+            "                if (_vio_type_{1} == 0) _qv->written += _c;\n"
+            "                else if (_vio_type_{1} == 1) {{\n"
+            "                    uint32_t _io_off = _vio_sec_{1} * 512u + _qv->written;\n"
+            "{2}"
+            "                    _qv->written += _c;\n"
+            "                }} else if (_vio_type_{1} != 4) _vio_status_byte_{1} = 2;\n"
+            "                _qv->off += _c;\n"
+            "                if (_qv->off >= _qv->dlen) {{\n"
+            "                    if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            "                    else _qv->phase = {5};\n"
+            "                }}\n"
+            "                break;\n"
+            "            }}\n"
+            "            case {5}: {{ // 状态字节写完\n"
+            "                _qv->written = _vio_type_{1} == 0 ? _qv->written : 0;\n"
+            "                _qv->phase = {6};\n"
+            "                break;\n"
+            "            }}\n",
+            Q_DEV, id, p.write_stmt, Q_DEV + 1, Q_DESC, Q_DEV + 2, Q_USED);
+    s.queues.push_back(q);
+    return s;
+}
+
 } // namespace dsc::virtio_gen
