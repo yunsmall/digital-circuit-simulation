@@ -60,7 +60,8 @@ cmake -B build -DDCS_BUILD_VERILOG=OFF ...
 ### 从 Verilog 生成元件
 
 `tools/verilog2dcs.py` 把一个 Verilog 模块变成 dcs 元件：调 `verilator_bin --cc` 生成模型，
-从 `V<top>.h` 的 `VL_IN/VL_OUT` 宏读出端口，然后写出包装代码。
+用 `--json-only-output` 导出 AST，端口方向/位宽和时序信息全部从 AST 读（不要去解析
+`V<top>.h` 的 `VL_IN/VL_OUT` 宏：那只是字符串快照，判定不了时序，也拿不到原始端口名）。
 
 ```bash
 python tools/verilog2dcs.py verilog_test/adder8.v --type gen_adder8
@@ -76,10 +77,18 @@ cmake --build build_clang --parallel 6
   CMake 按这个清单把元件 cpp 和 Verilator 模型编进同一个 target。
 - 元件 cpp 故意放在 `src/verilog_gen/`：`src/components/*/*.cpp` 的 GLOB 扫不到这里，
   否则会被编进 dcs_lib 而拿不到 `V<top>.h` 的生成路径。
-- 有 `clk`/`clock`/`clk_i`/`i_clk`/`clk_in` 输入就当**时序元件**（输出引脚标 sequential），
-  否则是组合元件。端口位宽上限 64，`inout` 暂不支持。
+- **时序/组合看 AST，不看端口名**：模块里存在带 `edgeType`（POS/NEG）的 `SENITEM`
+  才算时序元件（输出引脚标 sequential），否则是组合元件。时钟叫 `clock_50m`、`aclk`
+  都无所谓，不要退回按名字猜——猜错会让有状态的模型被当成组合元件，阶段 2b 重跑时
+  会把寄存器多推几拍。
+- 端口位宽从类型表的 `range` 读，packed 多维按各维长度连乘；上限 64 位（dcs 线网是
+  16 字节槽）。`inout` 和 unpacked 数组端口直接报错并说明该怎么拆，**不允许静默降级**
+  （数组端口曾经被当成 1 位，生成出来的元件是错的但不报错）。
+- 引脚名用 AST 里的 `verilogName`，访问模型成员用 `name`：端口名撞 C++ 关键字时两者不同。
 - 生成的元件直接继承 `Component`：Verilator 模型指针要放进 `genStateDecl`，
   而 `CombinationalComponent` 把 `genStateDecl` 标成了 `final`。
+- Verilator 的端口是引用成员（`VL_IN8` 展开成 `CData &a`），不能按对象内偏移直接读写，
+  必须走回调。
 - 每拍每个元件只跨 JIT 一次：JIT 把输入打包进 static 数组，调 C++ 回调
   （写端口 → `eval()` → 读端口），再把输出写回线网。**必须每拍都 eval**——
   Verilator 模型内部记录上一拍的时钟值做边沿检测，在外面做边沿门控会让它

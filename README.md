@@ -81,9 +81,10 @@ cmake -B build ...            # re-run configure: new files are picked up by GLO
 cmake --build build --parallel 6
 ```
 
-The wrapper exposes the module's ports as dcs pins. Modules with a
-`clk`/`clock` input become sequential components; everything else is
-combinational. Ports are limited to 64 bits and `inout` is not supported yet.
+The wrapper exposes the module's ports as dcs pins. Direction, width and whether
+the module is sequential are read from Verilator's exported AST, so the clock can
+be named anything. Ports are limited to 64 bits; `inout` and unpacked-array ports
+cannot map onto single-driver nets and are rejected with an explanation.
 
 ### CLI Usage
 

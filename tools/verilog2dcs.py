@@ -17,6 +17,7 @@
     verilog_gen/<top>/<源文件>.v
 """
 import argparse
+import json
 import os
 import pathlib
 import re
@@ -27,39 +28,125 @@ import sys
 VERILATOR_BIN = os.environ.get("VERILATOR_BIN", "E:/msys64/ucrt64/local/bin/verilator_bin.exe")
 VERILATOR_ROOT = os.environ.get("VERILATOR_ROOT", "E:/msys64/ucrt64/local/share/verilator")
 
-PORT_RE = re.compile(r"VL_(IN|OUT|INOUT)(\d*)\s*\(\s*&(\w+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)")
-PORT_DIR = {"IN": "input", "OUT": "output", "INOUT": "inout"}
-CLOCK_NAMES = ("clk", "clock", "clk_i", "i_clk", "clk_in")
+DIR_MAP = {"INPUT": "input", "OUTPUT": "output", "INOUT": "inout"}
 
 
-def verilate(src: pathlib.Path, top: str, workdir: pathlib.Path) -> pathlib.Path:
+def run_verilator(args, workdir: pathlib.Path) -> None:
     workdir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["VERILATOR_ROOT"] = VERILATOR_ROOT
     env.setdefault("LC_ALL", "C")
-    cmd = [VERILATOR_BIN, "--cc", "--Mdir", str(workdir), "--top-module", top, str(src)]
-    r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    r = subprocess.run([VERILATOR_BIN, *map(str, args)], env=env, capture_output=True, text=True)
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         raise SystemExit("verilator 失败")
-    header = workdir / f"V{top}.h"
-    if not header.exists():
-        raise SystemExit(f"没有生成 {header}（--top 是否和模块名一致？）")
-    return header
 
 
-def parse_ports(header: pathlib.Path):
-    text = header.read_text(encoding="utf-8", errors="replace")
+def verilate(src: pathlib.Path, top: str, workdir: pathlib.Path) -> pathlib.Path:
+    """生成模型源码，并额外导出一份 AST（端口/时序信息都从 AST 读）。"""
+    run_verilator(["--cc", "--Mdir", workdir, "--top-module", top, src], workdir)
+    if not (workdir / f"V{top}.h").exists():
+        raise SystemExit(f"没有生成 V{top}.h（--top 是否和模块名一致？）")
+
+    # --json-only-output 本身不产出 C++，所以要和上一步分开跑
+    ast = workdir / "ast.json"
+    run_verilator(["--cc", "--json-only-output", ast, "--Mdir", workdir / "ast",
+                   "--top-module", top, src], workdir)
+    return ast
+
+
+def const_int(node):
+    """CONST 节点 dump 出来的名字形如 "32'sh1"，取出数值。"""
+    if isinstance(node, list):
+        node = node[0] if node else None
+    if not isinstance(node, dict) or node.get("type") != "CONST":
+        return None
+    m = re.fullmatch(r"\s*\d*'[sS]?([hHdDbBoO])([0-9a-fA-F]+)\s*", node.get("name", ""))
+    if not m:
+        return None
+    return int(m.group(2), {"h": 16, "d": 10, "b": 2, "o": 8}[m.group(1).lower()])
+
+
+def type_width(types: dict, dtype_addr: str, port_name: str) -> int:
+    t = types.get(dtype_addr)
+    if t is None:
+        return 1
+    kind = t.get("type")
+
+    # packed 多维端口在 AST 里是嵌套的 PACKARRAYDTYPE，总位宽是各维长度之积
+    if kind == "PACKARRAYDTYPE":
+        elem = type_width(types, t.get("refDTypep"), port_name)
+        total = elem
+        for rng in as_list(t.get("rangep")):
+            lo, hi = const_int(rng.get("leftp")), const_int(rng.get("rightp"))
+            if lo is None or hi is None:
+                raise SystemExit(f"端口 {port_name} 的维度不是常量，暂不支持")
+            total *= abs(lo - hi) + 1
+        return total
+
+    # 存储器端口没有 range；当成 1 位会静默生成错误元件
+    if kind == "UNPACKARRAYDTYPE":
+        raise SystemExit(f"端口 {port_name} 是数组端口（unpacked array），"
+                         f"dcs 线网对应不上：请拆成多个标量端口")
+
+    rng = t.get("range")
+    if not rng:
+        if kind == "BASICDTYPE":
+            return 1
+        raise SystemExit(f"端口 {port_name} 的类型 {kind} 暂不支持")
+    m = re.fullmatch(r"\s*(-?\d+)\s*:\s*(-?\d+)\s*", str(rng))
+    if not m:
+        raise SystemExit(f"端口 {port_name} 的位宽不是常量区间（{rng}），参数化 range 暂不支持")
+    return abs(int(m.group(1)) - int(m.group(2))) + 1
+
+
+def as_list(v):
+    return v if isinstance(v, list) else []
+
+
+def parse_design(ast_path: pathlib.Path, top: str):
+    """从 Verilator AST 里取出顶层模块的端口和有沿触发的 always 块。"""
+    data = json.loads(ast_path.read_text(encoding="utf-8"))
+    mod = next((m for m in as_list(data.get("modulesp"))
+                if m.get("verilogName") == top or m.get("name") == top), None)
+    if mod is None:
+        raise SystemExit(f"AST 里找不到顶层模块 {top}")
+
+    types = {}
+    for misc in as_list(data.get("miscsp")):
+        for t in as_list(misc.get("typesp")):
+            if t.get("addr"):
+                types[t["addr"]] = t
+
     ports = []
-    for kind, _w, name, msb, lsb in PORT_RE.findall(text):
-        width = int(msb) - int(lsb) + 1
-        ports.append({"dir": PORT_DIR[kind], "name": name, "width": width})
+    for node in mod.get("stmtsp", []):
+        if node.get("type") != "VAR" or not node.get("isPrimaryIO"):
+            continue
+        width = type_width(types, node.get("dtypep", ""), node.get("verilogName", "?"))
+        ports.append({
+            "dir": DIR_MAP.get(node.get("direction", ""), "unknown"),
+            "name": node.get("verilogName") or node.get("name"),  # 引脚名用 Verilog 原名
+            "cpp": node.get("name"),                              # 模型成员名可能与原名不同
+            "width": width,
+        })
     if not ports:
-        raise SystemExit("没有解析到端口（>64 位的 wide 端口暂不支持）")
-    for p in ports:
-        if p["width"] > 64:
-            raise SystemExit(f"端口 {p['name']} 位宽 {p['width']} 超过 64，暂不支持")
-    return ports
+        raise SystemExit("顶层模块没有端口")
+
+    # 沿触发的 always 才算时序。Verilator 会自己保存上一拍时钟做边沿检测，
+    # 这里只用来决定元件类型，不影响每拍 eval 的驱动方式
+    clocks = []
+    for node in mod.get("stmtsp", []):
+        if node.get("type") != "ALWAYS":
+            continue
+        # 未展开的引用在 JSON 里是 "UNLINKED" 字符串，不是列表
+        for sentree in as_list(node.get("sentreep")):
+            for item in as_list(sentree.get("sensesp")):
+                if item.get("edgeType") not in ("POS", "NEG"):
+                    continue
+                for v in as_list(item.get("sensp")):
+                    if v.get("type") == "VARREF" and v.get("name") not in clocks:
+                        clocks.append(v.get("name"))
+    return ports, clocks
 
 
 def ctype(width: int) -> str:
@@ -204,9 +291,11 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
         # 时序输出跨拍可见，必须标成 sequential，否则环路检测会把它们当组合路径
         pins += [f'    addOutput("{p["name"]}", {p["width"]}, false, true);' for p in outs]
 
-    write_in = [f"    m->{p['name']} = ({ctype(p['width'])}) in[{i}];"
+    # 引脚名用 Verilog 原名；访问模型成员必须用 Verilator 生成的 C++ 名，
+    # 端口名撞上 C++ 关键字时两者会不一样
+    write_in = [f"    m->{p['cpp']} = ({ctype(p['width'])}) in[{i}];"
                 for i, p in enumerate(ins)]
-    read_out = [f"    out[{i}] = ({ctype(p['width'])}) m->{p['name']};"
+    read_out = [f"    out[{i}] = ({ctype(p['width'])}) m->{p['cpp']};"
                 for i, p in enumerate(outs)]
 
     load = []
@@ -271,12 +360,20 @@ def main():
     out = pathlib.Path(args.outdir)
     work = pathlib.Path(args.workdir) if args.workdir else pathlib.Path("build_verilog_gen") / top
 
-    header = verilate(src, top, work)
-    ports = parse_ports(header)
-    if any(p["dir"] == "inout" for p in ports):
-        raise SystemExit("inout 端口暂不支持")
-    ins = [p for p in ports if p["dir"] == "input"]
-    comb = not any(p["name"].lower() in CLOCK_NAMES for p in ins)
+    ast = verilate(src, top, work)
+    ports, clocks = parse_design(ast, top)
+
+    for p in ports:
+        if p["dir"] == "inout":
+            raise SystemExit(
+                f"inout 端口 {p['name']} 无法自动映射：dcs 的线网是单向的，"
+                f"需要手工拆成 out/oe/in 三个引脚后再接 tsbuf")
+        if p["width"] > 64:
+            raise SystemExit(
+                f"端口 {p['name']} 位宽 {p['width']} 超过 dcs 线网上限 64 位，"
+                f"需要手工拆成多个 ≤64 位的端口")
+
+    comb = not clocks
     if not any(p["dir"] == "output" for p in ports):
         raise SystemExit("模块没有输出")
 
@@ -298,7 +395,10 @@ def main():
     print(f"生成 {cpath}")
     print(f"复制 {vdir / src.name}")
     print(f"端口: {port_desc}")
-    print(f"类型: {'组合' if comb else '时序'}元件")
+    if comb:
+        print("类型: 组合元件（AST 里没有沿触发的 always）")
+    else:
+        print(f"类型: 时序元件（时钟: {', '.join(clocks)}）")
 
 
 if __name__ == "__main__":

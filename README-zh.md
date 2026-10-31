@@ -81,8 +81,9 @@ cmake -B build ...            # 新增文件后要重新配置，GLOB 才扫得�
 cmake --build build --parallel 6
 ```
 
-模块的端口会变成 dcs 引脚；带 `clk`/`clock` 输入的模块作为时序元件，
-其余作为组合元件。端口位宽上限 64 位，`inout` 暂不支持。
+模块的端口会变成 dcs 引脚，端口方向、位宽和"有没有沿触发的 always 块"都从
+Verilator 导出的 AST 里读，所以时钟叫什么名字都行。端口位宽上限 64 位；
+`inout` 和 unpacked 数组端口无法映射到单向线网，生成时会报错并说明该怎么拆。
 生成的元件每拍调一次 Verilator 的 `eval()`，模型的寄存器状态由 Verilator 自己维护。
 
 ### CLI 用法
