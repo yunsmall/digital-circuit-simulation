@@ -224,6 +224,24 @@ TEST(VirtioTest, FeatureSelectors) {
     EXPECT_EQ(f.read(0x010), 1u) << "sel1 必须声明 VIRTIO_F_VERSION_1";
 }
 
+// 非对齐 buffer：主端口必须按字内剩余空间拆事务，SEL 不能跨出 4 位
+TEST(VirtioTest, UnalignedDataBuffer) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    for (int i = 0; i < 512; i++)
+        f.image[i] = (uint8_t) (0x40 + i);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x241, status = 0x300;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0 /*IN*/, 0, true);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 4000; i++) f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1);
+    EXPECT_EQ(f.mem()[status], 0) << "状态字节应为 OK";
+    for (int i = 0; i < 16; i++)
+        EXPECT_EQ(f.mem()[data + i], (uint8_t) (0x40 + i)) << "第 " << i << " 字节不匹配";
+}
+
 TEST(VirtioTest, ReadFromBackendImage) {
     VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
     for (int i = 0; i < 512; i++)

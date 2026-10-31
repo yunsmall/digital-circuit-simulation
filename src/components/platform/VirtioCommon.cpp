@@ -128,8 +128,12 @@ std::string genMaster(const DeviceSpec &s) {
             "            uint32_t _step = _vio_mp_len_{0} - _vio_mp_beat_{0};\n"
             "            if (_step > 4) _step = 4;\n"
             "            const uint32_t _ma = _vio_mp_addr_{0} + _vio_mp_beat_{0};\n"
+            // Wishbone 的 SEL 只有 4 位、单拍不能跨字：地址非对齐时本拍长度截到字尾
+            "            const uint32_t _room = 4u - (_ma & 3u);\n"
+            "            if (_step > _room) _step = _room;\n"
             "            const uint32_t _shift = (_ma & 3) * 8;\n"
-            "            _m_adr = _ma; _m_stb = 1; _m_cyc = 1; _m_we = _vio_mp_write_{0};\n"
+            // 32 位字节粒度总线的 ADR 是字地址，字节由 SEL 选
+            "            _m_adr = _ma & ~3u; _m_stb = 1; _m_cyc = 1; _m_we = _vio_mp_write_{0};\n"
             "            _m_sel = (uint8_t)(((1u << _step) - 1u) << (_ma & 3));\n"
             "            if (_vio_mp_write_{0}) {{\n"
             "                uint32_t _v = 0; dcs_memcpy(&_v, _vio_mp_buf_{0} + _vio_mp_beat_{0}, 4);\n"
