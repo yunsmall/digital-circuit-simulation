@@ -6,10 +6,10 @@
 //       默认跑 benchmarks/out 下全部 ELF，每个 4000 万拍，重复 3 次取最小值
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
-#include <dcs/components/Gates.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/Sequential.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/sequential/Sequential.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/util/ElfLoader.h>
 
 #include <algorithm>

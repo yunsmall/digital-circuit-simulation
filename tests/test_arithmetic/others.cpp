@@ -1,6 +1,6 @@
 // 比较器、编码器、减法器、乘法器、译码器测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Arithmetic.h>
+#include <dcs/components/combinational/Arithmetic.h>
 #include <format>
 #include <gtest/gtest.h>
 

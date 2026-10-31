@@ -1,7 +1,7 @@
 // 环路检测测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Gates.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 TEST(CircuitCheckTest, CombinationalLoopDetected) {
@@ -34,5 +34,5 @@ TEST(CircuitCheckTest, MultipleDriversError) {
     c.connect(g1, "in", in);
     c.connect(g2, "in", in);
     c.connect(g1, "out", w);
-    EXPECT_THROW(c.connect(g2, "out", w), std::runtime_error);
+    EXPECT_EQ(c.connect(g2, "out", w).code, dsc::ErrorCode::MULTIPLE_DRIVERS);
 }

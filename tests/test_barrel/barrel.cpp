@@ -1,7 +1,7 @@
 // 桶形移位器测试（带方向/算术控制输入引脚）
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/BarrelShifter.h>
+#include <dcs/components/combinational/BarrelShifter.h>
 #include <gtest/gtest.h>
 
 static uint64_t readWireUint(dsc::Circuit &c, int net_id, int bit_w) {

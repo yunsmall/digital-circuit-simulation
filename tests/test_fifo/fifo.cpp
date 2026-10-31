@@ -1,6 +1,6 @@
 // FIFO — 同步 FIFO 测试
 #include <dcs/Circuit.h>
-#include <dcs/components/FIFO.h>
+#include <dcs/components/memory/FIFO.h>
 #include <gtest/gtest.h>
 
 static void setWireVal(dsc::Circuit &c, int id, uint64_t val, int bw) {

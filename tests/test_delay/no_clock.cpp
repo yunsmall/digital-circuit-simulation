@@ -1,6 +1,6 @@
 // 无时钟模式延时线测试
 #include <dcs/Circuit.h>
-#include <dcs/components/DelayLine.h>
+#include <dcs/components/sequential/DelayLine.h>
 #include <gtest/gtest.h>
 
 TEST(DelayLineTest, NoClockMode) {

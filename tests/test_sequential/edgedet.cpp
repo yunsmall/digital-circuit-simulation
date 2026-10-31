@@ -1,7 +1,7 @@
 // 边沿检测测试（时钟采样型）
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 static void doRisingEdge(dsc::Circuit &c, int clk_id) {

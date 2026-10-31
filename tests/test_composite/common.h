@@ -1,7 +1,7 @@
 #pragma once
 #include <dcs/CircuitLibrary.h>
-#include <dcs/components/Composite.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/platform/Composite.h>
+#include <dcs/components/combinational/Gates.h>
 
 // 注册半加器定义
 inline void regHalfAdder() {

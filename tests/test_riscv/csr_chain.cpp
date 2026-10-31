@@ -1,8 +1,8 @@
 // CSR 写路径不能 fall through：每个 case 必须自己 break。
 // 曾经把 break; 写进行尾注释，结果写 mstatus 会顺带覆盖 medeleg。
 #include <dcs/Circuit.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <gtest/gtest.h>
 
 #include "platform.h"

@@ -1,6 +1,6 @@
 // Memory RAM 测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Memory.h>
+#include <dcs/components/memory/Memory.h>
 #include <gtest/gtest.h>
 
 TEST(MiscTest, MemoryReadWrite) {

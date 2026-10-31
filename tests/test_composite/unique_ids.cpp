@@ -1,8 +1,8 @@
 // 嵌套复合元件 ID 唯一性测试
 #include <dcs/Circuit.h>
 #include <dcs/CircuitLibrary.h>
-#include <dcs/components/Composite.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/platform/Composite.h>
+#include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 #include <set>
 

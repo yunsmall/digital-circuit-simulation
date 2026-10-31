@@ -1,6 +1,6 @@
 // DLL 元件重编译测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Dll.h>
+#include <dcs/components/platform/Dll.h>
 #include <gtest/gtest.h>
 #include "common.h"
 

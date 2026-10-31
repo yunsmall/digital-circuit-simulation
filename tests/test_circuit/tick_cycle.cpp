@@ -2,8 +2,8 @@
 // 省掉外部两次跨模块调用。语义必须与"手工 setWire + tick 两次"完全一致，
 // 否则所有时序电路的行为都会静默改变。
 #include <dcs/Circuit.h>
-#include <dcs/components/Gates.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 #include <memory>

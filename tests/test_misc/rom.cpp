@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/ROM.h>
+#include <dcs/components/memory/ROM.h>
 #include <fstream>
 #include <gtest/gtest.h>
 

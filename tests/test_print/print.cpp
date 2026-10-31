@@ -1,7 +1,7 @@
 // Print 打印元件测试
 // 验证 Print 元件可编译、可仿真、不崩溃
 #include <dcs/Circuit.h>
-#include <dcs/components/Print.h>
+#include <dcs/components/io/Print.h>
 #include <gtest/gtest.h>
 
 TEST(PrintTest, Smoke) {

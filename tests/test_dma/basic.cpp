@@ -1,9 +1,10 @@
 // DMA：配置寄存器、按字搬运、完成标志
 #include <gtest/gtest.h>
+#include <cstring>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/DMA.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/DMA.h>
+#include <dcs/components/memory/WishboneMemory.h>
 
 using namespace dsc;
 
@@ -134,4 +135,77 @@ TEST(DmaTest, CopiesWords) {
     EXPECT_EQ(f.peek(0x200), 0x11223344u) << "第一个字应被搬过去";
     EXPECT_EQ(f.peek(0x204), 0x55667788u) << "第二个字应被搬过去";
     EXPECT_EQ(f.read(0x10) & 2u, 2u) << "应置完成标志";
+}
+
+TEST(DmaTest, ZeroLengthDoesNotStart) {
+    Fixture f;
+    f.compile();
+    f.write(0x00, 0x100);
+    f.write(0x04, 0x200);
+    f.write(0x08, 0);   // 长度 0
+    f.write(0x0C, 1);   // 试图启动
+    for (int i = 0; i < 10; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x10) & 1u, 0u) << "长度为 0 不能进入忙碌状态";
+    EXPECT_EQ(f.read(0x10) & 2u, 0u) << "也不应报告完成";
+}
+
+TEST(DmaTest, LengthRoundedDownToWordMultiple) {
+    Fixture f;
+    f.compile();
+    f.put(0x100, 0xAAAAAAAA);
+    f.put(0x104, 0xBBBBBBBB);
+    f.put(0x200, 0);
+    f.put(0x204, 0);
+    f.write(0x00, 0x100);
+    f.write(0x04, 0x200);
+    f.write(0x08, 6); // 6 字节向下取整成 4，只搬一个字
+    f.write(0x0C, 1);
+    for (int i = 0; i < 80; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x08), 4u) << "长度寄存器应按字取整";
+    EXPECT_EQ(f.peek(0x200), 0xAAAAAAAAu);
+    EXPECT_EQ(f.peek(0x204), 0u) << "不足一个字的部分不能搬";
+}
+
+TEST(DmaTest, BusyIgnoresRegisterWrites) {
+    Fixture f;
+    f.compile();
+    for (int i = 0; i < 8; ++i)
+        f.put(0x100 + i * 4, 0x1000u + (uint32_t) i);
+    for (int i = 0; i < 8; ++i)
+        f.put(0x200 + i * 4, 0);
+    f.write(0x00, 0x100);
+    f.write(0x04, 0x200);
+    f.write(0x08, 32); // 8 个字，够长，贯穿下面几次寄存器访问
+    f.write(0x0C, 1);
+    f.cycle(); // 已经进入搬运状态
+    EXPECT_EQ(f.read(0x10) & 1u, 1u) << "写之前必须还在搬运中，否则这个用例测不到保护逻辑";
+    f.write(0x00, 0x9999); // 忙时改源地址
+    EXPECT_NE(f.read(0x00), 0x9999u) << "搬运期间源地址不能被改掉";
+    for (int i = 0; i < 300; ++i)
+        f.cycle();
+    EXPECT_EQ(f.peek(0x200), 0x1000u);
+}
+
+TEST(DmaTest, StatusBusyThenDone) {
+    Fixture f;
+    f.compile();
+    // 用足够长的搬运，否则 read() 内部那几拍就搬完了，看不到忙碌态
+    for (int i = 0; i < 8; ++i)
+        f.put(0x100 + i * 4, 0x1000u + (uint32_t) i);
+    for (int i = 0; i < 8; ++i)
+        f.put(0x200 + i * 4, 0);
+    f.write(0x00, 0x100);
+    f.write(0x04, 0x200);
+    f.write(0x08, 32); // 8 个字
+    f.write(0x0C, 1);
+    for (int i = 0; i < 2; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x10) & 1u, 1u) << "搬运中应置忙碌位";
+    for (int i = 0; i < 200; ++i)
+        f.cycle();
+    uint32_t st = f.read(0x10);
+    EXPECT_EQ(st & 1u, 0u) << "结束后应清忙碌位";
+    EXPECT_EQ(st & 2u, 2u) << "结束后应置完成位";
 }

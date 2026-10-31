@@ -1,10 +1,10 @@
 #pragma once
 #include <dcs/Circuit.h>
-#include <dcs/components/Arithmetic.h>
-#include <dcs/components/DelayLine.h>
-#include <dcs/components/Gates.h>
-#include <dcs/components/Misc.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/combinational/Arithmetic.h>
+#include <dcs/components/sequential/DelayLine.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/combinational/Misc.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 // 测试各关键位宽的 AND 门（所有多输入门共用同一模板，以此覆盖）

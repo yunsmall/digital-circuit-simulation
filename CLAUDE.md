@@ -309,3 +309,10 @@ std::string json = c.toJson();
 auto c2 = Circuit::fromJson(json);
 EXPECT_EQ(c2->components()[0]->typeName(), original_type_name);
 ```
+
+## 提交
+
+有较大的更新（新增元件、目录或 API 结构调整、行为变更、大规模重构、文档同步）时，
+自行按改动内容提交，不必每次询问。提交信息不要加 `Co-Authored-By` 之类的协助者署名；
+只有明确要求时才 push。小修小补可以攒着和下一次大更新一起提交。
+

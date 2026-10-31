@@ -8,6 +8,7 @@ namespace dsc {
 enum class ErrorCode {
     OK = 0,
     PIN_NOT_FOUND,
+    INVALID_NET, // 引脚挂在了一个不属于本电路的线网上（setNet 直连造成）
     MULTIPLE_DRIVERS,
     COMBINATIONAL_LOOP,
     PREPARE_FAILED, // DLL 加载等编译前准备失败

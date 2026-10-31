@@ -2,10 +2,10 @@
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
-#include <dcs/components/WishboneInterconnect.h>
-#include <dcs/components/CLINT.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
+#include <dcs/components/platform/WishboneInterconnect.h>
+#include <dcs/components/platform/CLINT.h>
 #include <cstring>
 
 using namespace dsc;
@@ -228,7 +228,9 @@ TEST(ClintTest, TimerInterrupt) {
     // 用 lui 设置地址 0x4000，然后 sw 写 mtimecmp
     w32(0x18, 0x000042B7); // lui x5, 0x4              (x5=0x4000)
     w32(0x1C, 0x0002A023); // sw x0, 0(x5)            (mtimecmp[31:0]=0)
-    w32(0x20, 0x0000006F); // jal x0,0 (spin)
+    // 高半也要显式写 0：复位值现在是"永不触发"(全 1)，只清低半仍不会到期
+    w32(0x20, 0x0002A223); // sw x0, 4(x5)            (mtimecmp[63:32]=0)
+    w32(0x24, 0x0000006F); // jal x0,0 (spin)
     // 0x40: 中断处理程序
     w32(0x40, 0x06300193); // addi x3,x0,99
     w32(0x44, 0x30200073); // mret
@@ -251,4 +253,52 @@ TEST(ClintTest, TimerInterrupt) {
     // 写 mtimecmp=0 后 mtime 已 >= mtimecmp，MTI 触发中断
     // 处理程序设 x3=99
     EXPECT_EQ(cpu->reg(3), 99);
+}
+
+// ============================================================
+// 复位后 mti 必须保持低电平
+// ============================================================
+// mtimecmp 若复位成 0，mtime >= mtimecmp 从第一拍就恒真，mti 永远挂着。
+// 真实平台有 M 态固件（OpenSBI）初始化它，本核没有；留 0 会让内核一打开
+// 定时器中断就陷进中断风暴，启动日志停住不动
+TEST(ClintTest, MtiLowAfterReset) {
+    auto circuit = std::make_unique<Circuit>();
+    auto cp = std::make_unique<CLINT>("clint0");
+    auto *clint = cp.get();
+    circuit->addComponent(std::move(cp));
+
+    auto clk = circuit->createNet("clk");
+    auto mti = circuit->createNet("mti");
+    auto msi = circuit->createNet("msi");
+    auto adr = circuit->createNet("adr");
+    auto wdat = circuit->createNet("wdat");
+    auto we = circuit->createNet("we");
+    auto sel = circuit->createNet("sel");
+    auto stb = circuit->createNet("stb");
+    auto cyc = circuit->createNet("cyc");
+    auto dout = circuit->createNet("dout");
+    auto ack = circuit->createNet("ack");
+    circuit->connect(clint, "clk", clk);
+    circuit->connect(clint, "wb_adr_i", adr);
+    circuit->connect(clint, "wb_dat_i", wdat);
+    circuit->connect(clint, "wb_we_i", we);
+    circuit->connect(clint, "wb_sel_i", sel);
+    circuit->connect(clint, "wb_stb_i", stb);
+    circuit->connect(clint, "wb_cyc_i", cyc);
+    circuit->connect(clint, "wb_dat_o", dout);
+    circuit->connect(clint, "wb_ack_o", ack);
+    circuit->connect(clint, "mti", mti);
+    circuit->connect(clint, "msi", msi);
+
+    auto err = circuit->compile();
+    ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
+    circuit->init();
+    for (int i = 0; i < 1000; i++) {
+        circuit->setWire(clk->id(), {0});
+        circuit->tick();
+        circuit->setWire(clk->id(), {1});
+        circuit->tick();
+    }
+    EXPECT_EQ(circuit->getWire(mti->id())[0], 0)
+        << "mtimecmp 复位值必须是永不触发，为 0 会让 mti 从第一拍起恒高";
 }

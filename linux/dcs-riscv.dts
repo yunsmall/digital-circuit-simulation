@@ -1,0 +1,86 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    compatible = "dcs,riscv-sim";
+    model = "DCS RISC-V Simulator";
+
+    chosen {
+        /* earlycon 是独立于 8250 驱动的一套实现：用 "mmio" 时 access 宽度是字节、
+         * regshift=0，会去读 base+5；UART 元件是 4 字节一组，LSR 在 base+0x14。
+         * 必须用 "mmio32" 才会把 regshift 设成 2、按 4 字节步进访问 */
+        bootargs = "console=ttyS0,115200 earlycon=uart8250,mmio32,0x10000000 keep_bootcon nosoftlockup nowatchdog workqueue.watchdog_thresh=0";
+        /* initramfs 由 boot.ld 放在 0x82000000，大小变了这里要同步改 */
+        linux,initrd-start = <0x0 0x82000000>;
+        linux,initrd-end = <0x0 0x820be89c>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <10000000>;
+
+        cpu@0 {
+            device_type = "cpu";
+            compatible = "riscv";
+            reg = <0>;
+            status = "okay";
+            riscv,isa = "rv64imafdc";
+            mmu-type = "riscv,sv39";
+
+            cpu0_intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+    };
+
+    /* 内核的 timer-riscv 驱动靠这个节点注册 S 态定时器中断（5 = S timer）。
+     * 没有它 SBI TIME 虽然能探测到，STIP 挂起后却没有处理程序，直接中断风暴 */
+    timer {
+        compatible = "riscv,timer";
+        interrupts-extended = <&cpu0_intc 5>;
+    };
+
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x0 0x80000000 0x0 0x10000000>; /* 256 MB */
+    };
+
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        compatible = "simple-bus";
+        ranges;
+
+        clint@2000000 {
+            compatible = "riscv,clint0";
+            reg = <0x0 0x2000000 0x0 0x10000>;
+            interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>;
+        };
+
+        plic: interrupt-controller@c000000 {
+            compatible = "riscv,plic0";
+            #interrupt-cells = <1>;
+            interrupt-controller;
+            reg = <0x0 0xc000000 0x0 0x4000000>;
+            /* 每个 CPU 的两个 context：M 态外部中断 11、S 态外部中断 9。
+             * 少了这行 riscv-plic 驱动会报 "no PLIC context available" 并放弃探测 */
+            interrupts-extended = <&cpu0_intc 11 &cpu0_intc 9>;
+            riscv,ndev = <8>;
+        };
+
+        uart@10000000 {
+            compatible = "ns16550a";
+            reg = <0x0 0x10000000 0x0 0x100>;
+            clock-frequency = <3686400>;
+            current-speed = <115200>;
+            reg-shift = <2>; /* UART 元件按 stride 4 映射寄存器，reg-shift 必须是 2 */
+            reg-io-width = <4>;
+            interrupts = <1>;
+            interrupt-parent = <&plic>;
+        };
+    };
+};

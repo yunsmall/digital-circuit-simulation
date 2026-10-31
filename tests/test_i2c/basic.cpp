@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/I2C.h>
+#include <dcs/components/io/I2C.h>
 
 using namespace dsc;
 
@@ -128,4 +128,43 @@ TEST(I2cTest, NackReportedWhenSlaveSilent) {
     EXPECT_NE(f.read(0x08) & 4u, 0u) << "从机不应答应置 NACK";
     EXPECT_NE(f.read(0x08) & 2u, 0u) << "事务应结束";
     EXPECT_EQ(f.read(0x08) & 1u, 0u) << "结束后应回到空闲";
+}
+
+TEST(I2cTest, SlaveAckCompletesWithoutNack) {
+    Fixture f(4);
+    f.compile();
+    f.write(0x10, 0x50);
+    f.write(0x00, 0xA5);
+    f.circuit->setWire(f.sda_in->id(), {(uint8_t) 0}); // 从机全程拉低 = 每个 ACK 位都应答
+    f.write(0x0C, 1);
+    for (int i = 0; i < 200; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x08) & 4u, 0u) << "从机 ACK 时不应报 NACK";
+    EXPECT_NE(f.read(0x08) & 2u, 0u) << "事务应正常结束";
+    EXPECT_EQ(f.read(0x08) & 1u, 0u) << "结束后应回到空闲";
+}
+
+TEST(I2cTest, RestartAfterDone) {
+    Fixture f(4);
+    f.compile();
+    f.write(0x10, 0x50);
+    f.write(0x00, 0xA5);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 200; ++i)
+        f.cycle();
+    ASSERT_NE(f.read(0x08) & 2u, 0u) << "第一次事务应结束";
+    f.write(0x00, 0x5A);
+    f.write(0x0C, 1); // 再次启动
+    EXPECT_EQ(f.read(0x08) & 1u, 1u) << "完成后必须能再次启动，否则控制器只能用一次";
+    EXPECT_EQ(f.read(0x08) & 2u, 0u) << "重新启动应清掉完成标志";
+}
+
+TEST(I2cTest, ClkdivLockedWhileBusy) {
+    Fixture f(4);
+    f.compile();
+    f.write(0x10, 0x50);
+    f.write(0x00, 0xA5);
+    f.write(0x0C, 1);
+    f.write(0x14, 8); // 事务进行中改分频
+    EXPECT_EQ(f.read(0x14), 4u) << "事务进行中不能改分频，否则位时序会被打乱";
 }

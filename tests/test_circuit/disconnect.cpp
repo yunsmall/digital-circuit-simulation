@@ -1,7 +1,7 @@
 // disconnect / removeNet 测试
 #include <dcs/Circuit.h>
-#include <dcs/components/BarrelShifter.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/combinational/BarrelShifter.h>
+#include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 
 // getWire 固定返回 16 字节，辅助比较

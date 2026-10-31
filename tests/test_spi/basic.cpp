@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/SPI.h>
+#include <dcs/components/io/SPI.h>
 
 using namespace dsc;
 
@@ -132,4 +132,48 @@ TEST(SpiTest, LoopbackReceivesShiftedByte) {
         f.cycle();
     EXPECT_NE(f.read(0x08) & 2u, 0u) << "应完成一次传输";
     EXPECT_EQ(f.read(0x04), 0x3Cu) << "回环收到的字节";
+}
+
+TEST(SpiTest, WriteDuringTransferIgnored) {
+    Fixture f(16);
+    f.compile();
+    f.circuit->disconnect(f.spi, "miso");
+    f.circuit->connect(f.spi, "miso", f.mosi);
+    f.compile();
+    f.write(0x00, 0x3C);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 40; ++i)
+        f.cycle();
+    f.write(0x00, 0xFF); // 传输中改写 TXDATA
+    for (int i = 0; i < 260; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x04), 0x3Cu) << "传输中改写 TXDATA 不应破坏当前字节";
+}
+
+TEST(SpiTest, RestartAfterDone) {
+    Fixture f(16);
+    f.compile();
+    f.circuit->disconnect(f.spi, "miso");
+    f.circuit->connect(f.spi, "miso", f.mosi);
+    f.compile();
+    f.write(0x00, 0x11);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 260; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x04), 0x11u) << "第一次传输";
+    // 读 RXDATA 会清 done，之后必须还能再启动一次
+    f.write(0x00, 0x22);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 260; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x04), 0x22u) << "完成后应能再次启动";
+}
+
+TEST(SpiTest, ClkdivWritableWhenIdle) {
+    Fixture f(16);
+    f.compile();
+    f.write(0x10, 4);
+    EXPECT_EQ(f.read(0x10), 4u);
+    f.write(0x10, 0); // 0 分频无意义，忽略
+    EXPECT_EQ(f.read(0x10), 4u) << "0 分频应被忽略";
 }

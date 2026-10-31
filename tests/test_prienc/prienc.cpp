@@ -1,6 +1,6 @@
 // PriorityEncoder — 优先编码器测试
 #include <dcs/Circuit.h>
-#include <dcs/components/PriorityEncoder.h>
+#include <dcs/components/combinational/PriorityEncoder.h>
 #include <format>
 #include <gtest/gtest.h>
 

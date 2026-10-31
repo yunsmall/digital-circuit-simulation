@@ -1,0 +1,128 @@
+# 在 dcs 上启动 Linux
+
+这个目录让 dcs 的 RISC-V CPU 模型真正跑起一个 Linux 6.12 用户空间。
+
+整个内核镜像、设备树、initramfs 会被打包成**一个 ELF**（`images/boot.elf`），
+dcs 用 `--elf` 直接加载，不需要外部 bootloader：
+
+```
+0x80000000  启动 stub（boot.S：设置 a0/a1、委派异常、mret 进 S 态）
+0x80100000  设备树 DTB
+0x80200000  内核 Image（按 0x80200000 链接）
+0x82000000  initramfs
+```
+
+## 依赖
+
+- Linux 或 WSL2（Ubuntu 24.04 验证过）
+- Clang（含 `ld.lld`、`llvm-objcopy`）——脚本会自动探测，优先用无版本后缀的通用名
+- `dtc`（设备树编译）、`cpio`、`gzip`、`gcc`
+- 内核源码 6.12（脚本会下载或复用）
+
+装的命令（Ubuntu）：
+
+```bash
+sudo apt-get install -y clang lld llvm device-tree-compiler cpio gzip
+# 若发行版只有带版本后缀的包（如 clang-22/clang-23），装了即可，脚本会自己找到
+```
+
+## 快速开始
+
+```bash
+# 1. 下载并编译内核（约 20~30 分钟，只需一次）
+export LINUX_SRC=~/code/linux/riscv64
+mkdir -p "$LINUX_SRC" && cd "$LINUX_SRC"
+curl -LO https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz
+tar xf linux-6.12.tar.xz
+cd linux-6.12
+make ARCH=riscv defconfig
+make ARCH=riscv -j6 Image          # 只需要 Image，不用 modules
+
+# 2. 做一个最小的 initramfs（只含 /init，不依赖任何库）
+cd "$LINUX_SRC"
+clang --target=riscv64 -march=rv64gc -mabi=lp64d -fuse-ld=lld \
+    -static -nostdlib -O2 \
+    <本目录>/dcs-init.S -o dcs-init
+gcc -O2 -o gen_init_cpio linux-6.12/usr/gen_init_cpio.c
+printf 'dir /dev 755 0 0\nnod /dev/console 644 0 0 c 5 1\nnod /dev/null 666 0 0 c 1 3\nfile /init %s/dcs-init 755 0 0\n' "$LINUX_SRC" > init.spec
+./gen_init_cpio init.spec | gzip -9 > initrd.cpio.gz
+
+# 3. 打包成一个 ELF
+bash <本目录>/build-boot.sh initrd.cpio.gz
+
+# 4. 跑
+cd <项目根>
+./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+```
+
+`dcs-init.S` 会打开 `/dev/console` 写一句横幅再 `exit`，看到
+
+```
+[dcs] Hello from Linux userspace!
+```
+
+就说明用户态、串口、tty、系统调用全部打通了。
+
+## 带 busybox 的可交互 shell
+
+`build-busybox.sh` 用 clang 交叉编译一个静态 busybox 并做成 initramfs
+（不需要 GCC 交叉工具链，也不需要 sudo）：
+
+```bash
+bash <本目录>/build-busybox.sh        # 产物 /tmp/initrd-busybox.cpio.gz
+bash <本目录>/build-boot.sh /tmp/initrd-busybox.cpio.gz
+./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+```
+
+进到 `~ #` 提示符就能敲命令了。
+
+### 一次跑一批命令（不用守着交互）
+
+改硬件模型后每次都要重启内核验证，逐条敲命令太慢。`--feed` 可以在启动完成后
+自动把一段脚本喂给串口：
+
+```bash
+cat > /tmp/cmds.txt <<'EOF'
+ls /
+cat /proc/tty/drivers
+uname -a
+EOF
+./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf \
+    -t 4000000000 --feed /tmp/cmds.txt --feed-after 3500000000
+```
+
+`--feed-after` 是到第几拍开始喂。要等内核把串口驱动注册好（约 35 亿拍）再发，
+早了字节会丢在硬件 FIFO 里。
+
+## 文件说明
+
+| 文件 | 作用 |
+|------|------|
+| `boot.S` | 启动 stub：a0=hartid、a1=DTB 地址、委派异常/中断、mret 落入 S 态 |
+| `boot.ld` | 四段分散布局的链接脚本 |
+| `dcs-riscv.dts` | 设备树：内存、CLINT、PLIC、16550 UART |
+| `dcs-init.S` | 最小 init（`open("/dev/console")` + `write` + `exit`） |
+| `dcs-init.c` | 同上，用内核自带 nolibc 的 C 版本 |
+| `build-boot.sh` | 把 Image/DTB/initramfs 打包成单个 ELF |
+| `build-busybox.sh` | 交叉编译 musl 静态 busybox 并打 initramfs |
+
+## 几个容易踩的坑
+
+- **`reg-shift = <2>`**：UART 元件按 4 字节步进映射寄存器，设备树必须写 `reg-shift=2`，
+  否则内核按字节偏移访问，读到的 LSR/IIR 全是错位数据。
+- **PLIC 的 enable 是 32 位位图寄存器**：`0x2000 + context*0x80 + word*4`，
+  位 `N%32` 表示源 N。写成"每个源一个寄存器"会导致内核写的使能全部落空，
+  表现为外部中断永远送不到内核、tty 的 TX 卡在缓冲区里。
+- **PLIC 要接 CPU 的 `seip`（S 态外部中断）**，不是 `irq`（M 态 MEI）——内核在 S 态等的是 SEI。
+- **CLINT 的 mtimecmp 复位值**：没有 M 态固件初始化时留 0 会让 `mtime >= mtimecmp`
+  从第一拍就恒真，内核一开定时器中断就是中断风暴。本项目的 CLINT 复位成 `~0`。
+- **`keep_bootcon`**：bootargs 里带它时 earlycon 和正式 console 会各打印一遍，
+  看到每行重复两遍是正常的；不需要时去掉即可。
+- **initramfs 里要有 `/dev/console`**：否则内核打不开初始控制台，
+  init 拿到的 fd 1 是 `/dev/null`，`write` 返回成功但什么也看不到。
+
+## 已知限制
+
+- 单 hart、单 context（内核只用 S 态 context 1）。
+- UART 是单字节收发寄存器，不实现 FIFO；因此 IIR 不报告 FIFO 使能位。
+- 没有 M 态固件（OpenSBI 的角色由 `boot.S` + CPU 内建的 SBI 调用处理）。

@@ -1,0 +1,8 @@
+// 由 CMake 从 shim/*.h 生成：把 JIT 需要的头文件内容直接编进可执行文件，
+// 运行时不再需要 include 目录（TCC 的 add_include_path、路径探测都可以省掉）
+#pragma once
+namespace dsc {
+inline constexpr const char *kShimSource = R"DCS_SHIM(
+@DCS_SHIM_SOURCE@
+)DCS_SHIM";
+} // namespace dsc

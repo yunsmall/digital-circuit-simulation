@@ -1,7 +1,7 @@
 // 归约门测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/Reduction.h>
+#include <dcs/components/combinational/Reduction.h>
 #include <gtest/gtest.h>
 
 TEST(ReductionAND, AllOnes) {

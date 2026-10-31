@@ -1,6 +1,6 @@
 // SignExt — 符号扩展测试
 #include <dcs/Circuit.h>
-#include <dcs/components/SignExt.h>
+#include <dcs/components/combinational/SignExt.h>
 #include <gtest/gtest.h>
 
 // 辅助：设置线网值（指定宽度）

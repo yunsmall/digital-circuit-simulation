@@ -1,8 +1,8 @@
 // RISC-V CPU 特权级测试: ecall, mret, sret, 异常委托
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <cstring>
 #include "platform.h"
 

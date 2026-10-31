@@ -1,6 +1,6 @@
 // Verilator 集成测试：adder8.v → DLL → DllComponent
 #include <dcs/Circuit.h>
-#include <dcs/components/Dll.h>
+#include <dcs/components/platform/Dll.h>
 #include <gtest/gtest.h>
 
 static const char *kDllPath = "adder8_dll.dll";

@@ -1,7 +1,7 @@
 // JSON 序列化：基本门电路
 #include <gtest/gtest.h>
 #include "dcs/Circuit.h"
-#include "dcs/components/Gates.h"
+#include "dcs/components/combinational/Gates.h"
 using namespace dsc;
 
 TEST(JsonRoundTrip, BasicGates) {

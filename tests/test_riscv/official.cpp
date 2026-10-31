@@ -5,8 +5,8 @@
 
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/util/ElfLoader.h>
 
 #include <algorithm>

@@ -1,7 +1,7 @@
 // 延时线振荡器测试
 #include <dcs/Circuit.h>
-#include <dcs/components/DelayLine.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/sequential/DelayLine.h>
+#include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 
 TEST(DelayLineTest, RingOscillatorWithNOT) {

@@ -1,0 +1,35 @@
+{
+  "nets": ["clk", "rst", "irq", "mti", "msi", "seip", "wb_adr", "wb_dat_o",
+           "wb_dat_i", "wb_we", "wb_sel", "wb_stb", "wb_cyc", "wb_ack", "halted"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clkgen",
+      "params": {"high_ticks": "1", "low_ticks": "1"},
+      "connections": {"clk": "clk"}
+    },
+    {
+      "type": "riscv_cpu",
+      "name": "cpu",
+      "params": {"xlen": "64"},
+      "connections": {
+        "clk": "clk", "rst": "rst",
+        "wb_dat_i": "wb_dat_i", "wb_ack_i": "wb_ack",
+        "irq": "irq", "mti": "mti", "msi": "msi", "seip": "seip",
+        "wb_adr_o": "wb_adr", "wb_dat_o": "wb_dat_o", "wb_we_o": "wb_we",
+        "wb_sel_o": "wb_sel", "wb_stb_o": "wb_stb", "wb_cyc_o": "wb_cyc",
+        "halted": "halted"
+      }
+    },
+    {
+      "type": "wishbone_mem",
+      "name": "mem",
+      "params": {"addr_width": "16", "data_width": "32"},
+      "connections": {
+        "wb_adr_i": "wb_adr", "wb_dat_i": "wb_dat_o", "wb_we_i": "wb_we",
+        "wb_sel_i": "wb_sel", "wb_stb_i": "wb_stb", "wb_cyc_i": "wb_cyc",
+        "clk": "clk", "wb_dat_o": "wb_dat_i", "wb_ack_o": "wb_ack"
+      }
+    }
+  ]
+}

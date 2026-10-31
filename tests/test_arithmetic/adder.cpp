@@ -1,6 +1,6 @@
 // 加法器测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Arithmetic.h>
+#include <dcs/components/combinational/Arithmetic.h>
 #include <gtest/gtest.h>
 
 TEST(AdderTest, NoCarry) {

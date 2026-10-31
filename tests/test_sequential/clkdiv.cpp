@@ -1,7 +1,7 @@
 // 时钟分频器测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 TEST(ClockDividerTest, DivBy2) {

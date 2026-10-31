@@ -1,5 +1,5 @@
 // JSON 序列化：时序电路
-#include "dcs/components/Sequential.h"
+#include "dcs/components/sequential/Sequential.h"
 #include <gtest/gtest.h>
 #include "dcs/Circuit.h"
 using namespace dsc;

@@ -9,10 +9,12 @@
 
 namespace dsc {
 
-// 上限 24 位 = 16M 条目：再大单是地址表就超过可用内存，属于配置错误而非正常用法
+// 上限 30 位 = 1G 条目：单个 WishboneMemory 实例直接分配这块连续内存。
+// 跑 Linux 要几百 MB，这里放到 1GB；实际容量由元件自己的 addr_width 决定，
+// 不用的实例不会占这么多
 inline size_t depthFromAddrWidth(int addr_width) {
-    if (addr_width < 1 || addr_width > 24)
-        throw std::invalid_argument("addr_width 必须在 1~24 之间");
+    if (addr_width < 1 || addr_width > 30)
+        throw std::invalid_argument("addr_width 必须在 1~30 之间");
     return size_t(1) << addr_width;
 }
 

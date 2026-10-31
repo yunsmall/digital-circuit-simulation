@@ -98,6 +98,14 @@ else()
                 set_target_properties(zstd::libzstd_static PROPERTIES IMPORTED_LOCATION "${DCS_ZSTD_LIB}")
             endif()
         endif()
+    elseif(UNIX)
+        # 发行版 LLVM 的导出文件引用 zstd::libzstd_shared（系统 zstd 包的 target 名），
+        # 而 vcpkg 的 zstd 只导出 zstd::libzstd_static。先把 vcpkg 那份找出来，
+        # 再补一个同名别名，否则 LLVMConfig.cmake 加载时直接报 target 不存在
+        find_package(zstd CONFIG QUIET)
+        if(TARGET zstd::libzstd_static AND NOT TARGET zstd::libzstd_shared)
+            add_library(zstd::libzstd_shared ALIAS zstd::libzstd_static)
+        endif()
     endif()
     find_package(LLVM REQUIRED CONFIG)
     find_package(Clang REQUIRED CONFIG)
@@ -125,16 +133,49 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # ELF 映像解析用 header-only 的 elfio：不依赖仿真后端，TCC 配置下同样可用
 find_package(elfio CONFIG REQUIRED)
 
-# ---- 库（src/ 中所有 .cpp）----
-file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/components/*.cpp" "src/util/*.cpp")
-# 可执行入口不能进库：测试目标链接 gtest_main，库里再来一个 main 会在链接时抢掉它
-list(REMOVE_ITEM DCS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
-add_library(dcs_lib STATIC ${DCS_SOURCES})
+# ---- 库（核心、元件、工具三部分）----
+# src/bin 是各个可执行文件的入口，不参与库：测试目标链接 gtest_main，
+# 库里再来一个 main 会在链接时抢掉它
+file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/core/*.cpp" "src/components/*/*.cpp" "src/util/*.cpp")
+
+# JIT 需要的 shim 头文件内容直接编进可执行文件：运行时不再需要 include 目录，
+# TCC 的 add_include_path 和路径探测逻辑都可以省掉
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_stdint.h DCS_SHIM_STDINT)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_stdbool.h DCS_SHIM_STDBOOL)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_util.h DCS_SHIM_UTIL)
+set(DCS_SHIM_SOURCE "${DCS_SHIM_STDINT}\n${DCS_SHIM_STDBOOL}\n${DCS_SHIM_UTIL}")
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/shim_embedded.h.in
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/dcs_shim_embedded.h @ONLY)
+# 共享库能省磁盘：LLVM 静态链进 dcs_lib 一份，不必每个 exe 复制 90MB。
+# 但官方 LLVM 发行包用静态 CRT（/MT）编译，共享库必须配 /MD，链接器会报
+# /failifmismatch: RuntimeLibrary。只有自己用 /MD 重编 LLVM 时才能打开这个选项。
+option(DCS_SHARED_LIB "把 dcs_lib 构建为共享库（要求 /MD 编译的 LLVM，官方包不满足）" OFF)
+if(DCS_SHARED_LIB)
+    # 共享库必须配动态 CRT：Circuit 和 Component 对象跨 DLL 分配/释放，
+    # 静态 CRT 会让 exe 和 DLL 各有一个堆，跨边界 delete 直接破坏堆。
+    # 用 WIN32 判断而不是 MSVC：clang++ 的编译器 ID 是 Clang，MSVC 变量为假，
+    # 但它同样走 MSVC ABI 和静态 CRT 默认值
+    if(WIN32)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    endif()
+    add_library(dcs_lib SHARED ${DCS_SOURCES})
+    if(WIN32)
+        # 自动导出本库定义的所有符号，免去给每个类手写 __declspec(dllexport)。
+        # .def 里会连带导出静态链接进来的 LLVM 符号，链接稍慢但功能正确
+        set_target_properties(dcs_lib PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
+else()
+    add_library(dcs_lib STATIC ${DCS_SOURCES})
+endif()
 target_include_directories(dcs_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${DCS_BACKEND_INCLUDES}
 )
-target_link_libraries(dcs_lib PUBLIC ${DCS_BACKEND_LIBS} nlohmann_json::nlohmann_json elfio::elfio)
+# 后端库用 PRIVATE：它们已经静态链进 dcs_lib（或表现为运行时依赖的 TCC DLL），
+# 可执行文件只通过 dcs_lib 的接口调用，不必再链一遍——否则共享库省下的体积又还回去了
+target_link_libraries(dcs_lib PRIVATE ${DCS_BACKEND_LIBS})
+target_link_libraries(dcs_lib PUBLIC nlohmann_json::nlohmann_json elfio::elfio)
 if(DCS_USE_TCC)
     target_compile_definitions(dcs_lib PRIVATE DCS_USE_TCC)
 endif()
@@ -157,10 +198,18 @@ add_custom_command(TARGET dcs_lib POST_BUILD ${_COPY_CMDS})
 # ---- 主程序（合并 simulator + tool）----
 if(DCS_BUILD_EXECUTABLE)
     find_package(cxxopts CONFIG REQUIRED)
-    add_executable(dcs src/main.cpp)
+    add_executable(dcs src/bin/main.cpp)
     target_link_libraries(dcs PRIVATE dcs_lib cxxopts::cxxopts)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs PRIVATE DCS_USE_TCC)
+    endif()
+
+    # 整机仿真入口：加载 RISC-V ELF、串口接宿主键盘、按 tohost 判定结果。
+    # 这些是计算机仿真特有的东西，单独一个可执行文件，不往纯电路仿真的 dcs 里塞
+    add_executable(dcs_soc src/bin/soc_main.cpp)
+    target_link_libraries(dcs_soc PRIVATE dcs_lib cxxopts::cxxopts)
+    if(DCS_USE_TCC)
+        target_compile_definitions(dcs_soc PRIVATE DCS_USE_TCC)
     endif()
 endif()
 
@@ -185,7 +234,8 @@ if(GTest_FOUND)
         # 各测试用 #include "common/xxx.h" 引用
         target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         set_target_properties(${TEST_NAME} PROPERTIES CXX_STANDARD 23)
-        if(DCS_WHOLEARCHIVE)
+        # whole-archive 只对静态库有意义：共享库的符号本来就全部保留
+        if(NOT DCS_SHARED_LIB AND DCS_WHOLEARCHIVE)
             target_link_options(${TEST_NAME} PRIVATE ${DCS_WHOLEARCHIVE})
         endif()
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
@@ -219,6 +269,14 @@ if(GTest_FOUND)
         "DCS_RISCV_ELF_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-official/out")
     add_dcs_test(test_plic       tests/test_plic/*.cpp)
     add_dcs_test(test_uart       tests/test_uart/*.cpp)
+    add_dcs_test(test_uart_term  tests/test_uart_term/*.cpp)
+    add_dcs_test(test_uart_in    tests/test_uart_in/*.cpp)
+    add_dcs_test(test_uart_feed  tests/test_uart_feed/*.cpp)
+    add_dcs_test(test_rtc        tests/test_rtc/*.cpp)
+    add_dcs_test(test_gpio       tests/test_gpio/*.cpp)
+    add_dcs_test(test_pwm        tests/test_pwm/*.cpp)
+    add_dcs_test(test_watchdog   tests/test_watchdog/*.cpp)
+    add_dcs_test(test_reg_bridge tests/test_reg_bridge/*.cpp)
     add_dcs_test(test_spi        tests/test_spi/*.cpp)
     add_dcs_test(test_i2c        tests/test_i2c/*.cpp)
     add_dcs_test(test_cache      tests/test_cache/*.cpp)

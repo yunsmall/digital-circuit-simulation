@@ -2,8 +2,8 @@
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
-#include <dcs/components/ROM.h>
-#include <dcs/components/WishboneROM.h>
+#include <dcs/components/memory/ROM.h>
+#include <dcs/components/memory/WishboneROM.h>
 #include <cstring>
 
 using namespace dsc;

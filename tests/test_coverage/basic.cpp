@@ -1,14 +1,15 @@
 // 补齐此前缺的测试场景：SPI 位序、DMA 多次搬运、AXI 字节使能与背压、
 // Interconnect 多主仲裁、缓存行替换
 #include <gtest/gtest.h>
+#include <cstring>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/AxiLiteBridge.h>
-#include <dcs/components/DMA.h>
-#include <dcs/components/SPI.h>
-#include <dcs/components/WishboneCache.h>
-#include <dcs/components/WishboneInterconnect.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/AxiLiteBridge.h>
+#include <dcs/components/platform/DMA.h>
+#include <dcs/components/io/SPI.h>
+#include <dcs/components/platform/WishboneCache.h>
+#include <dcs/components/platform/WishboneInterconnect.h>
+#include <dcs/components/memory/WishboneMemory.h>
 
 using namespace dsc;
 

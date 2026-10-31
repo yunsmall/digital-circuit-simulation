@@ -1,7 +1,7 @@
 // 移位器测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/Shifter.h>
+#include <dcs/components/combinational/Shifter.h>
 #include <gtest/gtest.h>
 
 static uint64_t readWireUint(dsc::Circuit &c, int net_id, int bit_w) {

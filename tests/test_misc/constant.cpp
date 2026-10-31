@@ -1,6 +1,6 @@
 // 常量元件测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Misc.h>
+#include <dcs/components/combinational/Misc.h>
 #include <gtest/gtest.h>
 
 TEST(MiscTest, Constant8) {

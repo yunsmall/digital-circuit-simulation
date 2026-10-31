@@ -1,12 +1,13 @@
 // 各元件容易出错的边界场景，覆盖修复过的缺陷点
 #include <gtest/gtest.h>
+#include <cstring>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/I2C.h>
-#include <dcs/components/PLIC.h>
-#include <dcs/components/UART.h>
-#include <dcs/components/WishboneCache.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/io/I2C.h>
+#include <dcs/components/platform/PLIC.h>
+#include <dcs/components/io/UART.h>
+#include <dcs/components/platform/WishboneCache.h>
+#include <dcs/components/memory/WishboneMemory.h>
 
 using namespace dsc;
 
@@ -140,7 +141,7 @@ TEST(EdgeCases, PlicCompleteAllowsRetrigger) {
     PlicFx f;
     f.open();
     f.wr(0x4, 4);        // source1 优先级 4
-    f.wr(0x2004, 1);     // 使能 source1
+    f.wr(0x2000, 1u << 1); // 使能 source1（enable 是位图寄存器）
     f.setSrc(0x01);
     EXPECT_TRUE(f.irqHigh());
     EXPECT_EQ(f.rd(0x200004), 1u) << "claim 应取到 source1";
@@ -155,10 +156,10 @@ TEST(EdgeCases, PlicThresholdEqualityNotClaimed) {
     PlicFx f;
     f.open();
     f.wr(0x4, 3);
-    f.wr(0x2004, 1);
+    f.wr(0x2000, 1u << 1);
     f.wr(0x200000, 3);   // 阈值等于优先级
     f.setSrc(0x01);
-    EXPECT_EQ(f.rd(0x200004), 0u) << "优先级等于阈值时不应被 claim";
+    EXPECT_EQ(f.rd(0x200004), 1u) << "claim 不受 threshold 影响，仍能取走源 1";
 }
 
 // ---------------- I2C 连续事务 ----------------

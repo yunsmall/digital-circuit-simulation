@@ -1,0 +1,410 @@
+// dcs_soc — 整机（RISC-V SoC）仿真入口
+//
+// dcs 本体只做纯电路仿真；"把 ELF 灌进存储器、CPU 从入口开始跑、串口接宿主
+// 键盘、按 tohost 判定结果、停下来的 PC 跟踪"这些是整机仿真特有的东西，
+// 全部收在这一层，避免通用电路仿真 CLI 长出一堆 RISC-V 专用参数。
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <cxxopts.hpp>
+#include <dcs/Circuit.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/io/UartFeed.h>
+#include <dcs/components/memory/WishboneMemory.h>
+#include <dcs/util/ElfLoader.h>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <sstream>
+#include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <conio.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace {
+
+// Windows 控制台的功能键由 _getch 返回 0x00/0xE0 前缀 + 扫描码两个字节，
+// 而内核终端（busybox 的行编辑）认的是 ANSI/xterm 转义序列。不翻译的话
+// 方向键、Home/End、Delete 在 shell 里全部没有反应
+#ifdef _WIN32
+const char *scanCodeToAnsi(int scan) {
+    switch (scan) {
+    case 72: return "\x1b[A";    // 上
+    case 80: return "\x1b[B";    // 下
+    case 77: return "\x1b[C";    // 右
+    case 75: return "\x1b[D";    // 左
+    case 71: return "\x1b[H";    // Home
+    case 79: return "\x1b[F";    // End
+    case 82: return "\x1b[2~";   // Insert
+    case 83: return "\x1b[3~";   // Delete
+    case 73: return "\x1b[5~";   // PageUp
+    case 81: return "\x1b[6~";   // PageDown
+    case 59: return "\x1bOP";    // F1
+    case 60: return "\x1bOQ";    // F2
+    case 61: return "\x1bOR";    // F3
+    case 62: return "\x1bOS";    // F4
+    case 63: return "\x1b[15~";  // F5
+    case 64: return "\x1b[17~";  // F6
+    case 65: return "\x1b[18~";  // F7
+    case 66: return "\x1b[19~";  // F8
+    case 67: return "\x1b[20~";  // F9
+    case 68: return "\x1b[21~";  // F10
+    case 133: return "\x1b[23~"; // F11
+    case 134: return "\x1b[24~"; // F12
+    default: return nullptr;
+    }
+}
+#endif
+
+// 从宿主读一个字符：终端走 _getch（阻塞、立即响应、不回显，回显交给内核终端驱动），
+// 管道/重定向走阻塞 ReadFile。EOF 返回 -1
+int readConsoleChar() {
+#ifdef _WIN32
+    // 一个功能键要展开成好几字节的转义序列，先把它发完再回头读键盘
+    static char pending[8];
+    static int pending_len = 0, pending_pos = 0;
+    if (pending_pos < pending_len)
+        return (unsigned char) pending[pending_pos++];
+    if (_isatty(_fileno(stdin))) {
+        int c = _getch();
+        if (c == 0 || c == 0xE0) { // 功能键：后面跟一个扫描码
+            const char *seq = scanCodeToAnsi(_getch());
+            if (!seq)
+                return -1; // 没有标准转义序列的扩展键（Ctrl+方向之类），丢弃
+            pending_len = (int) std::strlen(seq);
+            std::memcpy(pending, seq, pending_len);
+            pending_pos = 1;
+            return (unsigned char) pending[0];
+        }
+        return c & 0xFF;
+    }
+    char c = 0;
+    DWORD n = 0;
+    if (ReadFile(GetStdHandle(STD_INPUT_HANDLE), &c, 1, &n, nullptr) && n == 1)
+        return (unsigned char) c;
+    return -1;
+#else
+    unsigned char c = 0;
+    ssize_t n = ::read(STDIN_FILENO, &c, 1);
+    return n == 1 ? (int) c : -1;
+#endif
+}
+
+dsc::WishboneMemory *firstMemory(dsc::Circuit &circuit) {
+    for (auto &c: circuit.components())
+        if (auto *m = dynamic_cast<dsc::WishboneMemory *>(c.get()))
+            return m;
+    return nullptr;
+}
+
+// 把整个映像按存储器的地址别名语义灌进去：镜像可以链接在 DRAM_BASE(0x80000000)
+// 这类高地址，而存储器只有低 addr_width 根地址线，高位在硬件上就是别名回来
+bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
+    const size_t cap = mem->memSize();
+    size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
+    const uint8_t *src = img.data.data();
+    size_t remain = img.data.size();
+    while (remain > 0) {
+        const size_t chunk = (std::min)(remain, cap - load_off);
+        std::memcpy(mem->writableMemPtr() + load_off, src, chunk);
+        src += chunk;
+        remain -= chunk;
+        load_off = (load_off + chunk) & (cap - 1);
+    }
+    return true;
+}
+
+int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks, int delay_ms, bool forever,
+           const std::string &dump_mem, const std::string &feed_file, uint64_t feed_after,
+           const std::string &watch_file) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        std::cerr << std::format("错误: 无法打开 '{}'\n", path);
+        return 1;
+    }
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    std::string error;
+    auto circuit = dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+    if (!circuit) {
+        std::cerr << std::format("JSON 错误: {}\n", error);
+        return 1;
+    }
+    std::cout << std::format("电路: {} 线网, {} 元件\n", circuit->netCount(), circuit->componentCount());
+
+    auto err = circuit->compile();
+    if (err.code != dsc::ErrorCode::OK) {
+        std::cerr << std::format("编译错误: {}\n", err.message);
+        return 1;
+    }
+    std::cout << "JIT 编译成功\n\n";
+    circuit->init();
+
+    dsc::WishboneMemory *mem = firstMemory(*circuit);
+    if (!mem) {
+        std::cerr << "错误: 电路里没有 WishboneMemory，无法加载 ELF\n";
+        return 1;
+    }
+    auto img = dsc::loadElf(elf_path);
+    if (!img.ok) {
+        std::cerr << std::format("ELF 错误: {}\n", img.error);
+        return 1;
+    }
+    loadImage(mem, img);
+    // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
+    // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
+    bool cpu_matched = false;
+    for (auto &c: circuit->components()) {
+        if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
+            if (!img.is64) {
+                c32->setPc((uint32_t) img.entry);
+                cpu_matched = true;
+            }
+        } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+            if (img.is64) {
+                c64->setPc(img.entry);
+                cpu_matched = true;
+            }
+        }
+    }
+    if (!cpu_matched) {
+        std::cerr << std::format("错误: ELF 是 {}-bit，但电路里没有对应位宽的 riscv_cpu（JSON 里用 \"xlen\": \"{}\"）\n",
+                                 img.is64 ? 64 : 32, img.is64 ? 64 : 32);
+        return 1;
+    }
+    const size_t cap = mem->memSize();
+    const uint32_t tohost_addr = static_cast<uint32_t>(img.tohost & (cap - 1));
+    std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
+                             img.entry, img.tohost);
+
+    // UartFeed 只提供队列；读 stdin 的活在这里单独开线程，仿真热路径上没有任何系统调用
+    dsc::UartFeed *uart_feed = nullptr;
+    for (auto &c: circuit->components())
+        if (auto *u = dynamic_cast<dsc::UartFeed *>(c.get())) {
+            uart_feed = u;
+            break;
+        }
+    // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
+    // detach 的线程再去 push 就是访问已释放对象
+    if (forever && uart_feed) {
+        std::thread([uart_feed] {
+            for (;;) {
+                int ch = readConsoleChar();
+                if (ch < 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                while (!uart_feed->push((uint8_t) ch))
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }).detach();
+    }
+
+    // --feed：把一段脚本预先塞进串口输入队列，启动完成后自动执行。
+    // 每次改动机器模型都要重启内核跑几十亿拍，逐个命令交互验证太慢，
+    // 用这个入口一次跑完一整组验证
+    std::string feed_data;
+    size_t feed_pos = 0;
+    if (!feed_file.empty()) {
+        std::ifstream ff(feed_file, std::ios::binary);
+        if (!ff) {
+            std::cerr << std::format("错误: 无法打开喂给串口的文件 '{}'\n", feed_file);
+            return 1;
+        }
+        std::ostringstream fb;
+        fb << ff.rdbuf();
+        feed_data = fb.str();
+        if (forever)
+            std::cout << "注意: --feed 只在有限 tick 模式下生效，--forever 请手动交互\n";
+    }
+
+    if (forever) {
+        if (watch_file.empty()) {
+            std::cout << "无限仿真中（Ctrl+C 停止）\n" << std::flush;
+            circuit->tickForever();
+        }
+        // --watch：仿真不退出，外部往文件里追加内容就是往串口发命令。
+        // 每批 tick 结束后检查文件增量，这样改硬件模型后跑一次就能反复验证，
+        // 不必每次重启内核
+        if (!uart_feed) {
+            std::cerr << "错误: --watch 需要电路里有 uart_feed 元件\n";
+            return 1;
+        }
+        std::cout << std::format("无限仿真中，往 {} 追加内容即可向串口发送命令（Ctrl+C 停止）\n",
+                                 watch_file) << std::flush;
+        std::ifstream wf_probe(watch_file, std::ios::binary);
+        wf_probe.seekg(0, std::ios::end);
+        uint64_t watch_pos = wf_probe ? (uint64_t) wf_probe.tellg() : 0;
+        // 队列满时不能忙等：UartFeed 的消费者就是 tick 本身，阻塞在这里就没人推进仿真
+        std::string pending;
+        size_t pending_pos = 0;
+        for (;;) {
+            circuit->tickBatch(200000);
+            std::error_code ec;
+            const auto sz = std::filesystem::file_size(watch_file, ec);
+            if (!ec && sz > watch_pos) {
+                std::ifstream wf(watch_file, std::ios::binary);
+                if (wf) {
+                    wf.seekg((std::streamoff) watch_pos);
+                    std::string chunk((std::istreambuf_iterator<char>(wf)), std::istreambuf_iterator<char>());
+                    watch_pos = sz;
+                    if (pending_pos) {
+                        pending.erase(0, pending_pos);
+                        pending_pos = 0;
+                    }
+                    pending += chunk;
+                }
+            }
+            while (pending_pos < pending.size() && uart_feed->push((uint8_t) pending[pending_pos]))
+                pending_pos++;
+            if (pending_pos > 65536) {
+                pending.erase(0, pending_pos);
+                pending_pos = 0;
+            }
+        }
+    }
+
+    // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出
+    for (uint64_t t = 0; t < ticks; t++) {
+        circuit->tick();
+        // 队列满就停在这里，等下一拍 UartFeed 发走一个字节再继续，不能在仿真线程里忙等
+        if (feed_pos < feed_data.size() && t >= feed_after) {
+            while (feed_pos < feed_data.size() && uart_feed->push((uint8_t) feed_data[feed_pos]))
+                feed_pos++;
+        }
+        if (tohost_addr) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
+            uint32_t r = 0;
+            std::memcpy(&r, mem->writableMemPtr() + tohost_addr, 4);
+            if (r) {
+                std::cout << std::format("\n程序结束: {} (tohost={})\n", r == 1 ? "通过" : "失败", r);
+                return r == 1 ? 0 : 1;
+            }
+        }
+        if (delay_ms > 0 && t + 1 < ticks)
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    // 仿真结束后打印 CPU 的 PC。总线地址只在取指缺失/访存时更新，
+    // 小循环全命中 icache 时 wb_adr 会一直停在旧值，光看波形分不清是在跑还是卡死
+    for (auto &c: circuit->components()) {
+        if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get()))
+            std::cout << std::format("CPU32 PC=0x{:X} priv={}\n", (uint32_t) c32->pc(), (int) c32->priv());
+        else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+            std::cout << std::format("CPU64 PC=0x{:X} priv={}\n", (uint64_t) c64->pc(), (int) c64->priv());
+            auto trace = c64->pcTrace();
+            std::cout << "PC trace:";
+            for (auto p: trace)
+                std::cout << std::format(" {:08X}", p);
+            std::cout << "\n";
+        }
+    }
+
+    // 把存储器里的一段原样导出来。串口还没初始化之前内核的日志只在 printk
+    // 环形缓冲区里，只能靠它看到内核到底走到哪了
+    if (!dump_mem.empty()) {
+        const auto colon = dump_mem.find(':');
+        if (colon == std::string::npos) {
+            std::cerr << "错误: --dump-mem 格式应为 addr:len（十六进制）\n";
+            return 1;
+        }
+        size_t addr = std::stoull(dump_mem.substr(0, colon), nullptr, 0);
+        size_t len = std::stoull(dump_mem.substr(colon + 1), nullptr, 0);
+        const uint8_t *p = mem->writableMemPtr();
+        for (size_t row = 0; row < len; row += 16) {
+            const size_t off = (addr + row) & (cap - 1);
+            std::cout << std::format("0x{:08X}  ", addr + row);
+            for (size_t k = 0; k < 16; ++k) {
+                if (row + k < len)
+                    std::cout << std::format("{:02X} ", p[(off + k) & (cap - 1)]);
+                else
+                    std::cout << "   ";
+            }
+            std::cout << " ";
+            for (size_t k = 0; k < 16 && row + k < len; ++k) {
+                const char ch = (char) p[(off + k) & (cap - 1)];
+                std::cout << (ch >= 0x20 && ch < 0x7F ? ch : '.');
+            }
+            std::cout << "\n";
+        }
+    }
+
+    circuit->deinit();
+    return 0;
+}
+
+} // namespace
+
+int main(int argc, char *argv[]) {
+    cxxopts::Options opts("dcs_soc", "整机仿真 CLI：把 RISC-V ELF 灌进电路里的存储器并运行");
+
+    opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
+            "elf", "要加载的 RISC-V ELF（镜像、入口地址、tohost 都从它读）", cxxopts::value<std::string>())(
+            "t,ticks", "仿真 tick 数（默认 10）", cxxopts::value<uint64_t>()->default_value("10"))(
+            "forever", "一直仿真直到 Ctrl+C（忽略 --ticks，循环留在 JIT 里）")(
+            "d,delay", "每 tick 间隔毫秒（默认 0）", cxxopts::value<int>()->default_value("0"))(
+            "feed", "启动后自动喂给串口的脚本文件（一行一条命令）", cxxopts::value<std::string>())(
+            "feed-after", "到第几拍才开始喂脚本（默认 0；内核启动到 shell 约 35 亿拍）",
+            cxxopts::value<uint64_t>()->default_value("0"))(
+            "watch", "仿真运行期间监视该文件，追加的内容立刻送进串口（配合 --forever，不必重启仿真）",
+            cxxopts::value<std::string>())(
+            "dump-mem", "仿真结束后按 addr:len（十六进制，物理地址）导出存储器内容",
+            cxxopts::value<std::string>());
+
+    opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
+
+    opts.parse_positional({"circuit"});
+    opts.positional_help("circuit.json");
+
+    cxxopts::ParseResult result;
+    try {
+        result = opts.parse(argc, argv);
+    } catch (const cxxopts::exceptions::exception &e) {
+        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), opts.help());
+        return 1;
+    }
+
+    if (result.count("version")) {
+        std::cout << "dcs_soc 0.0.1\n";
+        return 0;
+    }
+    if (result.count("help") || argc == 1) {
+        std::cout << opts.help() << "\n";
+#ifdef DCS_USE_TCC
+        std::cout << "JIT 后端: TinyCC\n\n";
+#else
+        std::cout << "JIT 后端: LLVM/Clang\n\n";
+#endif
+        std::cout << R"(示例:
+  dcs_soc circuit.json --elf boot.elf --forever        串口交互跑 Linux
+  dcs_soc circuit.json --elf boot.elf --forever --watch /tmp/cmds.txt
+                                                       仿真不退出，往文件追加即发命令
+  dcs_soc circuit.json --elf test.elf -t 1000000       跑 riscv-tests，按 tohost 判定
+  dcs_soc circuit.json --elf boot.elf -t 4000000000 --feed cmds.txt --feed-after 3500000000
+                                                       启动后自动执行一串命令
+)";
+        return 0;
+    }
+
+    if (!result.count("circuit")) {
+        std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
+        return 1;
+    }
+    if (!result.count("elf")) {
+        std::cerr << "错误: 整机仿真必须用 --elf 指定要运行的 RISC-V ELF\n";
+        return 1;
+    }
+    return runSoc(result["circuit"].as<std::string>(), result["elf"].as<std::string>(),
+                  result["ticks"].as<uint64_t>(), result["delay"].as<int>(), result.count("forever") != 0,
+                  result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{},
+                  result.count("feed") ? result["feed"].as<std::string>() : std::string{},
+                  result["feed-after"].as<uint64_t>(),
+                  result.count("watch") ? result["watch"].as<std::string>() : std::string{});
+}

@@ -1,7 +1,7 @@
 // 浮点加法测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/FloatPoint.h>
+#include <dcs/components/combinational/FloatPoint.h>
 #include <gtest/gtest.h>
 
 // 辅助：float/double 的 IEEE 754 位表示

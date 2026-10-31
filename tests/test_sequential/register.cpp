@@ -1,6 +1,6 @@
 // 寄存器测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 TEST(RegisterTest, BasicStore) {

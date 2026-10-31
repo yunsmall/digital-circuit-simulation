@@ -1,7 +1,7 @@
 // Memory 高级测试：C++ 侧访问、写延迟、读延迟
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/Memory.h>
+#include <dcs/components/memory/Memory.h>
 #include <gtest/gtest.h>
 
 TEST(MiscTest, MemoryCppSideAccess) {

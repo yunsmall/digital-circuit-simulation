@@ -1,7 +1,7 @@
 // 浮点常量测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/FloatPoint.h>
+#include <dcs/components/combinational/FloatPoint.h>
 #include <gtest/gtest.h>
 
 TEST(FloatConstTest, Const32) {

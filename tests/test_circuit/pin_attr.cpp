@@ -1,6 +1,6 @@
 // 引脚属性测试
-#include <dcs/components/Gates.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 TEST(PinAttrTest, CombPinProps) {

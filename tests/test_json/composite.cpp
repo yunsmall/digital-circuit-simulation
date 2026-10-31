@@ -1,5 +1,5 @@
 // JSON 序列化：复合元件
-#include "dcs/components/Composite.h"
+#include "dcs/components/platform/Composite.h"
 #include <gtest/gtest.h>
 #include "dcs/Circuit.h"
 #include "dcs/CircuitLibrary.h"

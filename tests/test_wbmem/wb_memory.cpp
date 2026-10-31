@@ -4,7 +4,7 @@
 // 设备测试，全靠 CPU 的端到端用例间接覆盖，而端到端用例用的是对齐访问。
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/memory/WishboneMemory.h>
 
 #include "common/wb_master.h"
 

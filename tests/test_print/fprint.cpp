@@ -1,7 +1,7 @@
 // FloatPrint 浮点打印元件测试
 #include <cstring>
 #include <dcs/Circuit.h>
-#include <dcs/components/FloatPrint.h>
+#include <dcs/components/io/FloatPrint.h>
 #include <gtest/gtest.h>
 
 TEST(FloatPrintTest, Smoke32) {

@@ -63,10 +63,13 @@ public:
     // --- 构建电路 ---
     // 创建线网，位宽由后续连接的引脚自动确定（取最大值）
     Net *createNet(const std::string &name);
-    // 添加元件，返回原始指针供后续 connect() 使用
-    Component *addComponent(std::unique_ptr<Component> comp);
-    // 连接引脚到线网，自动检查多驱动冲突、更新线网位宽
-    void connect(Component *comp, const std::string &pin_name, Net *net);
+    // 添加元件，返回原始指针供后续 connect() 使用。
+    // 元件的 prepare()（DLL 加载等）失败时返回 nullptr；error 非空则把原因写进去
+    Component *addComponent(std::unique_ptr<Component> comp, CircuitError *error = nullptr);
+    // 连接引脚到线网，自动检查多驱动冲突、更新线网位宽。
+    // 返回 OK 表示连上；失败时不建立连接，错误码说明原因（引脚不存在 / 多驱动冲突）。
+    // 不抛异常：GUI 里用户随手拖线，接错是常态，调用方按返回值处理即可
+    CircuitError connect(Component *comp, const std::string &pin_name, Net *net);
 
     // 断开引脚与线网的连接（已断开时无操作）。输出引脚会自动清理 _bus_nets 三态驱动记录
     void disconnect(Component *comp, const std::string &pin_name);
@@ -99,7 +102,11 @@ public:
     // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
     void tickCycle(int clk_net_id);
     // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）
-    void tickCycles(int clk_net_id, int n);
+    void tickCycles(int clk_net_id, uint64_t n);
+    // 只跑 n 拍、不碰时钟线网：时钟由电路里的 clkgen 自己产生时用这个
+    void tickBatch(uint64_t n);
+    // JIT 内的死循环，一直跑到进程被 Ctrl+C 终止
+    [[noreturn]] void tickForever();
     void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
@@ -171,7 +178,9 @@ private:
 
     void (*_tick_fn)() = nullptr;
     void (*_tick_cycle_fn)(int) = nullptr;
-    void (*_tick_cycles_fn)(int, int) = nullptr;
+    void (*_tick_cycles_fn)(int, uint64_t) = nullptr;
+    void (*_tick_batch_fn)(uint64_t) = nullptr;
+    void (*_tick_forever_fn)() = nullptr;
     void (*_init_fn)() = nullptr;
     void (*_deinit_fn)() = nullptr;
     void (*_reset_fn)() = nullptr;
@@ -181,7 +190,7 @@ private:
 
     Pin *findPin(Component *comp, const std::string &name);
     void jitCleanup();
-    void expandComposites();
+    CircuitError expandComposites();
     bool dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color, std::vector<int> &path);
 };
 

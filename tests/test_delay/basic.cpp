@@ -1,6 +1,6 @@
 // 延时线基本测试
 #include <dcs/Circuit.h>
-#include <dcs/components/DelayLine.h>
+#include <dcs/components/sequential/DelayLine.h>
 #include <gtest/gtest.h>
 
 TEST(DelayLineTest, Depth1_BasicDelay) {

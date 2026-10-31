@@ -3,7 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/combinational/Gates.h>
 
 using namespace dsc;
 

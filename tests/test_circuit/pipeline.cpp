@@ -1,7 +1,7 @@
 // 端到端流水线测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Gates.h>
-#include <dcs/components/Sequential.h>
+#include <dcs/components/combinational/Gates.h>
+#include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
 TEST(EndToEndTest, SimplePipeline) {

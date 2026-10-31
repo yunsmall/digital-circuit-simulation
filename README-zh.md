@@ -223,6 +223,24 @@ bash benchmarks/build.sh             # 交叉编译基准 ELF 到 benchmarks/out
 icache 命中后每条指令固定 1 个周期；muldiv 更高是因为 64 位除法本身要多拍。
 与最初版本相比（同机同配置实测）：alu 9.22 s → 1.06 s，总体约 5~8 倍。
 
+## 跑 Linux
+
+`linux/` 目录提供一套完整的内核启动流程：把 Linux 6.12 的 Image、设备树和
+initramfs 打包成**单个 ELF**，由 dcs 的 RISC-V CPU 直接启动到用户态；
+换成带 busybox 的 initramfs 就能进到可交互的 shell。
+
+```bash
+bash linux/build-boot.sh /tmp/initrd-busybox.cpio.gz
+./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+```
+
+整机仿真用单独的 `dcs_soc` 入口：加载 ELF、串口接宿主键盘、按 tohost 判定结果
+这些是计算机仿真特有的东西，不塞进纯电路仿真的 `dcs`。
+
+依赖、分步编译方式，以及中途踩过的硬件语义坑（PLIC 的 enable/pending 是位图寄存器、
+UART 的 `reg-shift`、CLINT 的 mtimecmp 复位值等）都在
+[`linux/README.md`](linux/README.md)。
+
 ## JSON 电路格式
 
 ```json

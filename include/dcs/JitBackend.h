@@ -25,7 +25,11 @@ struct JitCompileResult {
     // 一次调用走完一个时钟周期（低电平拍 + 高电平拍），省掉外部的两次往返
     void (*tick_cycle)(int) = nullptr;
     // 一次调用连跑 n 个周期，循环留在 JIT 里
-    void (*tick_cycles)(int, int) = nullptr;
+    void (*tick_cycles)(int, uint64_t) = nullptr;
+    // 只跑 n 拍、不碰时钟线网（时钟由 clkgen 自己产生的电路用这个）
+    void (*tick_batch)(uint64_t) = nullptr;
+    // JIT 内的死循环：一直跑，直到进程被 Ctrl+C 终止
+    void (*tick_forever)() = nullptr;
     void (*init)() = nullptr;
     void (*deinit)() = nullptr;
     void (*reset)() = nullptr;

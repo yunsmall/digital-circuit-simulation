@@ -1,6 +1,6 @@
 // 多级延时和边沿测试
 #include <dcs/Circuit.h>
-#include <dcs/components/DelayLine.h>
+#include <dcs/components/sequential/DelayLine.h>
 #include <gtest/gtest.h>
 
 TEST(DelayLineTest, Depth3_MultiTickDelay) {

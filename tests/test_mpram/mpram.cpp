@@ -1,6 +1,6 @@
 // MultiPortRAM 测试：基本读写 / 2R1W 寄存器堆 / 读流水线延迟 / rd_valid 流控
 #include <dcs/Circuit.h>
-#include <dcs/components/MultiPortRAM.h>
+#include <dcs/components/memory/MultiPortRAM.h>
 #include <gtest/gtest.h>
 #include <memory>
 

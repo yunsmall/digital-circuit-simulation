@@ -1,8 +1,8 @@
 // 最小调试测试：验证 JIT 回调 + 单指令执行
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <cstring>
 #include <iostream>
 

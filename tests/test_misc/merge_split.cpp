@@ -1,6 +1,6 @@
 // Merge/Split 测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Misc.h>
+#include <dcs/components/combinational/Misc.h>
 #include <format>
 #include <gtest/gtest.h>
 

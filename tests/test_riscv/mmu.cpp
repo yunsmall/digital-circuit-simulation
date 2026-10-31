@@ -1,8 +1,8 @@
 // RISC-V CPU Sv32 MMU 测试: 页表遍历走 Wishbone 总线
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
-#include <dcs/components/RiscVCPU.h>
-#include <dcs/components/WishboneMemory.h>
+#include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/memory/WishboneMemory.h>
 #include <cstring>
 
 using namespace dsc;

@@ -1,6 +1,6 @@
 // 线网位宽测试
 #include <dcs/Circuit.h>
-#include <dcs/components/Gates.h>
+#include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 
 TEST(WireTest, BitWidthDeterminedByMaxPin) {

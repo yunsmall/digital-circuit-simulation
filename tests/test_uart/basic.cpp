@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <dcs/Circuit.h>
-#include <dcs/components/UART.h>
+#include <dcs/components/io/UART.h>
 
 using namespace dsc;
 
