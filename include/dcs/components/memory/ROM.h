@@ -19,7 +19,7 @@ namespace dsc {
 
 class ROM : public SequentialComponent, public IStorage {
 public:
-    // IStorage: 紧凑存储，外部可直接读写
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _data_ptr; }
     uint8_t *writableMemPtr() override { return _mapped ? nullptr : _mem.data(); }
     size_t memSize() const override { return _data_size; }
@@ -41,6 +41,7 @@ public:
     int depth() const { return _depth; }
     int addrWidth() const { return _addr_width; }
     int dataWidth() const { return _data_width; }
+    // 裸指针，仅供仿真框架，元件禁止调用
     const uint8_t *data() const { return _data_ptr; }
     uint8_t *data() { return _mem.data(); } // 仅内存模式可写
 

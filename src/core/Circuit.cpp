@@ -487,10 +487,6 @@ CircuitError Circuit::compile() {
     for (int i = 0; i < (int) _components.size(); i++)
         _components[i]->setId(i);
 
-    // 依赖其它元件的设备在这里绑定上下文（此时元件集合和编号都已确定）
-    for (auto &c: _components)
-        c->bindCircuit(this);
-
     // 环路检测
     if (auto err = check(); err.code != ErrorCode::OK)
         return err;

@@ -19,7 +19,7 @@ namespace dsc {
 
 class Memory : public SequentialComponent, public IStorage {
 public:
-    // IStorage: 字节寻址，始终可写
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
     uint8_t *writableMemPtr() override { return _mem.data(); }
     size_t memSize() const override { return (size_t)_depth; }
@@ -38,6 +38,7 @@ public:
     int dataWidth() const {
         return _data_width;
     }
+    // 裸指针，仅供仿真框架，元件禁止调用
     const uint8_t *data() const {
         return _mem.data();
     }

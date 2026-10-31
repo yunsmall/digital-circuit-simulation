@@ -26,7 +26,7 @@ namespace dsc {
 
 class FIFO : public SequentialComponent, public IStorage {
 public:
-    // IStorage: 紧凑存储，始终可写
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
     uint8_t *writableMemPtr() override { return _mem.data(); }
     size_t memSize() const override { return _depth * ((_data_width + 7) / 8); }
@@ -39,6 +39,7 @@ public:
     int fifoDepth() const {
         return _depth;
     }
+    // 裸指针，仅供仿真框架，元件禁止调用
     const uint8_t *data() const {
         return _mem.data();
     }

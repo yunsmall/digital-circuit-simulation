@@ -140,11 +140,6 @@ public:
     virtual bool prepare(std::string & /*error*/) {
         return true;
     }
-
-    // 电路展开、编号完成后调用。依赖其它元件的设备（如直接访问存储器的
-    // virtio 设备）在这里拿到电路上下文；prepare 阶段电路还不完整，不能用
-    virtual void bindCircuit(Circuit * /*circuit*/) {
-    }
     // 需要注入 JIT 的额外符号（DLL 函数指针等），电路编译时统一注入
     struct JitSymbol {
         std::string name;

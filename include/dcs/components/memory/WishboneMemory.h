@@ -27,7 +27,7 @@ public:
     WishboneMemory(const std::string &name, int addr_width = 16, int data_width = 32);
     ~WishboneMemory() override;
 
-    // ---- IStorage ----
+    // ---- IStorage：以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）----
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
     uint8_t *writableMemPtr() override { return _mem.data(); }
     size_t memSize() const override { return _mem.size(); }
