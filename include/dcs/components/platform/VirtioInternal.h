@@ -2,6 +2,10 @@
 // 只有 src/components/platform 下的 virtio 实现文件包含
 #pragma once
 #include <cstdint>
+#include <cstdio>
+#include <memory>
+
+#include "dcs/components/platform/VirtioMmio.h"
 
 namespace dsc::virtio {
 
@@ -44,3 +48,22 @@ constexpr uint32_t BLK_T_IN = 0, BLK_T_OUT = 1, BLK_T_FLUSH = 4;
 constexpr uint8_t BLK_S_OK = 0, BLK_S_IOERR = 1, BLK_S_UNSUPP = 2, BLK_S_RO = 3;
 
 } // namespace dsc::virtio
+
+namespace dsc {
+
+struct VirtioMmio::State {
+    BackendOps ops{};
+    std::FILE *fp = nullptr;
+    const uint8_t *image = nullptr;
+    uint64_t image_size = 0;
+    bool read_only = false;
+
+    // virtio-input：宿主 push 的 evdev 事件环。dcs 是单线程的，宿主只在两次
+    // tick 之间 push，JIT 直接读 head/tail，不用跨 JIT 回调
+    static constexpr uint32_t EVT_RING = 64;
+    InputEvent events[EVT_RING] = {};
+    uint32_t evt_head = 0; // 宿主写
+    uint32_t evt_tail = 0; // 设备读
+};
+
+} // namespace dsc

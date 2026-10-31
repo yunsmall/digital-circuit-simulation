@@ -85,6 +85,8 @@ private:
     std::string genBlkStart() const;
     std::string genRngDone() const;
     std::string genRngStart() const;
+    std::string genInputDone() const;
+    std::string genInputStart() const;
 
     std::unique_ptr<State> _state;
     Kind _kind = Kind::Blk;

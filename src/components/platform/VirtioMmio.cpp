@@ -22,20 +22,6 @@ using namespace virtio;
 
 
 
-struct VirtioMmio::State {
-    BackendOps ops{};
-    std::FILE *fp = nullptr;
-    const uint8_t *image = nullptr;
-    uint64_t image_size = 0;
-    bool read_only = false;
-
-    // virtio-input：宿主 push 的 evdev 事件环。dcs 是单线程的，宿主只在两次
-    // tick 之间 push，JIT 直接读 head/tail，不用跨 JIT 回调
-    static constexpr uint32_t EVT_RING = 64;
-    InputEvent events[EVT_RING] = {};
-    uint32_t evt_head = 0; // 宿主写
-    uint32_t evt_tail = 0; // 设备读
-};
 
 namespace {
 // 默认后端：镜像来自宿主文件或电路里的 ROM
@@ -72,6 +58,16 @@ uint32_t fileWrite(void *ctx, uint64_t off, const uint8_t *buf, uint32_t len) {
 
 void VirtioMmio::setBackend(const BackendOps &ops) {
     _state->ops = ops;
+}
+
+bool VirtioMmio::pushInputEvent(const InputEvent &ev) {
+    auto &s = *_state;
+    const uint32_t next = (s.evt_head + 1) % State::EVT_RING;
+    if (next == s.evt_tail)
+        return false; // 环满
+    s.events[s.evt_head] = ev;
+    s.evt_head = next;
+    return true;
 }
 
 void VirtioMmio::simInit() {
@@ -203,6 +199,7 @@ std::string VirtioMmio::genStateDecl() const {
             "static uint16_t _vio_dflags_{0};\n"
             "static uint32_t _vio_type_{0}, _vio_sec_lo_{0}, _vio_sec_hi_{0};\n"
             "static uint32_t _vio_off_{0}, _vio_written_{0}, _vio_step_{0};\n"
+            "static uint32_t _vio_evt_n_{0}, _vio_evt_tail_{0}, _vio_evt_new_tail_{0};\n"
             "static uint64_t _vio_rng_{0} = 0x9E3779B97F4A7C15ULL;\n"
             "static uint8_t _vio_st_{0};\n"
             // 主端口事务
@@ -346,6 +343,10 @@ std::string VirtioMmio::genFuncDef_seq() const {
     else if (_kind == Kind::Rng) {
         c += genRngDone();
         c += genRngStart();
+    }
+    else if (_kind == Kind::Input) {
+        c += genInputDone();
+        c += genInputStart();
     }
     c += "    " + genOutputWrite(O_DAT, "_dout", 32) + "\n";
     c += "    " + genOutputWrite(O_ACK, "_ack", 1) + "\n";
