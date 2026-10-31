@@ -14,6 +14,12 @@
 #define DCS_INLINE static inline __attribute__((always_inline))
 #endif
 
+// 65~128 位的线网值。不用 __int128：TCC 不支持，而宽线网只需要按字节搬运
+typedef struct {
+    unsigned long long lo;
+    unsigned long long hi;
+} dcs_u128;
+
 #ifdef __clang__
 // LLVM/Clang 后端：直接用编译器内置函数，编译器会按内联展开
 static inline void *dcs_memcpy(void *dst, const void *src, unsigned long long n) {

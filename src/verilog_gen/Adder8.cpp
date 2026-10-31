@@ -5,6 +5,7 @@
 #include "dcs/ComponentFactory.h"
 
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <memory>
 #include <verilated.h>
@@ -17,15 +18,16 @@ struct Adder8::State {
 };
 
 // 端口在 Verilator 模型里是引用成员（VL_IN8 展开成 "CData &a"），
-// 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚
-static void dcsEvalAdder8(void *p, const uint64_t *in, uint64_t *out) {
+// 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚。
+// 每个端口在缓冲区里占固定 16 字节（dcs 线网槽宽度），窄端口只用到前几字节
+static void dcsEvalAdder8(void *p, const unsigned char *in, unsigned char *out) {
     auto *m = static_cast<Vadder8 *>(p);
-    m->a = (uint8_t) in[0];
-    m->b = (uint8_t) in[1];
-    m->cin = (uint8_t) in[2];
+    std::memcpy(&m->a, in + 0, 1);
+    std::memcpy(&m->b, in + 16, 1);
+    std::memcpy(&m->cin, in + 32, 1);
     m->eval();
-    out[0] = (uint8_t) m->sum;
-    out[1] = (uint8_t) m->cout;
+    std::memcpy(out + 0, &m->sum, 1);
+    std::memcpy(out + 16, &m->cout, 1);
 }
 
 Adder8::Adder8(const std::string &name) :
@@ -47,23 +49,21 @@ std::vector<Component::JitSymbol> Adder8::extraJitSymbols() const {
 std::string Adder8::genStateDecl() const {
     return std::format(
             "static void *_vmd_{0} = (void *)0x{1:X}ULL;\n"
-            "extern void dcs_eval_gen_adder8(void *, const uint64_t *, uint64_t *);\n",
+            "extern void dcs_eval_gen_adder8(void *, const unsigned char *, unsigned char *);\n",
             _id, (unsigned long long) (std::uintptr_t) _state->model.get());
 }
 
 std::string Adder8::genFuncDef_comb() const {
     std::string c;
     c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
-    c += std::format("    static uint64_t _vio_in_{0}[3];\n", _id);
-    c += std::format("    static uint64_t _vio_out_{0}[2];\n", _id);
-    c += std::format("    uint64_t _i0 = 0; dcs_memcpy(&_i0, _w[{1}], 1); _vio_in_{0}[0] = _i0;\n", _id, inputs()[0]->netId());
-    c += std::format("    uint64_t _i1 = 0; dcs_memcpy(&_i1, _w[{1}], 1); _vio_in_{0}[1] = _i1;\n", _id, inputs()[1]->netId());
-    c += std::format("    uint64_t _i2 = 0; dcs_memcpy(&_i2, _w[{1}], 1); _vio_in_{0}[2] = _i2;\n", _id, inputs()[2]->netId());
+    c += std::format("    static unsigned char _vio_in_{0}[48];\n", _id);
+    c += std::format("    static unsigned char _vio_out_{0}[32];\n", _id);
+    c += std::format("    dcs_memcpy(_vio_in_{0} + 0, _w[{1}], 1);\n", _id, inputs()[0]->netId());
+    c += std::format("    dcs_memcpy(_vio_in_{0} + 16, _w[{1}], 1);\n", _id, inputs()[1]->netId());
+    c += std::format("    dcs_memcpy(_vio_in_{0} + 32, _w[{1}], 1);\n", _id, inputs()[2]->netId());
     c += std::format("    dcs_eval_gen_adder8(_vmd_{0}, _vio_in_{0}, _vio_out_{0});\n", _id);
-    c += std::format("    const uint8_t _o0 = (uint8_t) _vio_out_{0}[0];\n", _id);
-    c += "    " + genOutputWrite(0, "_o0", 8) + "\n";
-    c += std::format("    const uint8_t _o1 = (uint8_t) _vio_out_{0}[1];\n", _id);
-    c += "    " + genOutputWrite(1, "_o1", 1) + "\n";
+    c += "    " + genOutputWrite(0, std::format("_vio_out_{}[0]", _id), 8) + "\n";
+    c += "    " + genOutputWrite(1, std::format("_vio_out_{}[16]", _id), 1) + "\n";
     c += "}\n";
     return c;
 }

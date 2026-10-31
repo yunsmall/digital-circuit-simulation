@@ -13,7 +13,7 @@ A digital circuit simulation framework with JIT-compiled execution. Build circui
 - **Composite components**: reusable sub-circuits with shared definitions (e.g., define a half-adder once, instantiate 10 times)
 - **DLL components**: load external Verilog/Verilator/C modules at runtime
 - **Verilator integration**: Verilog → C++ → DLL → simulation (optional)
-- **Configurable bit-widths**: 1–64 bits per wire
+- **Configurable bit-widths**: 1–128 bits per wire
 - **Combinational loop detection**: three-color DFS with cycle reporting
 - **Parameter validation**: invalid values rejected at JSON load time
 - **gtest suite**: 32 test targets covering all component types and the official riscv-tests
@@ -83,8 +83,8 @@ cmake --build build --parallel 6
 
 The wrapper exposes the module's ports as dcs pins. Direction, width and whether
 the module is sequential are read from Verilator's exported AST, so the clock can
-be named anything. Ports are limited to 64 bits; `inout` and unpacked-array ports
-cannot map onto single-driver nets and are rejected with an explanation.
+be named anything. Ports go up to 128 bits; unpacked arrays are expanded into
+individual pins and `inout` ports become tristate outputs.
 
 ### CLI Usage
 

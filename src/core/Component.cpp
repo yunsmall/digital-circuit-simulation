@@ -17,7 +17,8 @@ const char *c_int_type(int bit_width) {
         return "uint32_t";
     if (bit_width <= 64)
         return "uint64_t";
-    return "uint64_t";
+    // 65~128 位：线网槽本来就是 16 字节，宽线网按字节搬运即可
+    return "dcs_u128";
 }
 
 int byte_count(int bit_width) {
@@ -27,19 +28,22 @@ int byte_count(int bit_width) {
 std::string gen_mask(int width) {
     if (width <= 0)
         return "0";
-    if (width == 64)
+    if (width >= 64)
         return "0xFFFFFFFFFFFFFFFFULL";
     return std::format("((1ULL << {}) - 1)", width);
 }
 
 std::string gen_read_wire(int net_id, int pin_w, int net_w, std::string_view var) {
+    // dcs_u128 是结构体，不能从 0 直接初始化
+    const char *init = pin_w <= 64 ? "0" : "{0}";
     if (net_id < 0)
-        return std::format("{} {} = 0;", c_int_type(pin_w), var);
+        return std::format("{} {} = {};", c_int_type(pin_w), var, init);
     int b = byte_count(pin_w);
-    std::string s = std::format(R"({} {} = 0;
+    std::string s = std::format(R"({} {} = {};
     dcs_memcpy(&{}, _w[{}], {});)",
-                                c_int_type(pin_w), var, var, net_id, b);
-    if (net_w > pin_w)
+                                c_int_type(pin_w), var, init, var, net_id, b);
+    // 宽引脚按字节数拷贝时已经截掉了高位，不需要再掩码
+    if (net_w > pin_w && pin_w <= 64)
         s += std::format("\n    {} &= {};", var, gen_mask(pin_w));
     return s;
 }
@@ -59,8 +63,14 @@ Component::Component(const std::string &name, const std::string &type_name) : _n
 }
 
 std::vector<int> Component::getCombinationalDeps(int out_idx) const {
-    if (out_idx >= 0 && out_idx < (int) _outputs.size() && _outputs[out_idx]->isSequential())
-        return {}; // 时序输出 → 打断组合环路
+    if (out_idx >= 0 && out_idx < (int) _outputs.size()) {
+        const Pin *p = _outputs[out_idx].get();
+        // 时序输出天然断开组合路径；三态输出在 oe=0 时也是断开的，静态分析
+        // 判断不了使能，一律按"可断开"处理——经过三态总线的环靠阶段 2b 的
+        // 迭代上限兜底，这是框架既有的约定
+        if (p->isSequential() || p->isTriState())
+            return {};
+    }
     std::vector<int> deps;
     for (int i = 0; i < (int) _inputs.size(); i++)
         deps.push_back(i);
@@ -92,7 +102,7 @@ std::string Component::stateTypeName() const {
 }
 
 Pin *Component::addInput(const std::string &pin_name, int bit_width) {
-    assert(bit_width >= 1 && bit_width <= 64);
+    assert(bit_width >= 1 && bit_width <= 128);
     auto p = std::make_unique<Pin>(pin_name, PinDir::INPUT, bit_width, this);
     Pin *ptr = p.get();
     _inputs.push_back(std::move(p));
@@ -100,7 +110,7 @@ Pin *Component::addInput(const std::string &pin_name, int bit_width) {
 }
 
 Pin *Component::addOutput(const std::string &pin_name, int bit_width, bool is_tri_state, bool is_sequential) {
-    assert(bit_width >= 1 && bit_width <= 64);
+    assert(bit_width >= 1 && bit_width <= 128);
     auto p = std::make_unique<Pin>(pin_name, PinDir::OUTPUT, bit_width, this, is_tri_state, is_sequential);
     Pin *ptr = p.get();
     _outputs.push_back(std::move(p));

@@ -104,6 +104,49 @@ def as_list(v):
     return v if isinstance(v, list) else []
 
 
+def expand_port(types: dict, node):
+    """把一个端口展开成若干标量引脚：unpacked 数组按维展开成 name_0、name_1……
+
+    dcs 的线网是单值线网，数组端口只能拆成独立引脚。元素本来就是独立信号，
+    拆开没有语义损失。
+    """
+    out = []
+    base_name = node.get("verilogName") or node.get("name")
+    base_cpp = node.get("name")
+
+    def walk(addr, pin_name, cpp_expr):
+        t = types.get(addr)
+        if t is None:
+            out.append({"name": pin_name, "cpp": cpp_expr, "width": 1})
+            return
+        if t.get("type") == "UNPACKARRAYDTYPE":
+            ranges = as_list(t.get("rangep"))
+            if not ranges:
+                raise SystemExit(f"端口 {pin_name} 的数组维度无法解析")
+
+            def walk_dims(idx, name, cpp):
+                if idx == len(ranges):
+                    walk(t.get("refDTypep"), name, cpp)
+                    return
+                lo = const_int(ranges[idx].get("leftp"))
+                hi = const_int(ranges[idx].get("rightp"))
+                if lo is None or hi is None:
+                    raise SystemExit(f"端口 {pin_name} 的数组维度不是常量，暂不支持")
+                step = 1 if hi >= lo else -1
+                for i in range(abs(hi - lo) + 1):
+                    # cpp 索引用 Verilog 里的真实下标（降序声明时是 3、2、1、0）
+                    v = lo + i * step
+                    walk_dims(idx + 1, f"{name}_{v}", f"{cpp}[{v}]")
+
+            walk_dims(0, pin_name, cpp_expr)
+            return
+        out.append({"name": pin_name, "cpp": cpp_expr,
+                    "width": type_width(types, addr, pin_name)})
+
+    walk(node.get("dtypep", ""), base_name, base_cpp)
+    return out
+
+
 def parse_design(ast_path: pathlib.Path, top: str):
     """从 Verilator AST 里取出顶层模块的端口和有沿触发的 always 块。"""
     data = json.loads(ast_path.read_text(encoding="utf-8"))
@@ -122,15 +165,42 @@ def parse_design(ast_path: pathlib.Path, top: str):
     for node in mod.get("stmtsp", []):
         if node.get("type") != "VAR" or not node.get("isPrimaryIO"):
             continue
-        width = type_width(types, node.get("dtypep", ""), node.get("verilogName", "?"))
-        ports.append({
-            "dir": DIR_MAP.get(node.get("direction", ""), "unknown"),
-            "name": node.get("verilogName") or node.get("name"),  # 引脚名用 Verilog 原名
-            "cpp": node.get("name"),                              # 模型成员名可能与原名不同
-            "width": width,
-        })
+        direction = DIR_MAP.get(node.get("direction", ""), "unknown")
+        for p in expand_port(types, node):
+            p["dir"] = direction
+            ports.append(p)
     if not ports:
         raise SystemExit("顶层模块没有端口")
+
+    # inout 端口要拆成三态输出 + 输入两半。三态使能不是端口，但 Verilator 的 AST
+    # 完整保留了 "assign pad = oe ? dout : 'z" 的结构，可以从这里取出来
+    inout_names = {p["name"] for p in ports if p["dir"] == "inout"}
+    if inout_names:
+        drivers = find_inout_drivers(mod, inout_names)
+        in_names = {p["name"] for p in ports if p["dir"] == "input"}
+        expanded = []
+        for p in ports:
+            if p["dir"] != "inout":
+                expanded.append(p)
+                continue
+            if p["name"] not in drivers:
+                raise SystemExit(
+                    f"inout 端口 {p['name']} 没有找到 \"assign 端口 = oe ? 数据 : 'z\" 形式的驱动，"
+                    f"无法自动推断三态使能")
+            oe, data = drivers[p["name"]]
+            missing = [s for s in (oe, data) if s not in in_names]
+            if missing:
+                raise SystemExit(
+                    f"inout 端口 {p['name']} 的驱动信号 {', '.join(missing)} 不是输入端口；"
+                    f"dcs 只能从引脚取值，请把它改成模块输入")
+            # Verilator 是两态模型：assign 写 z 时端口值会变成 0，回读不到外部
+            # 驱动值，所以只支持"只写不读"的 pad；模块内部读它就没法正确建模
+            if inout_is_read(mod, p["name"]):
+                raise SystemExit(
+                    f"inout 端口 {p['name']} 在模块内部被读取。Verilator 的两态模型"
+                    f"表示不了高阻，回读不到外部驱动值，请把它拆成独立的输入/输出端口")
+            expanded.append(dict(p, dir="output", tristate=True, oe_sig=oe, data_sig=data))
+        ports = expanded
 
     # 沿触发的 always 才算时序。Verilator 会自己保存上一拍时钟做边沿检测，
     # 这里只用来决定元件类型，不影响每拍 eval 的驱动方式
@@ -147,6 +217,63 @@ def parse_design(ast_path: pathlib.Path, top: str):
                     if v.get("type") == "VARREF" and v.get("name") not in clocks:
                         clocks.append(v.get("name"))
     return ports, clocks
+
+
+def inout_is_read(mod, name):
+    """模块内部是否读过这个 inout 端口（驱动它的那次写不算）。"""
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            if obj.get("type") == "VARREF" and obj.get("name") == name:
+                if "RD" in str(obj.get("access", "")):
+                    return True
+            return any(walk(v) for v in obj.values())
+        if isinstance(obj, list):
+            return any(walk(v) for v in obj)
+        return False
+
+    return walk(mod)
+
+
+def is_all_z(node):
+    """CONST 节点是不是全 z（"8'bzzzzzzzz"）。"""
+    if not isinstance(node, dict) or node.get("type") != "CONST":
+        return False
+    return re.fullmatch(r"\s*\d*'[bB][zZ]+\s*", node.get("name", "")) is not None
+
+
+def find_inout_drivers(mod, inout_names):
+    """从 "assign pad = oe ? data : 'z" 里取出 (oe, data) 两个信号名。"""
+    drivers = {}
+    for node in as_list(mod.get("stmtsp")):
+        if node.get("type") != "ALWAYS":
+            continue
+        for stmt in as_list(node.get("stmtsp")):
+            if stmt.get("type") != "ASSIGNW":
+                continue
+            lhs = as_list(stmt.get("lhsp"))
+            rhs = as_list(stmt.get("rhsp"))
+            if len(lhs) != 1 or len(rhs) != 1 or lhs[0].get("type") != "VARREF":
+                continue
+            name = lhs[0].get("name")
+            if name not in inout_names:
+                continue
+            cond = rhs[0]
+            if cond.get("type") != "COND":
+                continue
+            c = (as_list(cond.get("condp")) or [None])[0]
+            t = (as_list(cond.get("thenp")) or [None])[0]
+            e = (as_list(cond.get("elsep")) or [None])[0]
+            if not is_all_z(e):
+                continue
+            if not (isinstance(c, dict) and isinstance(t, dict)):
+                continue
+            if c.get("type") != "VARREF" or t.get("type") != "VARREF":
+                raise SystemExit(
+                    f"inout 端口 {name} 的三态驱动只支持 \"assign 端口 = 信号 ? 信号 : 'z\"，"
+                    f"条件或数据是表达式时无法拆出使能引脚")
+            drivers[name] = (c.get("name"), t.get("name"))
+    return drivers
 
 
 def ctype(width: int) -> str:
@@ -203,6 +330,7 @@ SOURCE_TEMPLATE = """// 由 tools/verilog2dcs.py 从 Verilog 自动生成，请�
 #include "dcs/ComponentFactory.h"
 
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <memory>
 #include <verilated.h>
@@ -215,8 +343,9 @@ struct @NAME@::State {
 };
 
 // 端口在 Verilator 模型里是引用成员（VL_IN8 展开成 "CData &a"），
-// 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚
-static void dcsEval@NAME@(void *p, const uint64_t *in, uint64_t *out) {
+// 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚。
+// 每个端口在缓冲区里占固定 16 字节（dcs 线网槽宽度），窄端口只用到前几字节
+static void dcsEval@NAME@(void *p, const unsigned char *in, unsigned char *out) {
     auto *m = static_cast<V@TOP@ *>(p);
 @WRITE_IN@
     m->eval();
@@ -238,15 +367,15 @@ std::vector<Component::JitSymbol> @NAME@::extraJitSymbols() const {
 std::string @NAME@::genStateDecl() const {
     return std::format(
             "static void *_vmd_{0} = (void *)0x{1:X}ULL;\\n"
-            "extern void dcs_eval_@TYPE@(void *, const uint64_t *, uint64_t *);\\n",
+            "extern void dcs_eval_@TYPE@(void *, const unsigned char *, unsigned char *);\\n",
             _id, (unsigned long long) (std::uintptr_t) _state->model.get());
 }
 
 std::string @NAME@::genFuncDef_@KIND@() const {
     std::string c;
     c += std::format("DCS_INLINE void {}() {{\\n", funcName_@KIND@());
-    c += std::format("    static uint64_t _vio_in_{0}[@NINS@];\\n", _id);
-    c += std::format("    static uint64_t _vio_out_{0}[@NOUTS@];\\n", _id);
+    c += std::format("    static unsigned char _vio_in_{0}[@NINS_BYTES@];\\n", _id);
+    c += std::format("    static unsigned char _vio_out_{0}[@NOUTS_BYTES@];\\n", _id);
 @LOAD@
 @EVAL@
 @STORE@
@@ -285,32 +414,65 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
     outs = [p for p in ports if p["dir"] == "output"]
 
     pins = [f'    addInput("{p["name"]}", {p["width"]});' for p in ins]
-    if comb:
-        pins += [f'    addOutput("{p["name"]}", {p["width"]});' for p in outs]
-    else:
+    def add_out(p):
+        ts = bool(p.get("tristate"))
+        if comb:
+            return (f'    addOutput("{p["name"]}", {p["width"]}, true);' if ts
+                    else f'    addOutput("{p["name"]}", {p["width"]});')
         # 时序输出跨拍可见，必须标成 sequential，否则环路检测会把它们当组合路径
-        pins += [f'    addOutput("{p["name"]}", {p["width"]}, false, true);' for p in outs]
+        return (f'    addOutput("{p["name"]}", {p["width"]}, true, true);' if ts
+                else f'    addOutput("{p["name"]}", {p["width"]}, false, true);')
+
+    pins += [add_out(p) for p in outs]
 
     # 引脚名用 Verilog 原名；访问模型成员必须用 Verilator 生成的 C++ 名，
     # 端口名撞上 C++ 关键字时两者会不一样
-    write_in = [f"    m->{p['cpp']} = ({ctype(p['width'])}) in[{i}];"
+    # 每个端口在缓冲区里占 16 字节，窄端口只用到前几字节
+    write_in = [f"    std::memcpy(&m->{p['cpp']}, in + {i * 16}, {(p['width'] + 7) // 8});"
                 for i, p in enumerate(ins)]
-    read_out = [f"    out[{i}] = ({ctype(p['width'])}) m->{p['cpp']};"
-                for i, p in enumerate(outs)]
+
+    # 三态输出要多占一个槽放使能，槽位在这里统一分配
+    out_layout = []
+    slot = 0
+    for p in outs:
+        val_off = slot * 16
+        slot += 1
+        oe_off = None
+        if p.get("tristate"):
+            oe_off = slot * 16
+            slot += 1
+        out_layout.append((p, val_off, oe_off))
+
+    read_out = []
+    for p, val_off, oe_off in out_layout:
+        if oe_off is None:
+            read_out.append(f"    std::memcpy(out + {val_off}, &m->{p['cpp']}, {(p['width'] + 7) // 8});")
+        else:
+            # 值和使能分别来自模型里的数据信号、三态条件信号
+            read_out.append(
+                f"    std::memcpy(out + {val_off}, &m->{p['data_sig']}, {(p['width'] + 7) // 8});")
+            read_out.append(f"    out[{oe_off}] = (unsigned char) m->{p['oe_sig']};")
 
     load = []
     for i, p in enumerate(ins):
         nbytes = (p["width"] + 7) // 8
         load.append(
-            f'    c += std::format("    uint64_t _i{i} = 0; dcs_memcpy(&_i{i}, _w[{{1}}], {nbytes}); '
-            f'_vio_in_{{0}}[{i}] = _i{i};\\n", _id, inputs()[{i}]->netId());')
+            f'    c += std::format("    dcs_memcpy(_vio_in_{{0}} + {i * 16}, _w[{{1}}], {nbytes});\\n", '
+            f'_id, inputs()[{i}]->netId());')
 
     store = []
-    for i, p in enumerate(outs):
-        store.append(
-            f'    c += std::format("    const {ctype(p["width"])} _o{i} = '
-            f'({ctype(p["width"])}) _vio_out_{{0}}[{i}];\\n", _id);')
-        store.append(f'    c += "    " + genOutputWrite({i}, "_o{i}", {p["width"]}) + "\\n";')
+    for i, (p, val_off, oe_off) in enumerate(out_layout):
+        # 输出槽本身就是字节缓冲，genOutputWrite 直接对它取地址
+        if oe_off is None:
+            store.append(
+                f'    c += "    " + genOutputWrite({i}, '
+                f'std::format("_vio_out_{{}}[{val_off}]", _id), {p["width"]}) + "\\n";')
+        else:
+            store.append(
+                f'    c += std::format("    const uint8_t _oe{i} = _vio_out_{{0}}[{oe_off}];\\n", _id);')
+            store.append(
+                f'    c += "    " + genOutputWrite({i}, '
+                f'std::format("_vio_out_{{}}[{val_off}]", _id), {p["width"]}, "_oe{i}") + "\\n";')
 
     if comb:
         evals = [
@@ -336,8 +498,8 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
             .replace("@WRITE_IN@", "\n".join(write_in) if write_in else "    // 模块没有输入")
             .replace("@READ_OUT@", "\n".join(read_out) if read_out else "    // 模块没有输出")
             .replace("@PINS@", "\n".join(pins) if pins else "    // 模块没有端口")
-            .replace("@NINS@", str(len(ins)))
-            .replace("@NOUTS@", str(len(outs)))
+            .replace("@NINS_BYTES@", str(max(1, len(ins)) * 16))
+            .replace("@NOUTS_BYTES@", str(max(1, slot) * 16))
             .replace("@LOAD@", "\n".join(body_load))
             .replace("@EVAL@", "\n".join(evals))
             .replace("@STORE@", "\n".join(body_store)))
@@ -364,14 +526,10 @@ def main():
     ports, clocks = parse_design(ast, top)
 
     for p in ports:
-        if p["dir"] == "inout":
+        if p["width"] > 128:
             raise SystemExit(
-                f"inout 端口 {p['name']} 无法自动映射：dcs 的线网是单向的，"
-                f"需要手工拆成 out/oe/in 三个引脚后再接 tsbuf")
-        if p["width"] > 64:
-            raise SystemExit(
-                f"端口 {p['name']} 位宽 {p['width']} 超过 dcs 线网上限 64 位，"
-                f"需要手工拆成多个 ≤64 位的端口")
+                f"端口 {p['name']} 位宽 {p['width']} 超过 dcs 线网上限 128 位（16 字节槽），"
+                f"需要手工拆成多个 ≤128 位的端口")
 
     comb = not clocks
     if not any(p["dir"] == "output" for p in ports):

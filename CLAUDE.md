@@ -81,9 +81,13 @@ cmake --build build_clang --parallel 6
   才算时序元件（输出引脚标 sequential），否则是组合元件。时钟叫 `clock_50m`、`aclk`
   都无所谓，不要退回按名字猜——猜错会让有状态的模型被当成组合元件，阶段 2b 重跑时
   会把寄存器多推几拍。
-- 端口位宽从类型表的 `range` 读，packed 多维按各维长度连乘；上限 64 位（dcs 线网是
-  16 字节槽）。`inout` 和 unpacked 数组端口直接报错并说明该怎么拆，**不允许静默降级**
-  （数组端口曾经被当成 1 位，生成出来的元件是错的但不报错）。
+- 端口位宽从类型表的 `range` 读，packed 多维按各维长度连乘；上限 128 位（dcs 线网槽是
+  16 字节）。unpacked 数组端口按维展开成 `name_0`、`name_1`……，元素本来就是独立信号。
+- `inout` 端口从 AST 的 `assign pad = oe ? 数据 : 'z` 里拆出使能和数据，生成**三态输出**引脚。
+  只支持"模块内部不读这个 pad"的情况：Verilator 是两态模型，`z` 会被写成 0，回读不到外部
+  驱动值，所以内部读了就明确报错，让人拆成独立输入/输出端口。
+- 三态输出在环路检测里按"可断开"处理（见 `Component::getCombinationalDeps`）：双向端口
+  天然成环，三态在 oe=0 时确实断开，经过三态总线的环靠阶段 2b 的迭代上限兜底。
 - 引脚名用 AST 里的 `verilogName`，访问模型成员用 `name`：端口名撞 C++ 关键字时两者不同。
 - 生成的元件直接继承 `Component`：Verilator 模型指针要放进 `genStateDecl`，
   而 `CombinationalComponent` 把 `genStateDecl` 标成了 `final`。
@@ -147,7 +151,7 @@ target_link_libraries(my_app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>)
 - TinyCC：libtcc 内存编译 C → 直接执行（轻量级替代后端）
 - gtest 测试框架（vcpkg）
 - std::format + 原始字符串字面量生成 C 代码
-- 线网最大位宽 64 位
+- 线网最大位宽 128 位（内部 16 字节/槽）
 
 ## 版本号与发布
 
