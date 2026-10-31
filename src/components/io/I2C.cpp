@@ -1,5 +1,6 @@
 // I2C — 主机模式 I2C 控制器（Wishbone 从设备）
 // 事务相位机、位时序和寄存器组全部展开在 JIT 里，每拍没有跨模块调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/I2C.h"
 
 #include <format>
@@ -212,3 +213,12 @@ std::unique_ptr<Component> I2C::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"i2c", {{"clkdiv", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::I2C>(n, dsc::paramInt(p, "clkdiv", 8));
+        });
+} // namespace

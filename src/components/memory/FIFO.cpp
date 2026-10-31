@@ -1,4 +1,5 @@
 // FIFO — 同步 FIFO 实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/FIFO.h"
 #include <format>
 #include <stdexcept>
@@ -135,3 +136,17 @@ std::unique_ptr<Component> FIFO::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"fifo",
+                        {{"data_width", "8", {"8", "16", "32", "64"}}, {"depth", "16"}, {"has_rst", "0"}},
+                        {"din", "wr_en", "rd_en", "clk"},
+                        {"dout", "full", "empty"},
+                        dsc::ComponentCategory::Memory, "同步FIFO，先入先出队列，支持异步复位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FIFO>(n, dsc::paramInt(p, "data_width", 8), dsc::paramInt(p, "depth", 16),
+                                                              dsc::paramInt(p, "has_rst", 0) != 0);
+                       });
+} // namespace

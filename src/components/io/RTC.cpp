@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/RTC.h"
 
 #include <format>
@@ -99,3 +100,12 @@ std::unique_ptr<Component> RTC::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"rtc", {{"ns_per_tick", "100"}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::RTC>(n, (uint32_t) dsc::paramInt(p, "ns_per_tick", 100));
+        });
+} // namespace

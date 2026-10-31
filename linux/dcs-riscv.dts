@@ -82,5 +82,14 @@
             interrupts = <1>;
             interrupt-parent = <&plic>;
         };
+
+        /* virtio-mmio 块设备：地址与 riscv_linux.json 里 IC 的 s4 段、
+         * PLIC 的源 2（irq_src 的 bit1）一一对应 */
+        virtio_mmio@10001000 {
+            compatible = "virtio,mmio";
+            reg = <0x0 0x10001000 0x0 0x1000>;
+            interrupts = <2>;
+            interrupt-parent = <&plic>;
+        };
     };
 };

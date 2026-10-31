@@ -137,3 +137,68 @@ TEST(UartTest, ReceiveSamplesByte) {
     EXPECT_EQ(f.read(0x00), 0x5Au) << "读回收到的字节";
     EXPECT_EQ(f.read(0x14) & 1u, 0u) << "读走 RBR 后 DR 应清除";
 }
+
+TEST(UartTest, DlabSwitchesDllDlm) {
+    Fixture f(2);
+    f.compile();
+    f.write(0x0C, 0x80); // LCR.DLAB=1
+    f.write(0x00, 0x12); // DLL
+    f.write(0x04, 0x34); // DLM
+    EXPECT_EQ(f.read(0x00), 0x12u);
+    EXPECT_EQ(f.read(0x04), 0x34u);
+    f.write(0x0C, 0x03); // DLAB=0，0x04 回到 IER
+    EXPECT_EQ(f.read(0x04), 0u);
+}
+
+TEST(UartTest, McrAndScrReadBack) {
+    Fixture f(2);
+    f.compile();
+    f.write(0x10, 0x1F);
+    f.write(0x1C, 0xA5);
+    EXPECT_EQ(f.read(0x10), 0x1Fu);
+    EXPECT_EQ(f.read(0x1C), 0xA5u);
+}
+
+TEST(UartTest, IirReportsNoPendingInterrupt) {
+    Fixture f(2);
+    f.compile();
+    uint32_t iir = f.read(0x08);
+    EXPECT_EQ(iir & 1u, 1u) << "无中断源时 IIR[0]=1";
+    EXPECT_EQ(iir & 0xC0u, 0u) << "不实现 FIFO，IIR 不能声称 FIFO 使能";
+}
+
+TEST(UartTest, IirThriWhenTxIdleAndEnabled) {
+    Fixture f(2);
+    f.compile();
+    f.write(0x04, 0x02); // IER.THRI
+    EXPECT_EQ(f.read(0x08) & 0x0F, 0x02u);
+}
+
+TEST(UartTest, IirRdaTakesPriorityOverThri) {
+    Fixture f(8);
+    f.compile();
+    f.write(0x0C, 0x03);
+    f.write(0x04, 0x03); // RX 和 TX 中断都开
+    const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 1};
+    for (int i = 0; i < 10; ++i) {
+        f.circuit->setWire(f.rx->id(), {(uint8_t) bits[i]});
+        for (int k = 0; k < 4; ++k)
+            f.cycle();
+    }
+    f.circuit->setWire(f.rx->id(), {1});
+    f.cycle();
+    EXPECT_EQ(f.read(0x08) & 0x0F, 0x04u) << "RX 数据可用时 IIR 应报 RDA";
+}
+
+TEST(UartTest, LsrTemtWhenIdle) {
+    Fixture f(2);
+    f.compile();
+    EXPECT_EQ(f.read(0x14) & 0x60u, 0x60u) << "空闲时 THRE 和 TEMT 都应置位";
+}
+
+TEST(UartTest, UnknownRegisterReadsZero) {
+    Fixture f(2);
+    f.compile();
+    EXPECT_EQ(f.read(0x70), 0u);
+}
+

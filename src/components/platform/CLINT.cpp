@@ -1,6 +1,7 @@
 // CLINT — RISC-V 核心局部中断器
 // 全部逻辑在 JIT 里展开：每拍只有一次 mtime 递增和几个寄存器比较，
 // 没有 C++ 回调、没有打包解包。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/CLINT.h"
 #include <cstring>
 #include <format>
@@ -148,3 +149,12 @@ std::unique_ptr<Component> CLINT::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"clint", {}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o", "mti", "msi"}, dsc::ComponentCategory::CPU, "RISC-V CLINT 定时器/软件中断发生器"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> & /*p*/) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::CLINT>(n);
+        });
+} // namespace

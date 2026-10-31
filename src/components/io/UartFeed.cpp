@@ -1,6 +1,7 @@
 // UartFeed — 由外部喂数据的 8N1 串行发送器
 // 发送状态机展开在 JIT 里，每拍只读一个 volatile 标志决定要不要碰队列；
 // 队列本身（SPSC 原子环形缓冲）留在 C++，只在真的有数据时才被调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartFeed.h"
 
 #include <atomic>
@@ -111,3 +112,12 @@ int UartFeed::feedPop(void *state_ptr) {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"uart_feed", {{"baud_div", "16"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "baud_div", 16));
+        });
+} // namespace

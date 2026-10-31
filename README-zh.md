@@ -176,6 +176,7 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `dma` | 存储到存储的 DMA | — |
 | `axi_lite_bridge` | AXI-Lite ↔ Wishbone 桥 | — |
 | `wb_cache` | Wishbone 缓存 | `lines` |
+| `virtio_mmio` | virtio-mmio（modern v2）设备：从端口接 CPU，主端口经总线访问 virtqueue | `device`（blk/console）, `path`（blk 镜像文件，留空则用电路里的 ROM） |
 
 CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond
 扩展，以及 Sdtrig 硬件断点（mcontrol 子集）。

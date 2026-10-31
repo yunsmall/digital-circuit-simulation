@@ -168,3 +168,20 @@ TEST(I2cTest, ClkdivLockedWhileBusy) {
     f.write(0x14, 8); // 事务进行中改分频
     EXPECT_EQ(f.read(0x14), 4u) << "事务进行中不能改分频，否则位时序会被打乱";
 }
+
+TEST(I2cTest, UnknownRegisterReadsZero) {
+    Fixture f;
+    f.compile();
+    EXPECT_EQ(f.read(0x70), 0u);
+}
+
+TEST(I2cTest, ZeroClkdivStillReturnsToIdle) {
+    Fixture f(0); // 构造函数会把 0 钳到 1
+    f.compile();
+    f.write(0x10, 0x50);
+    f.write(0x00, 0xA5);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 200; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x08) & 1u, 0u) << "clkdiv=0 不应让状态机卡在忙状态";
+}

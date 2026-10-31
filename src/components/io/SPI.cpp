@@ -1,5 +1,6 @@
 // SPI — 模式 0 的 SPI 控制器（Wishbone 从设备）
 // 位时序和寄存器组全部展开在 JIT 里，每拍没有跨模块调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/SPI.h"
 
 #include <format>
@@ -157,3 +158,12 @@ std::unique_ptr<Component> SPI::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"spi", {{"clkdiv", "4"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "miso"}, {"wb_dat_o", "wb_ack_o", "sclk", "mosi", "cs"}, dsc::ComponentCategory::Misc, "SPI 主机（模式 0），按 clkdiv 分频收发 8 位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::SPI>(n, dsc::paramInt(p, "clkdiv", 4));
+        });
+} // namespace

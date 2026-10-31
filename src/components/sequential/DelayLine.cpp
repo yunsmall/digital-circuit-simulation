@@ -1,4 +1,5 @@
 // DelayLine — N 级延时线实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/sequential/DelayLine.h"
 #include <format>
 #include <stdexcept>
@@ -98,3 +99,13 @@ std::unique_ptr<Component> DelayLine::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"delay", {{"bit_width", "8"}, {"depth", "1"}, {"use_clock", "1"}}, {"in"}, {"out"}, dsc::ComponentCategory::DataPath, "延迟线，可配深度和时钟使能的流水线延迟"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::DelayLine>(n, dsc::paramInt(p, "bit_width", 8), dsc::paramInt(p, "depth", 1),
+                                                                   dsc::paramInt(p, "use_clock", 1) != 0);
+                       });
+} // namespace

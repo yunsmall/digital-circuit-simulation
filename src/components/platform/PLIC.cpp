@@ -5,6 +5,7 @@
 // 寄存器布局遵循标准 PLIC（每个 context 的 enable 占 0x80 字节、threshold/claim
 // 占 0x1000 字节），内核在 S 态用的是 context 1，偏移写错会让使能和 claim 全部无效，
 // 表现为外部中断永远送不到内核。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/PLIC.h"
 
 #include <format>
@@ -187,3 +188,12 @@ std::unique_ptr<Component> PLIC::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"plic", {{"num_sources", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "irq_src"}, {"wb_dat_o", "wb_ack_o", "irq"}, dsc::ComponentCategory::CPU, "RISC-V PLIC 平台级中断控制器，单 context"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::PLIC>(n, dsc::paramInt(p, "num_sources", 8));
+        });
+} // namespace

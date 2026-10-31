@@ -115,3 +115,42 @@ TEST(WatchdogTest, DisableClearsState) {
     f.ticks(5);
     EXPECT_EQ(f.irqLevel(), 0) << "重新使能后应从头计时";
 }
+
+TEST(WatchdogTest, StatusRegisterReadsFired) {
+    WdFixture f;
+    f.write(0x04, 3);
+    f.write(0x00, 1);
+    f.ticks(5);
+    EXPECT_EQ(f.read(0x0C), 1u);
+}
+
+TEST(WatchdogTest, UnknownAddressReadsZero) {
+    WdFixture f;
+    EXPECT_EQ(f.read(0x7C), 0u);
+}
+
+TEST(WatchdogTest, TimeoutZeroDoesNotFire) {
+    WdFixture f;
+    f.write(0x00, 1);
+    f.ticks(10);
+    EXPECT_EQ(f.irqLevel(), 0) << "TIMEOUT=0 不应触发";
+    f.write(0x04, 4);
+    f.ticks(6);
+    EXPECT_EQ(f.irqLevel(), 1) << "设置超时后应重新开始计时";
+}
+
+TEST(WatchdogTest, DisableThenReenableRestarts) {
+    WdFixture f;
+    f.write(0x04, 3);
+    f.write(0x00, 1);
+    f.ticks(5);
+    EXPECT_EQ(f.irqLevel(), 1);
+    f.write(0x00, 0);
+    f.ticks(2);
+    EXPECT_EQ(f.irqLevel(), 0);
+    // 用更长的超时验证计数确实从头开始：write 内部只走了 4 拍，远不到 10
+    f.write(0x04, 10);
+    f.write(0x00, 1);
+    f.ticks(2);
+    EXPECT_EQ(f.irqLevel(), 0) << "重新使能后计数应从头开始";
+}

@@ -73,6 +73,9 @@ make -j6 CC="$CC" AR=$AR_BIN RANLIB=$RANLIB_BIN STRIP=$STRIP_BIN HOSTCC=$CC_BIN 
 ROOT=/tmp/rootfs-rv
 rm -rf $ROOT && mkdir -p $ROOT/{bin,sbin,proc,sys,dev,etc,tmp}
 cp busybox $ROOT/bin/busybox && chmod +x $ROOT/bin/busybox
+# 建立控制终端的小程序：脚本里的重定向拿不到 ctty
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+$CC -static -O2 -o $ROOT/bin/shell-init "$SCRIPT_DIR/dcs-shell-init.c"
 cat > $ROOT/init <<'INIT'
 #!/bin/sh
 # 用绝对路径调 busybox：initramfs 里没有 /usr/bin，PATH 也不保证包含 /bin
@@ -82,9 +85,9 @@ cat > $ROOT/init <<'INIT'
 echo ""
 echo "[dcs] busybox init, 输入命令开始玩"
 # 内核交给 PID 1 的 fd 不绑定控制终端（/proc/1/stat 的 tty_nr 是 -1），ash 只在
-# 进程有控制终端时才启用行编辑（方向键、历史、光标移动）。新建会话让它成为
-# session leader，再由它打开 /dev/console，内核才会把这个 tty 设成控制终端
-exec /bin/busybox setsid /bin/sh -c 'exec /bin/sh </dev/console >/dev/console 2>&1'
+# 进程有控制终端时才启用行编辑。脚本里的重定向拿不到控制终端，由这个小程序
+# 自己 setsid + TIOCSCTTY 后再 exec sh
+exec /bin/shell-init
 INIT
 chmod +x $ROOT/init
 # mount 必须在符号链接列表里：漏掉它 devtmpfs 挂不上，sh 就拿不到 tty

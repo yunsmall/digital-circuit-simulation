@@ -302,3 +302,110 @@ TEST(ClintTest, MtiLowAfterReset) {
     EXPECT_EQ(circuit->getWire(mti->id())[0], 0)
         << "mtimecmp 复位值必须是永不触发，为 0 会让 mti 从第一拍起恒高";
 }
+
+// ============================================================
+// CLINT 寄存器：mtime 推进、mtimecmp 比较、msip 软件中断
+// ============================================================
+namespace {
+struct ClintRegFixture {
+    std::unique_ptr<Circuit> c = std::make_unique<Circuit>();
+    CLINT *clint = nullptr;
+    Net *clk, *adr, *dat_i, *dat_o, *we, *sel, *stb, *cyc, *ack, *mti, *msi;
+
+    ClintRegFixture() {
+        auto p = std::make_unique<CLINT>("clint0");
+        clint = p.get();
+        c->addComponent(std::move(p));
+        clk = c->createNet("clk"); adr = c->createNet("adr"); dat_i = c->createNet("di");
+        dat_o = c->createNet("do"); we = c->createNet("we"); sel = c->createNet("sel");
+        stb = c->createNet("stb"); cyc = c->createNet("cyc"); ack = c->createNet("ack");
+        mti = c->createNet("mti"); msi = c->createNet("msi");
+        for (auto [pin, net]: {std::pair{"clk", clk}, {"wb_adr_i", adr}, {"wb_dat_i", dat_i},
+                               {"wb_we_i", we}, {"wb_sel_i", sel}, {"wb_stb_i", stb}, {"wb_cyc_i", cyc},
+                               {"wb_dat_o", dat_o}, {"wb_ack_o", ack}, {"mti", mti}, {"msi", msi}})
+            c->connect(clint, pin, net);
+        auto err = c->compile();
+        EXPECT_EQ(err.code, ErrorCode::OK) << err.message;
+        c->init();
+        c->setWire(clk->id(), {0});
+        c->setWire(stb->id(), {0});
+        c->setWire(cyc->id(), {0});
+        c->setWire(we->id(), {0});
+        for (int i = 0; i < 2; i++) tick();
+    }
+    void tick() {
+        c->setWire(clk->id(), {0}); c->tick();
+        c->setWire(clk->id(), {1}); c->tick();
+    }
+    void set32(Net *n, uint32_t v) {
+        c->setWire(n->id(), {(uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24)});
+    }
+    uint32_t get32(Net *n) {
+        auto v = c->getWire(n->id());
+        return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
+    }
+    void write(uint32_t a, uint32_t v) {
+        set32(adr, a); set32(dat_i, v);
+        c->setWire(we->id(), {1}); c->setWire(sel->id(), {0x0F});
+        c->setWire(stb->id(), {1}); c->setWire(cyc->id(), {1});
+        for (int i = 0; i < 4; i++) tick();
+        c->setWire(stb->id(), {0}); c->setWire(cyc->id(), {0});
+        for (int i = 0; i < 2; i++) tick();
+    }
+    void write64(uint32_t a, uint64_t v) {
+        write(a, (uint32_t) v);
+        write(a + 4, (uint32_t) (v >> 32));
+    }
+    uint32_t read(uint32_t a) {
+        set32(adr, a);
+        c->setWire(we->id(), {0}); c->setWire(sel->id(), {0x0F});
+        c->setWire(stb->id(), {1}); c->setWire(cyc->id(), {1});
+        for (int i = 0; i < 6; i++) tick();
+        auto v = get32(dat_o);
+        c->setWire(stb->id(), {0}); c->setWire(cyc->id(), {0});
+        for (int i = 0; i < 2; i++) tick();
+        return v;
+    }
+};
+} // namespace
+
+TEST(ClintRegisterTest, MtimeAdvancesEveryTick) {
+    ClintRegFixture f;
+    uint32_t t0 = f.read(0xBFF8);
+    for (int i = 0; i < 20; i++) f.tick();
+    uint32_t t1 = f.read(0xBFF8);
+    EXPECT_GT(t1, t0) << "mtime 应每拍递增";
+}
+
+TEST(ClintRegisterTest, MtimecmpInFutureKeepsMtiLow) {
+    ClintRegFixture f;
+    f.write64(0x4000, 0xFFFFFFF0ULL);
+    for (int i = 0; i < 4; i++) f.tick();
+    EXPECT_EQ(f.c->getWire(f.mti->id())[0], 0) << "mtime < mtimecmp 时不应拉 mti";
+}
+
+TEST(ClintRegisterTest, MtimecmpInPastRaisesMti) {
+    ClintRegFixture f;
+    f.write64(0x4000, 0);
+    for (int i = 0; i < 4; i++) f.tick();
+    EXPECT_EQ(f.c->getWire(f.mti->id())[0], 1) << "mtime >= mtimecmp 时应拉 mti";
+    f.write64(0x4000, 0xFFFFFFF0ULL);
+    for (int i = 0; i < 4; i++) f.tick();
+    EXPECT_EQ(f.c->getWire(f.mti->id())[0], 0) << "重新设到未来后 mti 应撤销";
+}
+
+TEST(ClintRegisterTest, MsipDrivesMsiAndClears) {
+    ClintRegFixture f;
+    f.write(0x0000, 1);
+    for (int i = 0; i < 2; i++) f.tick();
+    EXPECT_EQ(f.c->getWire(f.msi->id())[0], 1) << "msip=1 应拉 msi";
+    f.write(0x0000, 0);
+    for (int i = 0; i < 2; i++) f.tick();
+    EXPECT_EQ(f.c->getWire(f.msi->id())[0], 0) << "msip=0 应撤销 msi";
+}
+
+TEST(ClintRegisterTest, UnknownOffsetReadsZero) {
+    ClintRegFixture f;
+    EXPECT_EQ(f.read(0x2000), 0u) << "未实现的 CLINT 偏移应读 0";
+}
+

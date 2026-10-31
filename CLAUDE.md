@@ -96,7 +96,7 @@ set(DCS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(DCS_BUILD_VERILOG OFF CACHE BOOL "" FORCE)
 add_subdirectory(digital_circuit_simulation)
 
-target_link_libraries(my_app PRIVATE dcs_lib)
+target_link_libraries(my_app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>)
 ```
 
 ## 技术栈
@@ -129,7 +129,7 @@ project(digital_circuit_simulation VERSION X.Y.Z)
 
 1. **头文件** `include/dcs/components/<Name>.h` — 类声明，继承 `CombinationalComponent` 或 `SequentialComponent`
 2. **实现** `src/components/<Name>.cpp` — 实现 `genFuncDef_comb()`（组合逻辑 C 代码）和/或 `genFuncDef_seq()`（时序逻辑 C 代码），以及 `clone()`
-3. **工厂注册** `src/ComponentFactory.cpp` — 在 `InitAllComponents()` 构造函数中添加 `f.registerType(...)`，同时加入对应 `#include`
+3. **自注册** — 在元件 .cpp 末尾用 `DCS_REGISTER_COMPONENT(meta, creator)` 登记，类型名、参数、引脚、分类、描述和实现都放在同一个文件里，不需要改动其它文件
 4. **测试** — 参考已有结构（见下方）
 5. CMake 的 `file(GLOB DCS_SOURCES ...)` 会自动拾取新文件，**但新增后需重新执行 `cmake -B build ...` 配置**，`add_dcs_test` 同理需重新配置
 
@@ -210,7 +210,7 @@ code += "    " + genOutputWrite(0, "_result", 32) + "\n";         // 写输出
 code += "}\n";
 ```
 
-**模式 B：C++ 回调**（CLINT, WishboneMemory, WishboneInterconnect, Print）
+**模式 B：C++ 回调**（Print, FloatPrint, UartFeed, UartIn, Dll, RiscVCPU, WishboneInterconnect）
 
 JIT 代码只做引脚搬运（读 `_w[]` → 打包 → 调 C++ 函数 → 解包 → `genOutputWrite`），实际逻辑在 C++ 回调中实现。需要：
 
@@ -220,7 +220,51 @@ JIT 代码只做引脚搬运（读 `_w[]` → 打包 → 调 C++ 函数 → 解�
 
 参考 WishboneMemory.cpp 第 76-127 行或 CLINT.cpp 第 57-89 行。
 
-选择标准：逻辑简单用纯 JIT（少一层打包开销），复杂状态机/MMIO 用 C++ 回调（方便调试）。
+选择标准：**元件的主要逻辑一律塞进 JIT，哪怕状态机很复杂**。回调只留给"必须碰宿主"或"JIT 里根本写不出来"的操作——
+文件 I/O、stdin、DLL 调用、CPU 指令执行。判断标准是"这段逻辑每拍都要跑吗、能不能用 C 写出来"，
+而不是"写起来方不方便"。
+
+### JIT 代码的性能原则（TCC 后端同样要高效）
+
+TCC 不做内联、常量传播、循环优化，生成的 C **写成什么样就是什么样**。所以代码生成要按
+"编译器不会帮我优化"来写：
+
+1. **构造期能算的全在生成期算**：源数量、位宽、分段表、掩码都展开成字面量。例如 PLIC 的
+   claim 扫描按 `num_sources` 展开成 `num_sources` 条顺序比较，生成的 C 里没有循环。
+2. **不要在生成的 C 里写循环**，需要重复就由生成器展开。TCC 不会展开循环，也不做循环不变量外提。
+3. **按引脚位宽读线网**：`gen_read_wire` 只读 1/2/4/8 字节，不要固定读 16 字节。Clang 会把
+   `dcs_memcpy` 内联成一条 mov，但 TCC 下它是 libc 调用，多读 15 字节就是实打实的开销。
+4. **生成的元件函数一律用 `DCS_INLINE`**（`static inline __attribute__((always_inline))`，
+   TCC 下退化成 `static inline`）。它让 Clang 无视大小限制把元件展开进 `circuit_tick`，
+   TCC 虽然不内联，但 `inline` 关键字没有副作用。
+5. **状态用 static 变量、按需读取**：不要在函数入口把整个状态结构体拷到局部变量，也不要每拍 memset。
+6. **热路径上不要跨 JIT/C++ 边界**：每个元件函数每拍最多一次回调；能内联的判定（中断条件、比较、
+   位运算）全部写在生成的 C 里。
+7. **用简单表达式**：避免依赖编译器做分支合并、公共子表达式消除的写法。等价的两个判断宁可合并成
+   一次位与再比较，也不要写成两层 `if`。
+8. **输出必须走 `genOutputWrite`**，严禁直写 `_w[]`；组合元件不能假设自己一个 tick 只跑一次。
+
+### 硬件建模原则：必须按真实电路实现
+
+元件的行为、接口和时序都要和真实硬件一致，**禁止为了省事走"仿真专用"的捷径**。
+典型反例：设备要读 guest 内存里的数据结构时，直接拿 `WishboneMemory::writableMemPtr()`
+或 `IStorage` 的指针读写——真实芯片上根本没有这条路，设备只能通过总线主端口发起
+读写事务。正确做法是像 `DMA`、`VirtioMmio` 那样：元件带主端口引脚（`m_adr_o` /
+`m_dat_o` / `m_we_o` / `m_sel_o` / `m_stb_o` / `m_cyc_o` / `m_dat_i` / `m_ack_i`），
+在 JIT 里实现事务状态机，总线上看到的就是一串真实读写。
+
+区分清楚三类存储：
+
+- **guest 内存**（`WishboneMemory` 里的 RAM）：只能走总线，禁止直接拿指针。
+- **设备私有存储**：ROM 里的固件/镜像、宿主文件、FIFO 内部阵列。设备当然可以直接
+  访问，这本来就是设备内部的事，不算绕过总线。
+- **宿主侧工具**（ELF 装载、测试布置数据、`--dump-mem`）：可以直接用 `IStorage`
+  接口，它们扮演的是"外部世界"，不是元件本身。
+
+寄存器语义、握手（`stb`/`cyc`/`ack`）、字节使能（`sel`）、非对齐访问、中断电平和
+真实硬件的对应关系也都要如实建模。如果确实需要走仿真专用的捷径（比如为了性能
+在某个元件上直接访问内存），必须先明确说出来并得到用户确认，不能默默做。
+
 
 ### 跨元件时序计算（适配器/桥接类元件的关键）
 

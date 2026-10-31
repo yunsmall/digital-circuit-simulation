@@ -1,5 +1,6 @@
 // UartTerm — 串口终端接收端：只做解串，不负责输出
 // 解码状态机全部展开在 JIT 里；统计计数放在 C++ 侧，JIT 写的是它们的内存地址。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartTerm.h"
 
 #include <format>
@@ -102,3 +103,12 @@ std::unique_ptr<Component> UartTerm::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"uart_term", {{"baud_div", "16"}}, {"clk", "rx"}, {"data", "valid"}, dsc::ComponentCategory::Misc, "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UartTerm>(n, dsc::paramInt(p, "baud_div", 16));
+        });
+} // namespace

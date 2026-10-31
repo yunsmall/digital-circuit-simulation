@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/Gpio.h"
 
 #include <format>
@@ -80,3 +81,12 @@ std::unique_ptr<Component> Gpio::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"gpio", {}, {"clk", "addr", "wdata", "we", "en", "gpio_in"}, {"rdata", "ready", "gpio_out"}, dsc::ComponentCategory::Misc, "32 位 GPIO：DIR/OUT/IN 三个寄存器，gpio_in/gpio_out 为外部引脚"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Gpio>(n);
+        });
+} // namespace

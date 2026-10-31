@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Arithmetic.h"
 #include <format>
 #include <stdexcept>
@@ -210,7 +211,8 @@ static const char *cmpOpCOp(CmpOp op) {
 }
 
 Comparator::Comparator(const std::string &name, int bit_width, CmpOp op, bool is_signed) :
-    CombinationalComponent(name, std::string("cmp_") + cmpOpStr(op)), _bit_width(bit_width), _op(op),
+    // typeName 必须和工厂注册键逐字一致（"eq"/"ne"...），否则 JSON 回读找不到类型
+    CombinationalComponent(name, cmpOpStr(op)), _bit_width(bit_width), _op(op),
     _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
     if (is_signed)
@@ -700,3 +702,119 @@ std::unique_ptr<Component> MinMax::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"abs", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Arithmetic, "绝对值，输出=|输入|"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Abs>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"min",
+                        {{"bit_width", "8"}, {"signed", "0"}},
+                        {"a", "b"},
+                        {"out"},
+                        dsc::ComponentCategory::Arithmetic, "最小值，输出=min(a,b)"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::MinMax>(n, dsc::paramInt(p, "bit_width", 8), false,
+                                                                dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"max",
+                        {{"bit_width", "8"}, {"signed", "0"}},
+                        {"a", "b"},
+                        {"out"},
+                        dsc::ComponentCategory::Arithmetic, "最大值，输出=max(a,b)"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::MinMax>(n, dsc::paramInt(p, "bit_width", 8), true,
+                                                                dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"mux", {{"n_selects", "1"}, {"bit_width", "8"}}, {}, {"out"}, dsc::ComponentCategory::DataPath, "多路选择器，根据sel选择一路输入输出"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Mux>(n, dsc::paramInt(p, "n_selects", 1), dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"adder", {{"bit_width", "8"}}, {"a", "b", "cin"}, {"sum", "cout"}, dsc::ComponentCategory::Arithmetic, "全加器，sum=a+b+cin, cout=进位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Adder>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"eq", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "等于比较，a==b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::EQ,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"ne", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "不等于比较，a!=b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::NE,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"lt", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "小于比较，a<b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::LT,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"gt", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "大于比较，a>b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::GT,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"le", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "小于等于比较，a<=b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::LE,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"ge", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Arithmetic, "大于等于比较，a>=b时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Comparator>(n, dsc::paramInt(p, "bit_width", 8), dsc::CmpOp::GE,
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"decoder", {{"n_selects", "2"}}, {}, {}, dsc::ComponentCategory::DataPath, "译码器，n位地址→2^n位独热码"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Decoder>(n, dsc::paramInt(p, "n_selects", 2));
+        });
+
+DCS_REGISTER_COMPONENT(
+    {"encoder", {{"n_selects", "2"}}, {}, {}, dsc::ComponentCategory::DataPath, "编码器，2^n位独热码→n位二进制"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Encoder>(n, dsc::paramInt(p, "n_selects", 2));
+        });
+
+DCS_REGISTER_COMPONENT(
+    {"sub", {{"bit_width", "8"}}, {"a", "b", "bin"}, {"diff", "bout"}, dsc::ComponentCategory::Arithmetic, "全减器，diff=a-b-bin, bout=借位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Subtractor>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"mul", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"prod_lo", "prod_hi"}, dsc::ComponentCategory::Arithmetic, "乘法器，prod=a*b（双倍位宽输出）"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Multiplier>(n, dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"div", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b"}, {"quot", "rem"}, dsc::ComponentCategory::Arithmetic, "除法器，quot=a/b, rem=a%b"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Divider>(n, dsc::paramInt(p, "bit_width", 8), dsc::paramInt(p, "signed", 0) != 0);
+                       });
+} // namespace

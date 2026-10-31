@@ -1,6 +1,7 @@
 // UART — 16550A 兼容串口
 // 全部逻辑（发送/接收状态机、16 字节接收 FIFO、寄存器组）都展开在 JIT 里，
 // 每拍没有跨模块调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UART.h"
 
 #include <cstring>
@@ -208,3 +209,12 @@ std::unique_ptr<Component> UART::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"uart", {{"baud_div", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx", "irq"}, dsc::ComponentCategory::Misc, "16550A 兼容 8N1 串口（reg-shift=2），按 baud_div 个 tick 一位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UART>(n, dsc::paramInt(p, "baud_div", 8));
+        });
+} // namespace

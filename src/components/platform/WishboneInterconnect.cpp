@@ -2,6 +2,7 @@
 // 路由逻辑全部展开进 JIT 生成的 C 代码：没有跨模块调用、没有结构体指针追逐，
 // 地址段在编译期折叠成常量比较。这样 LLVM 后端能优化到接近手写，
 // TinyCC 直译出来的也只是一串标量比较。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/WishboneInterconnect.h"
 
 #include <algorithm>
@@ -193,3 +194,12 @@ std::unique_ptr<Component> WishboneInterconnect::clone(const std::string &new_na
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"wishbone_ic", {{"segments", "0:65536"}, {"num_masters", "1"}}, {"m0_adr_i", "m0_dat_i", "m0_we_i", "m0_sel_i", "m0_stb_i", "m0_cyc_i", "s0_dat_i", "s0_ack_i"}, {"m0_dat_o", "m0_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::WishboneInterconnect>(n, dsc::paramStr(p, "segments", "0:65536"), dsc::paramInt(p, "num_masters", 1));
+        });
+} // namespace

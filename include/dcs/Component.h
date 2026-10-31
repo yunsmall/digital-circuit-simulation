@@ -41,6 +41,8 @@ std::string gen_write_wire(int comp_id, int out_idx, std::string_view val, int p
 //   └── SequentialComponent      (时序逻辑，有独立状态结构体)
 // ============================================================
 
+class Circuit;
+
 class Component {
 public:
     // type_name: 元件类型名（如 "and"、"dff"），用于生成 C 函数名
@@ -139,6 +141,10 @@ public:
         return true;
     }
 
+    // 电路展开、编号完成后调用。依赖其它元件的设备（如直接访问存储器的
+    // virtio 设备）在这里拿到电路上下文；prepare 阶段电路还不完整，不能用
+    virtual void bindCircuit(Circuit * /*circuit*/) {
+    }
     // 需要注入 JIT 的额外符号（DLL 函数指针等），电路编译时统一注入
     struct JitSymbol {
         std::string name;

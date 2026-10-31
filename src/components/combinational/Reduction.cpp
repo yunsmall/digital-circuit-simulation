@@ -1,4 +1,5 @@
 // Reduction — 归约门实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Reduction.h"
 #include <format>
 
@@ -50,3 +51,24 @@ std::unique_ptr<Component> Reduction::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"redand", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Reduction, "归约与，输出=所有输入位的AND"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Reduction>(n, dsc::paramInt(p, "bit_width", 8), dsc::ReductionOp::AND);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"redor", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Reduction, "归约或，输出=所有输入位的OR"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Reduction>(n, dsc::paramInt(p, "bit_width", 8), dsc::ReductionOp::OR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"redxor", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Reduction, "归约异或，输出=所有输入位的XOR"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Reduction>(n, dsc::paramInt(p, "bit_width", 8), dsc::ReductionOp::XOR);
+                       });
+} // namespace

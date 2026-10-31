@@ -1,4 +1,5 @@
 // Misc — 常量、开关、合并、拆分元件实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Misc.h"
 #include <format>
 #include <stdexcept>
@@ -10,7 +11,7 @@ namespace dsc {
 // ============================================================
 
 Constant::Constant(const std::string &name, int bit_width, uint64_t value) :
-    CombinationalComponent(name, "const"), _bit_width(bit_width), _value(value) {
+    CombinationalComponent(name, "constant"), _bit_width(bit_width), _value(value) {
     setParam("bit_width", std::to_string(bit_width));
     setParam("value", std::to_string(_value));
     if (bit_width < 1 || bit_width > 64)
@@ -151,3 +152,39 @@ std::unique_ptr<Component> Split::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"constant", {{"bit_width", "8"}, {"value", "0"}}, {}, {"out"}, dsc::ComponentCategory::DataPath, "常量，输出固定值"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           uint64_t v = 0;
+                           auto it = p.find("value");
+                           if (it != p.end()) {
+                               const auto &s = it->second;
+                               auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, 0);
+                               // 解析失败就当 0：非数字由 validateParams 报错，不该在这抛
+                               if (ec != std::errc{} || ptr != s.data() + s.size())
+                                   v = 0;
+                           }
+                           return std::make_unique<dsc::Constant>(n, dsc::paramInt(p, "bit_width", 8), v);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"switch", {{"bit_width", "8"}}, {"in", "en"}, {"out"}, dsc::ComponentCategory::DataPath, "开关，en=1时out=in，en=0时高阻"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Switch>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"merge", {{"num_bits", "8"}}, {}, {"out"}, dsc::ComponentCategory::DataPath, "位合并，将num_bits个1位输入合并为多bit输出"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Merge>(n, dsc::paramInt(p, "num_bits", 8));
+        });
+
+DCS_REGISTER_COMPONENT(
+    {"split", {{"num_bits", "8"}}, {"in"}, {}, dsc::ComponentCategory::DataPath, "位拆分，将多bit输入拆分为num_bits个1位输出"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Split>(n, dsc::paramInt(p, "num_bits", 8));
+        });
+} // namespace

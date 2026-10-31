@@ -1,4 +1,5 @@
 // MultiPortRAM — 参数化多端口 RAM 实现（字节寻址）
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/MultiPortRAM.h"
 #include "dcs/util/MemoryDepth.h"
 #include <format>
@@ -189,3 +190,22 @@ std::unique_ptr<Component> MultiPortRAM::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"mpram",
+                        {{"addr_width", "4"},
+                         {"data_width", "8", {"8", "16", "32", "64"}},
+                         {"num_read_ports", "1"},
+                         {"num_write_ports", "1"},
+                         {"read_latency", "0"}},
+                        {},
+                        {},
+                        dsc::ComponentCategory::Memory, "多端口RAM，支持多个独立读写端口和流水线延迟"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::MultiPortRAM>(
+                                   n, dsc::paramInt(p, "addr_width", 4), dsc::paramInt(p, "data_width", 8), dsc::paramInt(p, "num_read_ports", 1),
+                                   dsc::paramInt(p, "num_write_ports", 1), dsc::paramInt(p, "read_latency", 0));
+                       });
+} // namespace

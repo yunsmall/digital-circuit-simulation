@@ -120,3 +120,47 @@ TEST(RegBridgeTest, AckWaitsForReady) {
     EXPECT_EQ(f.ack(), 1) << "ready 到达后应回 ack";
     f.end();
 }
+
+TEST(RegBridgeTest, AddressTruncatedToEightBits) {
+    RbFixture f;
+    f.begin(0x1A5, 0, true);
+    EXPECT_EQ(f.c->getWire(f.o_addr->id())[0], 0xA5) << "addr 只保留低 8 位";
+    f.end();
+}
+
+TEST(RegBridgeTest, WriteDataHeldWhileWaitingReady) {
+    RbFixture f;
+    f.begin(0x08, 0xDEADBEEF, true, false);
+    f.ticks(4);
+    EXPECT_EQ(f.get32(f.o_wdat), 0xDEADBEEFu) << "等待 ready 期间写数据必须保持";
+    EXPECT_EQ(f.ack(), 0);
+    f.c->setWire(f.ready->id(), {1});
+    f.ticks(3);
+    EXPECT_EQ(f.ack(), 1);
+    f.end();
+}
+
+TEST(RegBridgeTest, EnIsPulseAcrossBackToBackTransactions) {
+    RbFixture f;
+    f.begin(0x00, 0x1111, true);
+    EXPECT_EQ(f.en(), 1);
+    f.end();
+    f.begin(0x00, 0x2222, true);
+    EXPECT_EQ(f.en(), 1) << "第二个事务应重新拉 en";
+    f.end();
+}
+
+TEST(RegBridgeTest, ReadLatchesDataOnlyAfterReady) {
+    RbFixture f;
+    f.c->setWire(f.rdat->id(), {0x11, 0x11, 0x11, 0x11});
+    f.begin(0x00, 0, false, false);
+    f.c->setWire(f.rdat->id(), {0x22, 0x22, 0x22, 0x22});
+    f.ticks(3);
+    EXPECT_EQ(f.ack(), 0);
+    f.c->setWire(f.ready->id(), {1});
+    f.ticks(3);
+    EXPECT_EQ(f.ack(), 1);
+    EXPECT_EQ(f.get32(f.o_dat), 0x22222222u) << "应在 ready 生效时锁存当时的数据";
+    f.end();
+}
+

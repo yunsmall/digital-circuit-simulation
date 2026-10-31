@@ -1,4 +1,5 @@
 // DllComponent — 加载外部 DLL 实现的自定义元件
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/Dll.h"
 
 #ifdef _WIN32
@@ -328,3 +329,12 @@ std::unique_ptr<Component> DllComponent::clone(const std::string &new_name) cons
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"dll", {{"path", ""}}, {}, {}, dsc::ComponentCategory::Misc, "外部DLL元件，由动态库提供仿真逻辑"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::DllComponent>(n, dsc::paramStr(p, "path", ""));
+        });
+} // namespace

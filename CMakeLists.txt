@@ -146,6 +146,19 @@ file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_util.h DCS_SHIM_UTIL)
 set(DCS_SHIM_SOURCE "${DCS_SHIM_STDINT}\n${DCS_SHIM_STDBOOL}\n${DCS_SHIM_UTIL}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/shim_embedded.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/dcs_shim_embedded.h @ONLY)
+# LTO：宿主侧代码（解释器、代码生成、元件实现）跨编译单元内联。
+# JIT 生成的热点代码不经过这里，所以只影响启动和 C++ 侧开销；
+# 链接 90MB 的 LLVM 静态库会明显变慢，默认关闭
+option(DCS_ENABLE_LTO "启用 LTO（链接时间明显变长）" OFF)
+if(DCS_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT DCS_IPO_OK LANGUAGES CXX)
+    if(DCS_IPO_OK)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+    endif()
+endif()
+
 # 共享库能省磁盘：LLVM 静态链进 dcs_lib 一份，不必每个 exe 复制 90MB。
 # 但官方 LLVM 发行包用静态 CRT（/MT）编译，共享库必须配 /MD，链接器会报
 # /failifmismatch: RuntimeLibrary。只有自己用 /MD 重编 LLVM 时才能打开这个选项。
@@ -159,6 +172,7 @@ if(DCS_SHARED_LIB)
         set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     endif()
     add_library(dcs_lib SHARED ${DCS_SOURCES})
+    set(DCS_LIB_LINK dcs_lib)
     if(WIN32)
         # 自动导出本库定义的所有符号，免去给每个类手写 __declspec(dllexport)。
         # .def 里会连带导出静态链接进来的 LLVM 符号，链接稍慢但功能正确
@@ -166,6 +180,11 @@ if(DCS_SHARED_LIB)
     endif()
 else()
     add_library(dcs_lib STATIC ${DCS_SOURCES})
+    # 元件靠静态初始化器自注册（DCS_REGISTER_COMPONENT）。静态库里没有被其它
+    # 目标引用的 .obj 会被链接器整个丢掉，注册对象也就不会执行，表现为
+    # --list-types 一个元件都不剩。WHOLE_ARCHIVE 生成表达式由 CMake 按工具链
+    # 展开成 /WHOLEARCHIVE（MSVC/clang-cl）或 --whole-archive（GCC/Clang）
+    set(DCS_LIB_LINK "$<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>")
 endif()
 target_include_directories(dcs_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -199,7 +218,7 @@ add_custom_command(TARGET dcs_lib POST_BUILD ${_COPY_CMDS})
 if(DCS_BUILD_EXECUTABLE)
     find_package(cxxopts CONFIG REQUIRED)
     add_executable(dcs src/bin/main.cpp)
-    target_link_libraries(dcs PRIVATE dcs_lib cxxopts::cxxopts)
+    target_link_libraries(dcs PRIVATE ${DCS_LIB_LINK} cxxopts::cxxopts)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs PRIVATE DCS_USE_TCC)
     endif()
@@ -207,7 +226,7 @@ if(DCS_BUILD_EXECUTABLE)
     # 整机仿真入口：加载 RISC-V ELF、串口接宿主键盘、按 tohost 判定结果。
     # 这些是计算机仿真特有的东西，单独一个可执行文件，不往纯电路仿真的 dcs 里塞
     add_executable(dcs_soc src/bin/soc_main.cpp)
-    target_link_libraries(dcs_soc PRIVATE dcs_lib cxxopts::cxxopts)
+    target_link_libraries(dcs_soc PRIVATE ${DCS_LIB_LINK} cxxopts::cxxopts)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs_soc PRIVATE DCS_USE_TCC)
     endif()
@@ -216,7 +235,7 @@ endif()
 # ---- 性能基准（不注册进 ctest，手动运行）----
 if(DCS_BUILD_BENCHMARK)
     add_executable(dcs_bench benchmarks/benchmark.cpp)
-    target_link_libraries(dcs_bench PRIVATE dcs_lib)
+    target_link_libraries(dcs_bench PRIVATE ${DCS_LIB_LINK})
     set_target_properties(dcs_bench PROPERTIES CXX_STANDARD 23)
 endif()
 
@@ -229,7 +248,7 @@ if(GTest_FOUND)
     function(add_dcs_test TEST_NAME TEST_SOURCE_GLOB)
         file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${TEST_SOURCE_GLOB})
         add_executable(${TEST_NAME} ${TEST_SOURCES})
-        target_link_libraries(${TEST_NAME} PRIVATE dcs_lib GTest::gtest GTest::gtest_main)
+        target_link_libraries(${TEST_NAME} PRIVATE ${DCS_LIB_LINK} GTest::gtest GTest::gtest_main)
         # tests/common 下是跨测试复用的辅助件（如 Wishbone 主设备测试台），
         # 各测试用 #include "common/xxx.h" 引用
         target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -269,6 +288,7 @@ if(GTest_FOUND)
         "DCS_RISCV_ELF_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-official/out")
     add_dcs_test(test_plic       tests/test_plic/*.cpp)
     add_dcs_test(test_uart       tests/test_uart/*.cpp)
+    add_dcs_test(test_virtio     tests/test_virtio/*.cpp)
     add_dcs_test(test_uart_term  tests/test_uart_term/*.cpp)
     add_dcs_test(test_uart_in    tests/test_uart_in/*.cpp)
     add_dcs_test(test_uart_feed  tests/test_uart_feed/*.cpp)

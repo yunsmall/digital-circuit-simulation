@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <thread>
 
@@ -76,6 +77,26 @@ void listTypes() {
         }
         std::cout << "\n";
     }
+}
+
+// ---- list-types（JSON：给外部工具生成编辑器/文档用）----
+void listTypesJson() {
+    auto &f = dsc::ComponentFactory::instance();
+    nlohmann::json root;
+    root["components"] = nlohmann::json::array();
+    for (auto &[name, meta]: f.metas()) {
+        nlohmann::json j;
+        j["type"] = meta.type_name;
+        j["category"] = dsc::categoryKey(meta.category);
+        j["description"] = meta.description;
+        j["params"] = nlohmann::json::array();
+        for (auto &p: meta.params)
+            j["params"].push_back({{"name", p.name}, {"default", p.default_val}, {"valid_values", p.valid_values}});
+        j["inputs"] = meta.input_pins;
+        j["outputs"] = meta.output_pins;
+        root["components"].push_back(std::move(j));
+    }
+    std::cout << root.dump(2) << "\n";
 }
 
 // ---- dll-info ----
@@ -316,8 +337,9 @@ int main(int argc, char *argv[]) {
             "vcd", "把线网变化导出为 VCD 波形（可用 GTKWave 打开）", cxxopts::value<std::string>());
 
     // 工具选项
-    opts.add_options("工具")("l,list-types", "列出所有已注册的元件类型")("j,json-to-c", "JSON 电路转为 C 代码输出",
-                                                                         cxxopts::value<std::string>())(
+    opts.add_options("工具")("l,list-types", "列出所有已注册的元件类型")(
+            "json", "配合 --list-types：输出机器可读的 JSON 描述")("j,json-to-c", "JSON 电路转为 C 代码输出",
+                                                                    cxxopts::value<std::string>())(
             "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>());
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
@@ -354,7 +376,10 @@ int main(int argc, char *argv[]) {
     }
 
     if (result.count("list-types")) {
-        listTypes();
+        if (result.count("json"))
+            listTypesJson();
+        else
+            listTypes();
         return 0;
     }
     if (result.count("dll-info")) {

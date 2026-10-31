@@ -105,6 +105,29 @@ EOF
 | `dcs-init.c` | 同上，用内核自带 nolibc 的 C 版本 |
 | `build-boot.sh` | 把 Image/DTB/initramfs 打包成单个 ELF |
 | `build-busybox.sh` | 交叉编译 musl 静态 busybox 并打 initramfs |
+| `make-disk.sh` | 生成 virtio-blk 用的空磁盘镜像 |
+
+## 块设备（virtio-blk）
+
+`riscv_linux.json` 里接了一个 `virtio_mmio` 块设备，MMIO 地址 `0x10001000`，
+中断接 PLIC 源 2，后端是宿主上的 `images/disk.img`。设备是标准的**总线主设备**：
+virtqueue 的 descriptor/avail/used 和数据缓冲全部通过 Wishbone 主端口访问
+（接在 `wishbone_ic` 的 `m1` 上），不直接碰存储器内部。
+
+```bash
+bash <本目录>/make-disk.sh                 # 16 MB 空镜像
+# 可选：在宿主上格式化
+mke2fs -t ext4 -F images/disk.img
+
+./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+# guest 里
+ls -l /dev/vda
+mount /dev/vda /mnt
+```
+
+宿主的每次读写都直接落到镜像文件上，所以 guest 里写的数据在仿真退出后仍然保留。
+镜像也可以来自电路里的 ROM（把 `path` 留空），这时设备声明 `VIRTIO_BLK_F_RO`，
+写请求返回只读错误。
 
 ## 几个容易踩的坑
 
@@ -126,3 +149,5 @@ EOF
 - 单 hart、单 context（内核只用 S 态 context 1）。
 - UART 是单字节收发寄存器，不实现 FIFO；因此 IIR 不报告 FIFO 使能位。
 - 没有 M 态固件（OpenSBI 的角色由 `boot.S` + CPU 内建的 SBI 调用处理）。
+- `virtio_mmio` 元件可以作为块设备接宿主镜像或电路里的 ROM，但示例电路还没接上；
+  队列必须落在 RAM，镜像可以来自只读 ROM（设备会声明 `VIRTIO_BLK_F_RO`）。

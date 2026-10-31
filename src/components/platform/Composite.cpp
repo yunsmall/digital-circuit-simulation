@@ -155,3 +155,12 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"composite", {{"definition", ""}}, {}, {}, dsc::ComponentCategory::Misc, "复合元件，由JSON定义嵌套子电路"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::CompositeComponent>(n, dsc::paramStr(p, "definition", ""));
+        });
+} // namespace

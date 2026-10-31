@@ -121,3 +121,39 @@ TEST(PwmTest, RegistersReadBack) {
     EXPECT_EQ(f.read(0x04), 567u);
     EXPECT_EQ(f.read(0x08), 1u);
 }
+
+TEST(PwmTest, CtrlOnlyKeepsLowBit) {
+    PwmFixture f;
+    f.write(0x08, 0xFFFFFFFF);
+    EXPECT_EQ(f.read(0x08), 1u) << "CTRL 只有 bit0 有效";
+}
+
+TEST(PwmTest, UnknownAddressReadsZero) {
+    PwmFixture f;
+    EXPECT_EQ(f.read(0x7C), 0u);
+}
+
+TEST(PwmTest, SmallDutyProducesNarrowPulse) {
+    PwmFixture f;
+    f.write(0x00, 10);
+    f.write(0x04, 1);
+    f.write(0x08, 1);
+    auto n = f.countHigh(100);
+    EXPECT_GE(n, 1) << "占空比 1/10 不应完全无高电平";
+    EXPECT_LE(n, 20);
+}
+
+TEST(PwmTest, PeriodChangeTakesEffect) {
+    PwmFixture f;
+    f.write(0x00, 4);
+    f.write(0x04, 2);
+    f.write(0x08, 1);
+    auto a = f.countHigh(40);
+    f.write(0x00, 16);
+    f.write(0x04, 8);
+    auto b = f.countHigh(160);
+    EXPECT_GE(a, 10);
+    EXPECT_LE(a, 30);
+    EXPECT_GE(b, 60) << "新的 PERIOD/DUTY 没有生效";
+    EXPECT_LE(b, 100);
+}

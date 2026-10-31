@@ -1,19 +1,40 @@
 // ComponentFactory — 元件类型注册表
 //
-// 所有类型在 InitAllComponents 的构造函数里手写 registerType 注册（见 src/ComponentFactory.cpp）。
+// 元件在自己的 .cpp 里用 DCS_REGISTER_COMPONENT 自注册（见文件末尾的宏），
+// 类型名、参数、引脚、分类、描述和实现放在一起，新增元件不用再改中央表。
 // JSON 解析器通过 metas() 获取所有类型的参数列表，读写电路文件。
 //
 // 生命周期: Meyer's Singleton，首次调用 instance() 时构造，程序结束时析构。
 #pragma once
+#include <charconv>
 #include <format>
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include "dcs/Component.h"
 
 namespace dsc {
+
+// 整型参数解析：JSON 里把整型参数写成非数字时不能抛异常打掉整个进程，
+// 这里退回默认值，真正的非法值由 validateParams 和元件构造后的参数校验收口
+inline int paramInt(const std::unordered_map<std::string, std::string> &p, const std::string &k, int d) {
+    auto it = p.find(k);
+    if (it == p.end())
+        return d;
+    const auto &s = it->second;
+    int v = d;
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+    return (ec == std::errc{} && ptr == s.data() + s.size()) ? v : d;
+}
+
+inline std::string paramStr(const std::unordered_map<std::string, std::string> &p, const std::string &k,
+                            const std::string &d) {
+    auto it = p.find(k);
+    return it != p.end() ? it->second : d;
+}
 
 // 元件分类枚举，供外部工具按类别筛选
 enum class ComponentCategory {
@@ -135,6 +156,23 @@ private:
 };
 
 // 分类名称（供 CLI / 外部工具展示）
+// 英文分类键：给机器读取（--list-types --json、外部工具），不受显示语言影响
+inline const char *categoryKey(ComponentCategory c) {
+    switch (c) {
+        case ComponentCategory::Gate:       return "gate";
+        case ComponentCategory::Reduction:  return "reduction";
+        case ComponentCategory::Arithmetic: return "arithmetic";
+        case ComponentCategory::Sequential: return "sequential";
+        case ComponentCategory::Float:      return "float";
+        case ComponentCategory::Memory:     return "memory";
+        case ComponentCategory::DataPath:   return "datapath";
+        case ComponentCategory::Bus:        return "bus";
+        case ComponentCategory::CPU:        return "cpu";
+        case ComponentCategory::Misc:       return "misc";
+    }
+    return "unknown";
+}
+
 inline const char *categoryName(ComponentCategory c) {
     switch (c) {
         case ComponentCategory::Gate:       return "门电路";
@@ -151,4 +189,24 @@ inline const char *categoryName(ComponentCategory c) {
     return "未知";
 }
 
+// 元件自注册：在元件的 .cpp 里写一次，程序启动时自动登记到工厂。
+// 工厂是 Meyer's Singleton，静态初始化顺序安全。
+// 用可变参数宏而不是两个固定参数：Meta 的初始化列表里全是花括号内的逗号，
+// 预处理器只认圆括号保护，固定参数宏会在那里被拆成"参数过多"
+// 注意：静态库中未被引用的目标文件会被链接器整个丢掉，注册对象也就不会执行，
+// 所以 CMake 对静态库场景统一加了 WHOLE_ARCHIVE（见 CMakeLists.txt）
+inline bool registerComponentAtStartup(ComponentFactory::Meta meta, ComponentFactory::Creator creator) {
+    ComponentFactory::instance().registerType(std::move(meta), std::move(creator));
+    return true;
+}
+
 } // namespace dsc
+
+#define DCS_REGISTER_IMPL2(a, b) a##b
+#define DCS_REGISTER_IMPL1(a, b) DCS_REGISTER_IMPL2(a, b)
+#define DCS_REGISTER_COMPONENT(...)                                                    \
+    namespace {                                                                        \
+    [[maybe_unused]] const bool DCS_REGISTER_IMPL1(dcs_registered_, __LINE__) =        \
+            ::dsc::registerComponentAtStartup(__VA_ARGS__);                            \
+    }
+

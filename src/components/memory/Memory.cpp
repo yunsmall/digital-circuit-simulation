@@ -1,4 +1,5 @@
 // Memory — 带读写延迟的可寻址 RAM（字节寻址）
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/Memory.h"
 #include "dcs/util/MemoryDepth.h"
 #include <format>
@@ -186,3 +187,17 @@ std::unique_ptr<Component> Memory::clone(const std::string &n) const {
 
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"memory",
+                        {{"addr_width", "4"}, {"data_width", "8", {"8", "16", "32", "64"}}, {"read_latency", "0"}, {"write_latency", "0"}},
+                        {"addr", "data_in", "we", "clk"},
+                        {"data_out", "busy"},
+                        dsc::ComponentCategory::Memory, "可寻址RAM，支持独立配置读写延迟"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Memory>(n, dsc::paramInt(p, "addr_width", 4), dsc::paramInt(p, "data_width", 8),
+                                                                dsc::paramInt(p, "read_latency", 0), dsc::paramInt(p, "write_latency", 0));
+                       });
+} // namespace

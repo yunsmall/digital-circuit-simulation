@@ -1,5 +1,6 @@
 // DMA — 存储器到存储器的块搬运控制器
 // 配置端口与搬运状态机全部展开在 JIT 里，每拍没有跨模块调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/DMA.h"
 
 #include <format>
@@ -173,3 +174,12 @@ std::unique_ptr<Component> DMA::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"dma", {}, {"cfg_adr_i", "cfg_dat_i", "cfg_we_i", "cfg_sel_i", "cfg_stb_i", "cfg_cyc_i", "m_dat_i", "m_ack_i"}, {"cfg_dat_o", "cfg_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"}, dsc::ComponentCategory::Bus, "存储器到存储器块搬运的 DMA 控制器"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::DMA>(n);
+        });
+} // namespace

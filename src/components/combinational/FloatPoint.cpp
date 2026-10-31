@@ -1,4 +1,5 @@
 // FloatPoint — IEEE 754 浮点运算元件实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/FloatPoint.h"
 #include <cmath>
 #include <format>
@@ -153,7 +154,8 @@ std::unique_ptr<Component> FloatCmp::clone(const std::string &n) const {
 // FloatConst — 浮点常量
 // ============================================================
 FloatConst::FloatConst(const std::string &name, int precision, double value) :
-    CombinationalComponent(name, std::format("fconst{}", precision)), _precision(precision), _value(value) {
+    // typeName 是类型标识，不能带精度；精度通过 setParam 记录，反序列化时再传回来
+    CombinationalComponent(name, "fconst"), _precision(precision), _value(value) {
     auto [ct, bytes] = float_info(precision);
     setParam("precision", std::to_string(precision));
     setParam("value", std::format("{}", value));
@@ -304,3 +306,98 @@ std::unique_ptr<Component> IntToFloat::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"fadd", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点加法，out=a+b"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::ADD);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fsub", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点减法，out=a-b"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::SUB);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fmul", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点乘法，out=a*b"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::MUL);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fdiv", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点除法，out=a/b"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::DIV);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"feq", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点等于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::EQ);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fne", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点不等于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::NE);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"flt", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点小于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::LT);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fgt", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点大于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::GT);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fle", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点小于等于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::LE);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fge", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点大于等于比较"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatCmp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatCmpOp::GE);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"fconst", {{"precision", "32", {"32", "64"}}, {"value", "0.0"}}, {}, {"out"}, dsc::ComponentCategory::Float, "浮点常量"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           double v = 0.0;
+                           auto it = p.find("value");
+                           if (it != p.end())
+                               v = std::stod(it->second);
+                           return std::make_unique<dsc::FloatConst>(n, dsc::paramInt(p, "precision", 32), v);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"f2i",
+                        {{"fp", "32", {"32", "64"}}, {"int_width", "8"}, {"signed", "0"}},
+                        {"in"},
+                        {"out"},
+                        dsc::ComponentCategory::Float, "浮点转整型，截断小数部分"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatToInt>(n, dsc::paramInt(p, "fp", 32), dsc::paramInt(p, "int_width", 8),
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"i2f",
+                        {{"int_width", "8"}, {"fp", "32", {"32", "64"}}, {"signed", "0"}},
+                        {"in"},
+                        {"out"},
+                        dsc::ComponentCategory::Float, "整型转浮点"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::IntToFloat>(n, dsc::paramInt(p, "int_width", 8), dsc::paramInt(p, "fp", 32),
+                                                                    dsc::paramInt(p, "signed", 0) != 0);
+                       });
+} // namespace

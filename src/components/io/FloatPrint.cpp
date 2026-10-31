@@ -1,4 +1,5 @@
 // FloatPrint — 浮点打印元件实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/FloatPrint.h"
 #include <cstdio>
 #include <cstring>
@@ -82,3 +83,12 @@ std::unique_ptr<Component> FloatPrint::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"fprint", {{"precision", "32", {"32", "64"}}}, {"in", "clk"}, {}, dsc::ComponentCategory::Float, "浮点打印，clk上升沿打印浮点值"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::FloatPrint>(n, dsc::paramInt(p, "precision", 32));
+                       });
+} // namespace

@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/Watchdog.h"
 
 #include <format>
@@ -86,3 +87,12 @@ std::unique_ptr<Component> Watchdog::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"watchdog", {}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "看门狗定时器：CTRL/TIMEOUT/FEED/STATUS，超时拉 irq"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::Watchdog>(n);
+        });
+} // namespace

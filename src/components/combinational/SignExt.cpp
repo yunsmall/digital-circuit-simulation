@@ -1,4 +1,5 @@
 // SignExt — 符号扩展元件实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/SignExt.h"
 #include <format>
 #include <stdexcept>
@@ -51,3 +52,12 @@ std::unique_ptr<Component> SignExt::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"signext", {{"src_width", "4"}, {"dst_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::DataPath, "符号扩展，将窄位宽有符号数扩展到宽位宽"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::SignExt>(n, dsc::paramInt(p, "src_width", 4), dsc::paramInt(p, "dst_width", 8));
+                       });
+} // namespace

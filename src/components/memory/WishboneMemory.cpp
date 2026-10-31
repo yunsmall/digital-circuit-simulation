@@ -1,4 +1,5 @@
 // WishboneMemory — Wishbone 从设备存储器（访存逻辑在 C++ 回调中实现）
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/WishboneMemory.h"
 #include "dcs/util/MemoryDepth.h"
 
@@ -106,8 +107,10 @@ std::string WishboneMemory::genFuncDef_seq() const {
     uint32_t _dout = 0;
     uint8_t _ack8 = 0;
     if (_rise) {{
+        // Wishbone B4 RULE 3.100：32 位总线上 ADR(63..02) 是字地址，低两位不参与
+        // 寻址；SEL(i) 对应 DAT(8i+7..8i)，小端时就是该字的第 i 个字节。
         // 从设备只有 addr_width 根地址线，高位在硬件上就是别名回来，按容量折算
-        const uint32_t _a = _adr & {1}u;
+        const uint32_t _a = ((_adr & {1}u) & ~3u);
         _wbm_s_{0}.latched_addr = _a;
         if (!_we) {{
             _wbm_s_{0}.latched_dout = 0;
@@ -122,7 +125,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
         }}
         _wbm_s_{0}.ack_pending = 1;
     }} else if (_werise) {{
-        // AMO 写阶段：用已折算过的锁存地址
+        // AMO 写阶段：用已折算过的锁存地址（已经是字对齐的）
         const uint32_t _a = _wbm_s_{0}.latched_addr;
         if ((unsigned long long)_a + {2}ull <= {3}ull)
             for (int _b = 0; _b < {2}; _b++)
@@ -155,3 +158,12 @@ std::unique_ptr<Component> WishboneMemory::clone(const std::string &new_name) co
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"wishbone_mem", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32", "64"}}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o"}, dsc::ComponentCategory::Memory, "Wishbone 从设备存储器，支持 IStorage 加载程序"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::WishboneMemory>(n, dsc::paramInt(p, "addr_width", 16), dsc::paramInt(p, "data_width", 32));
+        });
+} // namespace

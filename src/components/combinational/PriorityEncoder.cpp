@@ -1,4 +1,5 @@
 // PriorityEncoder — 优先编码器实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/PriorityEncoder.h"
 #include <cmath>
 #include <format>
@@ -58,3 +59,12 @@ std::unique_ptr<Component> PriorityEncoder::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"prienc", {{"num_inputs", "8"}}, {}, {"out", "valid"}, dsc::ComponentCategory::DataPath, "优先编码器，输出最高位1的位置"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::PriorityEncoder>(n, dsc::paramInt(p, "num_inputs", 8));
+                       });
+} // namespace

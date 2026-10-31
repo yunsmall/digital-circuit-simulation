@@ -1,4 +1,5 @@
 // Shifter — 移位器实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Shifter.h"
 #include <bit>
 #include <cmath>
@@ -72,3 +73,36 @@ std::unique_ptr<Component> Shifter::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"lsl",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"},
+                        dsc::ComponentCategory::DataPath, "逻辑左移，out=in<<shift，低位补0"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Shifter>(n, dsc::paramInt(p, "bit_width", 8), dsc::ShiftMode::LSL);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"lsr",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"},
+                        dsc::ComponentCategory::DataPath, "逻辑右移，out=in>>shift，高位补0"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Shifter>(n, dsc::paramInt(p, "bit_width", 8), dsc::ShiftMode::LSR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"asr",
+                        {{"bit_width", "8"}},
+                        {"in", "shift"},
+                        {"out"},
+                        dsc::ComponentCategory::DataPath, "算术右移，out=in>>shift，高位补符号位"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Shifter>(n, dsc::paramInt(p, "bit_width", 8), dsc::ShiftMode::ASR);
+                       });
+} // namespace

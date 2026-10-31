@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/RegBridge.h"
 
 #include <format>
@@ -84,3 +85,12 @@ std::unique_ptr<Component> RegBridge::clone(const std::string &new_name) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"reg_bridge", {}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rdata", "ready"}, {"wb_dat_o", "wb_ack_o", "addr", "wdata", "we", "en"}, dsc::ComponentCategory::Misc, "Wishbone 从设备转通用寄存器接口（addr/wdata/we/en → rdata/ready）"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::RegBridge>(n);
+        });
+} // namespace

@@ -1,6 +1,8 @@
 // JSON 序列化：工厂注册类型验证
 #include <gtest/gtest.h>
+#include <set>
 #include <unordered_map>
+#include "dcs/Circuit.h"
 #include "dcs/ComponentFactory.h"
 using namespace dsc;
 
@@ -23,18 +25,18 @@ TEST(JsonRoundTrip, FromFactory) {
             {"dff", "dff", {{"bit_width", "8"}}},
             {"tff", "tff", {{"bit_width", "8"}}},
             {"jkff", "jkff", {{"bit_width", "8"}}},
-            {"register", "reg", {{"bit_width", "8"}}},
+            {"register", "register", {{"bit_width", "8"}}},
             {"latch", "latch", {{"bit_width", "8"}}},
-            {"counter", "cnt", {{"bit_width", "8"}}},
-            {"shift", "sr", {{"length", "8"}}},
+            {"counter", "counter", {{"bit_width", "8"}}},
+            {"shift", "shift", {{"length", "8"}}},
             {"mux", "mux", {{"n_selects", "1"}, {"bit_width", "8"}}},
             {"adder", "adder", {{"bit_width", "8"}}},
-            {"eq", "cmp_eq", {{"bit_width", "8"}}},
-            {"ne", "cmp_ne", {{"bit_width", "8"}}},
-            {"lt", "cmp_lt", {{"bit_width", "8"}}},
-            {"gt", "cmp_gt", {{"bit_width", "8"}}},
-            {"le", "cmp_le", {{"bit_width", "8"}}},
-            {"ge", "cmp_ge", {{"bit_width", "8"}}},
+            {"eq", "eq", {{"bit_width", "8"}}},
+            {"ne", "ne", {{"bit_width", "8"}}},
+            {"lt", "lt", {{"bit_width", "8"}}},
+            {"gt", "gt", {{"bit_width", "8"}}},
+            {"le", "le", {{"bit_width", "8"}}},
+            {"ge", "ge", {{"bit_width", "8"}}},
             {"edgedet_rise", "edgedet_rise", {}},
             {"edgedet_fall", "edgedet_fall", {}},
             {"edgedet_both", "edgedet_both", {}},
@@ -60,7 +62,7 @@ TEST(JsonRoundTrip, FromFactory) {
             {"f2i", "f2i", {{"fp", "32"}, {"int_width", "8"}}},
             {"i2f", "i2f", {{"int_width", "8"}, {"fp", "32"}}},
             {"decoder", "decoder", {{"n_selects", "2"}}},
-            {"constant", "const", {{"bit_width", "8"}, {"value", "42"}}},
+            {"constant", "constant", {{"bit_width", "8"}, {"value", "42"}}},
             {"switch", "switch", {{"bit_width", "8"}}},
             {"merge", "merge", {{"num_bits", "8"}}},
             {"split", "split", {{"num_bits", "8"}}},
@@ -102,3 +104,47 @@ TEST(JsonRoundTrip, ParamValidation) {
     EXPECT_NE(c3, nullptr);
     EXPECT_EQ(err, "");
 }
+
+// 遍历所有已注册类型做 JSON 往返：用默认参数建一个单元件电路，
+// 导出再反序列化，检查类型名、构造参数、引脚都没丢。
+// 这条测试能一次抓出"setParam 漏参数""typeName 和注册键不一致"这类问题
+TEST(JsonRoundTrip, AllRegisteredTypes) {
+    auto &f = ComponentFactory::instance();
+    // 需要外部资源的类型：dll 要真实 DLL 文件，composite 要先有蓝图定义
+    const std::set<std::string> skip = {"dll", "composite"};
+    for (auto &[name, meta]: f.metas()) {
+        if (skip.count(name))
+            continue;
+        SCOPED_TRACE("类型: " + name);
+        std::string err;
+        auto comp = f.create(name, "dev", {}, err);
+        ASSERT_NE(comp, nullptr) << err;
+        const auto params_before = comp->exportParams();
+        const auto inputs_before = comp->inputs().size();
+        const auto outputs_before = comp->outputs().size();
+
+        Circuit c;
+        Component *cp = c.addComponent(std::move(comp));
+        ASSERT_NE(cp, nullptr);
+        for (auto &pin: cp->inputs()) {
+            Net *n = c.createNet("in_" + name + "_" + pin->name());
+            ASSERT_EQ(c.connect(cp, pin->name(), n).code, ErrorCode::OK);
+        }
+        for (auto &pin: cp->outputs()) {
+            Net *n = c.createNet("out_" + name + "_" + pin->name());
+            ASSERT_EQ(c.connect(cp, pin->name(), n).code, ErrorCode::OK);
+        }
+
+        const std::string json = c.exportJson();
+        std::string error;
+        auto c2 = Circuit::fromJson(json, error);
+        ASSERT_NE(c2, nullptr) << error;
+        ASSERT_EQ(c2->componentCount(), 1);
+        auto *cp2 = c2->componentById(0);
+        EXPECT_EQ(cp2->typeName(), meta.type_name);
+        EXPECT_EQ(cp2->exportParams(), params_before);
+        EXPECT_EQ(cp2->inputs().size(), inputs_before);
+        EXPECT_EQ(cp2->outputs().size(), outputs_before);
+    }
+}
+

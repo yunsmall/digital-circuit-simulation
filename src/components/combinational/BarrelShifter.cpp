@@ -1,4 +1,5 @@
 // BarrelShifter — 桶形移位器实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/BarrelShifter.h"
 #include <cmath>
 #include <format>
@@ -89,3 +90,12 @@ std::unique_ptr<Component> BarrelShifter::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"barrel", {{"bit_width", "8"}}, {"in", "amt", "dir", "arith"}, {"out"}, dsc::ComponentCategory::DataPath, "桶形移位器，支持左移/逻辑右移/算术右移"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::BarrelShifter>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+} // namespace

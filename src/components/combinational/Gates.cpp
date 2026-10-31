@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Gates.h"
 #include <format>
 #include <stdexcept>
@@ -143,3 +144,66 @@ std::unique_ptr<Component> GateTSBUF::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"and", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入与门，所有输入为1时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::AND);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"or", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入或门，任一输入为1时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::OR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"nand", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入与非门，相当于与门+非门"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::NAND);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"nor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入或非门，相当于或门+非门"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::NOR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"xor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入异或门，输入中1的个数为奇数时输出1"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::XOR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"xnor", {{"inputs", "2"}, {"bit_width", "8"}}, {"in0", "in1"}, {"out"}, dsc::ComponentCategory::Gate, "多输入同或门，相当于异或门+非门"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::LogicGate>(n, dsc::paramInt(p, "inputs", 2), dsc::paramInt(p, "bit_width", 8),
+                                                                    dsc::GateOp::XNOR);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"not", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Gate, "非门/反相器，输出=~输入"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UnaryGate>(n, dsc::paramInt(p, "bit_width", 8), true);
+        });
+
+DCS_REGISTER_COMPONENT(
+    {"buf", {{"bit_width", "8"}}, {"in"}, {"out"}, dsc::ComponentCategory::Gate, "缓冲器，输出=输入"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UnaryGate>(n, dsc::paramInt(p, "bit_width", 8), false);
+        });
+
+DCS_REGISTER_COMPONENT(
+    {"tsbuf", {{"bit_width", "8"}}, {"in", "oe"}, {"out"}, dsc::ComponentCategory::Gate, "三态缓冲器，oe=1时输出=输入，oe=0时高阻"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::GateTSBUF>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+} // namespace

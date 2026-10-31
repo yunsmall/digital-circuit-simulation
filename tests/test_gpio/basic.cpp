@@ -93,3 +93,52 @@ TEST(GpioTest, RegistersReadBack) {
     EXPECT_EQ(f.read(0x00), 0x00FF00FFu);
     EXPECT_EQ(f.read(0x04), 0x12345678u);
 }
+
+TEST(GpioTest, WritingReadOnlyInputRegisterHasNoEffect) {
+    GpioFixture f;
+    f.c->setWire(f.gin->id(), {0x01, 0, 0, 0});
+    f.write(0x08, 0xFFFFFFFF); // IN 是只读的，写它不能改输入引脚
+    EXPECT_EQ(f.read(0x08), 1u) << "写 IN 寄存器不应影响输入值";
+}
+
+TEST(GpioTest, UnknownAddressReadsZero) {
+    GpioFixture f;
+    EXPECT_EQ(f.read(0x7C), 0u);
+    EXPECT_EQ(f.read(0xFF), 0u);
+}
+
+TEST(GpioTest, EnStaysHighWritesOnce) {
+    GpioFixture f;
+    f.write(0x04, 0x11111111);
+    // 握手按 en 上升沿触发：在同一个 en 高电平期间换数据，不该重复写
+    f.c->setWire(f.addr->id(), {0x04});
+    f.c->setWire(f.wdata->id(), {0x22, 0x22, 0x22, 0x22});
+    f.c->setWire(f.we->id(), {1});
+    f.c->setWire(f.en->id(), {1});
+    f.ticks(2);
+    f.c->setWire(f.wdata->id(), {0x33, 0x33, 0x33, 0x33});
+    f.ticks(2); // en 仍为高，这次不该写入
+    f.c->setWire(f.en->id(), {0});
+    f.ticks(1);
+    EXPECT_EQ(f.read(0x04), 0x22222222u) << "en 持续为高时不应重复写入";
+}
+
+TEST(GpioTest, ReadyFollowsEnable) {
+    GpioFixture f;
+    f.c->setWire(f.en->id(), {0});
+    f.ticks(2);
+    EXPECT_EQ(f.c->getWire(f.ready->id())[0], 0);
+    f.c->setWire(f.en->id(), {1});
+    f.ticks(2);
+    EXPECT_EQ(f.c->getWire(f.ready->id())[0], 1);
+}
+
+TEST(GpioTest, InitClearsRegistersAndOutput) {
+    GpioFixture f;
+    f.write(0x00, 0xFFFFFFFF);
+    f.write(0x04, 0xFFFFFFFF);
+    f.c->init();
+    EXPECT_EQ(f.read(0x00), 0u);
+    EXPECT_EQ(f.read(0x04), 0u);
+    EXPECT_EQ(f.out(), 0u);
+}

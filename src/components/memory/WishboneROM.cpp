@@ -7,6 +7,7 @@
 // 适配器写的 rom_addr 经 genOutputWrite 同拍进入 _w[]，但 seq 函数按元件顺序执行：
 // 若 ROM 排在适配器之前，这一拍写的地址要等下一 tick 才被 ROM 看到。
 // 为了让两种排列都正确，等待拍数取 read_latency + 2（多出的一拍就是给执行顺序的）。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/WishboneROM.h"
 #include <cstring>
 #include <format>
@@ -152,3 +153,13 @@ std::unique_ptr<Component> WishboneROMAdapter::clone(const std::string &n) const
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"wishbone_rom_adapter", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32", "64"}}, {"read_latency", "0"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk", "rom_data"}, {"wb_dat_o", "wb_ack_o", "rom_addr"}, dsc::ComponentCategory::Bus, "ROM 的 Wishbone 适配器，插在 ROM 与 Wishbone 总线之间。适配器 rom_addr→ROM.addr, ROM.data_out→适配器 rom_data，适配器须在 ROM 之后加入电路"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::WishboneROMAdapter>(n, dsc::paramInt(p, "addr_width", 16), dsc::paramInt(p, "data_width", 32),
+                                                             dsc::paramInt(p, "read_latency", 0));
+        });
+} // namespace

@@ -1,46 +1,142 @@
 {
-  "nets": ["clk", "rst", "irq", "mti", "msi", "wb_adr", "wb_dat_o", "wb_dat_i",
-           "wb_we", "wb_sel", "wb_stb", "wb_cyc", "wb_ack", "halted",
-           "s0_adr", "s0_dat_o", "s0_dat_i", "s0_we", "s0_sel", "s0_stb", "s0_cyc", "s0_ack",
-           "s1_adr", "s1_dat_o", "s1_dat_i", "s1_we", "s1_sel", "s1_stb", "s1_cyc", "s1_ack",
-           "s2_adr", "s2_dat_o", "s2_dat_i", "s2_we", "s2_sel", "s2_stb", "s2_cyc", "s2_ack",
-           "s3_adr", "s3_dat_o", "s3_dat_i", "s3_we", "s3_sel", "s3_stb", "s3_cyc", "s3_ack",
-           "uart_irq", "tx", "term_data", "term_valid", "uart_rx", "zero"],
+  "nets": [
+    "clk",
+    "rst",
+    "irq",
+    "mti",
+    "msi",
+    "wb_adr",
+    "wb_dat_o",
+    "wb_dat_i",
+    "wb_we",
+    "wb_sel",
+    "wb_stb",
+    "wb_cyc",
+    "wb_ack",
+    "halted",
+    "s0_adr",
+    "s0_dat_o",
+    "s0_dat_i",
+    "s0_we",
+    "s0_sel",
+    "s0_stb",
+    "s0_cyc",
+    "s0_ack",
+    "s1_adr",
+    "s1_dat_o",
+    "s1_dat_i",
+    "s1_we",
+    "s1_sel",
+    "s1_stb",
+    "s1_cyc",
+    "s1_ack",
+    "s2_adr",
+    "s2_dat_o",
+    "s2_dat_i",
+    "s2_we",
+    "s2_sel",
+    "s2_stb",
+    "s2_cyc",
+    "s2_ack",
+    "s3_adr",
+    "s3_dat_o",
+    "s3_dat_i",
+    "s3_we",
+    "s3_sel",
+    "s3_stb",
+    "s3_cyc",
+    "s3_ack",
+    "s4_adr",
+    "s4_dat_o",
+    "s4_dat_i",
+    "s4_we",
+    "s4_sel",
+    "s4_stb",
+    "s4_cyc",
+    "s4_ack",
+    "uart_irq",
+    "virtio_irq",
+    "irq_bus",
+    "tx",
+    "term_data",
+    "term_valid",
+    "uart_rx",
+    "zero",
+    "m1_adr",
+    "m1_dat_o",
+    "m1_dat_i",
+    "m1_we",
+    "m1_sel",
+    "m1_stb",
+    "m1_cyc",
+    "m1_ack"
+  ],
   "components": [
     {
       "type": "clkgen",
       "name": "clkgen",
-      "params": {"high_ticks": "1", "low_ticks": "1"},
-      "connections": {"clk": "clk"}
+      "params": {
+        "high_ticks": "1",
+        "low_ticks": "1"
+      },
+      "connections": {
+        "clk": "clk"
+      }
     },
     {
       "type": "constant",
       "name": "rst_zero",
-      "params": {"bit_width": "1", "value": "0"},
-      "connections": {"out": "rst"}
+      "params": {
+        "bit_width": "1",
+        "value": "0"
+      },
+      "connections": {
+        "out": "rst"
+      }
     },
     {
       "type": "uart_feed",
       "name": "uart_in",
-      "params": {"baud_div": "8"},
-      "connections": {"clk": "clk", "rx": "uart_rx"}
+      "params": {
+        "baud_div": "8"
+      },
+      "connections": {
+        "clk": "clk",
+        "rx": "uart_rx"
+      }
     },
     {
       "type": "constant",
       "name": "seip_zero",
-      "params": {"bit_width": "1", "value": "0"},
-      "connections": {"out": "zero"}
+      "params": {
+        "bit_width": "1",
+        "value": "0"
+      },
+      "connections": {
+        "out": "zero"
+      }
     },
     {
       "type": "riscv_cpu",
       "name": "cpu",
-      "params": {"xlen": "64"},
+      "params": {
+        "xlen": "64"
+      },
       "connections": {
-        "clk": "clk", "rst": "rst",
-        "wb_dat_i": "wb_dat_i", "wb_ack_i": "wb_ack",
-        "irq": "zero", "mti": "mti", "msi": "msi", "seip": "irq",
-        "wb_adr_o": "wb_adr", "wb_dat_o": "wb_dat_o", "wb_we_o": "wb_we",
-        "wb_sel_o": "wb_sel", "wb_stb_o": "wb_stb", "wb_cyc_o": "wb_cyc",
+        "clk": "clk",
+        "rst": "rst",
+        "wb_dat_i": "wb_dat_i",
+        "wb_ack_i": "wb_ack",
+        "irq": "zero",
+        "mti": "mti",
+        "msi": "msi",
+        "seip": "irq",
+        "wb_adr_o": "wb_adr",
+        "wb_dat_o": "wb_dat_o",
+        "wb_we_o": "wb_we",
+        "wb_sel_o": "wb_sel",
+        "wb_stb_o": "wb_stb",
+        "wb_cyc_o": "wb_cyc",
         "halted": "halted"
       }
     },
@@ -48,40 +144,85 @@
       "type": "wishbone_ic",
       "name": "ic",
       "params": {
-        "segments": "2147483648:268435456,33554432:65536,201326592:67108864,268435456:256",
-        "num_masters": "1"
+        "segments": "2147483648:268435456,33554432:65536,201326592:67108864,268435456:256,268439552:4096",
+        "num_masters": "2"
       },
       "connections": {
-        "m0_adr_i": "wb_adr", "m0_dat_i": "wb_dat_o", "m0_we_i": "wb_we",
-        "m0_sel_i": "wb_sel", "m0_stb_i": "wb_stb", "m0_cyc_i": "wb_cyc",
-        "m0_dat_o": "wb_dat_i", "m0_ack_o": "wb_ack",
-
-        "s0_adr_o": "s0_adr", "s0_dat_o": "s0_dat_o", "s0_we_o": "s0_we",
-        "s0_sel_o": "s0_sel", "s0_stb_o": "s0_stb", "s0_cyc_o": "s0_cyc",
-        "s0_dat_i": "s0_dat_i", "s0_ack_i": "s0_ack",
-
-        "s1_adr_o": "s1_adr", "s1_dat_o": "s1_dat_o", "s1_we_o": "s1_we",
-        "s1_sel_o": "s1_sel", "s1_stb_o": "s1_stb", "s1_cyc_o": "s1_cyc",
-        "s1_dat_i": "s1_dat_i", "s1_ack_i": "s1_ack",
-
-        "s2_adr_o": "s2_adr", "s2_dat_o": "s2_dat_o", "s2_we_o": "s2_we",
-        "s2_sel_o": "s2_sel", "s2_stb_o": "s2_stb", "s2_cyc_o": "s2_cyc",
-        "s2_dat_i": "s2_dat_i", "s2_ack_i": "s2_ack",
-
-        "s3_adr_o": "s3_adr", "s3_dat_o": "s3_dat_o", "s3_we_o": "s3_we",
-        "s3_sel_o": "s3_sel", "s3_stb_o": "s3_stb", "s3_cyc_o": "s3_cyc",
-        "s3_dat_i": "s3_dat_i", "s3_ack_i": "s3_ack"
+        "m0_adr_i": "wb_adr",
+        "m0_dat_i": "wb_dat_o",
+        "m0_we_i": "wb_we",
+        "m0_sel_i": "wb_sel",
+        "m0_stb_i": "wb_stb",
+        "m0_cyc_i": "wb_cyc",
+        "m0_dat_o": "wb_dat_i",
+        "m0_ack_o": "wb_ack",
+        "s0_adr_o": "s0_adr",
+        "s0_dat_o": "s0_dat_o",
+        "s0_we_o": "s0_we",
+        "s0_sel_o": "s0_sel",
+        "s0_stb_o": "s0_stb",
+        "s0_cyc_o": "s0_cyc",
+        "s0_dat_i": "s0_dat_i",
+        "s0_ack_i": "s0_ack",
+        "s1_adr_o": "s1_adr",
+        "s1_dat_o": "s1_dat_o",
+        "s1_we_o": "s1_we",
+        "s1_sel_o": "s1_sel",
+        "s1_stb_o": "s1_stb",
+        "s1_cyc_o": "s1_cyc",
+        "s1_dat_i": "s1_dat_i",
+        "s1_ack_i": "s1_ack",
+        "s2_adr_o": "s2_adr",
+        "s2_dat_o": "s2_dat_o",
+        "s2_we_o": "s2_we",
+        "s2_sel_o": "s2_sel",
+        "s2_stb_o": "s2_stb",
+        "s2_cyc_o": "s2_cyc",
+        "s2_dat_i": "s2_dat_i",
+        "s2_ack_i": "s2_ack",
+        "s3_adr_o": "s3_adr",
+        "s3_dat_o": "s3_dat_o",
+        "s3_we_o": "s3_we",
+        "s3_sel_o": "s3_sel",
+        "s3_stb_o": "s3_stb",
+        "s3_cyc_o": "s3_cyc",
+        "s3_dat_i": "s3_dat_i",
+        "s3_ack_i": "s3_ack",
+        "s4_adr_o": "s4_adr",
+        "s4_dat_o": "s4_dat_o",
+        "s4_we_o": "s4_we",
+        "s4_sel_o": "s4_sel",
+        "s4_stb_o": "s4_stb",
+        "s4_cyc_o": "s4_cyc",
+        "s4_dat_i": "s4_dat_i",
+        "s4_ack_i": "s4_ack",
+        "m1_adr_i": "m1_adr",
+        "m1_dat_i": "m1_dat_o",
+        "m1_we_i": "m1_we",
+        "m1_sel_i": "m1_sel",
+        "m1_stb_i": "m1_stb",
+        "m1_cyc_i": "m1_cyc",
+        "m1_dat_o": "m1_dat_i",
+        "m1_ack_o": "m1_ack"
       }
     },
     {
       "type": "wishbone_mem",
       "name": "ram",
-      "params": {"addr_width": "28", "data_width": "32"},
+      "params": {
+        "addr_width": "28",
+        "data_width": "32"
+      },
       "connections": {
         "clk": "clk",
-        "wb_adr_i": "s0_adr", "wb_dat_i": "s0_dat_o", "wb_we_i": "s0_we",
-        "wb_sel_i": "s0_sel", "wb_stb_i": "s0_stb", "wb_cyc_i": "s0_cyc",
-        "wb_dat_o": "s0_dat_i", "wb_ack_o": "s0_ack"
+        "wb_adr_i": "s0_adr",
+        "wb_dat_i": "s0_dat_o",
+        "wb_we_i": "s0_we",
+        "wb_sel_i": "s0_sel",
+        "wb_stb_i": "s0_stb",
+        "wb_cyc_i": "s0_cyc",
+        "wb_dat_o": "s0_dat_i",
+        "wb_ack_o": "s0_ack"
       }
     },
     {
@@ -90,47 +231,130 @@
       "params": {},
       "connections": {
         "clk": "clk",
-        "wb_adr_i": "s1_adr", "wb_dat_i": "s1_dat_o", "wb_we_i": "s1_we",
-        "wb_sel_i": "s1_sel", "wb_stb_i": "s1_stb", "wb_cyc_i": "s1_cyc",
-        "wb_dat_o": "s1_dat_i", "wb_ack_o": "s1_ack",
-        "mti": "mti", "msi": "msi"
+        "wb_adr_i": "s1_adr",
+        "wb_dat_i": "s1_dat_o",
+        "wb_we_i": "s1_we",
+        "wb_sel_i": "s1_sel",
+        "wb_stb_i": "s1_stb",
+        "wb_cyc_i": "s1_cyc",
+        "wb_dat_o": "s1_dat_i",
+        "wb_ack_o": "s1_ack",
+        "mti": "mti",
+        "msi": "msi"
       }
     },
     {
       "type": "plic",
       "name": "plic",
-      "params": {"num_sources": "8"},
+      "params": {
+        "num_sources": "8"
+      },
       "connections": {
         "clk": "clk",
-        "wb_adr_i": "s2_adr", "wb_dat_i": "s2_dat_o", "wb_we_i": "s2_we",
-        "wb_sel_i": "s2_sel", "wb_stb_i": "s2_stb", "wb_cyc_i": "s2_cyc",
-        "wb_dat_o": "s2_dat_i", "wb_ack_o": "s2_ack",
-        "irq_src": "uart_irq", "irq": "irq"
+        "wb_adr_i": "s2_adr",
+        "wb_dat_i": "s2_dat_o",
+        "wb_we_i": "s2_we",
+        "wb_sel_i": "s2_sel",
+        "wb_stb_i": "s2_stb",
+        "wb_cyc_i": "s2_cyc",
+        "wb_dat_o": "s2_dat_i",
+        "wb_ack_o": "s2_ack",
+        "irq_src": "irq_bus",
+        "irq": "irq"
       }
     },
     {
       "type": "uart",
       "name": "uart",
-      "params": {"baud_div": "8"},
+      "params": {
+        "baud_div": "8"
+      },
       "connections": {
         "clk": "clk",
-        "wb_adr_i": "s3_adr", "wb_dat_i": "s3_dat_o", "wb_we_i": "s3_we",
-        "wb_sel_i": "s3_sel", "wb_stb_i": "s3_stb", "wb_cyc_i": "s3_cyc",
-        "wb_dat_o": "s3_dat_i", "wb_ack_o": "s3_ack",
-        "rx": "uart_rx", "tx": "tx", "irq": "uart_irq"
+        "wb_adr_i": "s3_adr",
+        "wb_dat_i": "s3_dat_o",
+        "wb_we_i": "s3_we",
+        "wb_sel_i": "s3_sel",
+        "wb_stb_i": "s3_stb",
+        "wb_cyc_i": "s3_cyc",
+        "wb_dat_o": "s3_dat_i",
+        "wb_ack_o": "s3_ack",
+        "rx": "uart_rx",
+        "tx": "tx",
+        "irq": "uart_irq"
       }
     },
     {
       "type": "uart_term",
       "name": "term",
-      "params": {"baud_div": "8"},
-      "connections": {"clk": "clk", "rx": "tx", "data": "term_data", "valid": "term_valid"}
+      "params": {
+        "baud_div": "8"
+      },
+      "connections": {
+        "clk": "clk",
+        "rx": "tx",
+        "data": "term_data",
+        "valid": "term_valid"
+      }
+    },
+    {
+      "type": "merge",
+      "name": "irq_merge",
+      "params": {
+        "num_bits": "8"
+      },
+      "connections": {
+        "in0": "uart_irq",
+        "in1": "virtio_irq",
+        "in2": "zero",
+        "in3": "zero",
+        "in4": "zero",
+        "in5": "zero",
+        "in6": "zero",
+        "in7": "zero",
+        "out": "irq_bus"
+      }
+    },
+    {
+      "type": "virtio_mmio",
+      "name": "virtio_blk",
+      "params": {
+        "device": "blk",
+        "path": "images/disk.img"
+      },
+      "connections": {
+        "clk": "clk",
+        "wb_adr_i": "s4_adr",
+        "wb_dat_i": "s4_dat_o",
+        "wb_we_i": "s4_we",
+        "wb_sel_i": "s4_sel",
+        "wb_stb_i": "s4_stb",
+        "wb_cyc_i": "s4_cyc",
+        "wb_dat_o": "s4_dat_i",
+        "wb_ack_o": "s4_ack",
+        "irq": "virtio_irq",
+        "m_adr_o": "m1_adr",
+        "m_dat_o": "m1_dat_o",
+        "m_we_o": "m1_we",
+        "m_sel_o": "m1_sel",
+        "m_stb_o": "m1_stb",
+        "m_cyc_o": "m1_cyc",
+        "m_dat_i": "m1_dat_i",
+        "m_ack_i": "m1_ack"
+      }
     },
     {
       "type": "print",
       "name": "console",
-      "params": {"bit_width": "8", "ascii": "1"},
-      "connections": {"in": "term_data", "clk": "clk", "en": "term_valid"}
+      "params": {
+        "bit_width": "8",
+        "ascii": "1"
+      },
+      "connections": {
+        "in": "term_data",
+        "clk": "clk",
+        "en": "term_valid"
+      }
     }
   ]
 }

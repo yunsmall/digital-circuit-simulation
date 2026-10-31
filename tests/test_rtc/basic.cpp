@@ -105,3 +105,40 @@ TEST(RtcTest, ReadyFollowsEnable) {
     f.ticks(3);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0] & 1, 0);
 }
+
+TEST(RtcTest, ClearResetsAlarmAndIrqEnable) {
+    RtcFixture f;
+    f.write(0x08, 0); // ALARM_LO
+    f.write(0x0C, 0); // ALARM_HI
+    f.write(0x10, 1); // IRQ_EN
+    f.ticks(2);
+    EXPECT_EQ(f.irqLevel(), 1) << "闹钟已过应拉中断";
+    f.write(0x14, 1); // CLEAR
+    EXPECT_EQ(f.irqLevel(), 0);
+    EXPECT_EQ(f.read(0x10), 0u);
+    EXPECT_EQ(f.read(0x08), 0u);
+}
+
+TEST(RtcTest, AlarmInFutureDoesNotFire) {
+    RtcFixture f;
+    uint32_t lo = f.read(0x00), hi = f.read(0x04);
+    uint64_t now = ((uint64_t) hi << 32) | lo;
+    f.write(0x08, (uint32_t) (now + 1000000));
+    f.write(0x0C, (uint32_t) ((now + 1000000) >> 32));
+    f.write(0x10, 1);
+    f.ticks(2);
+    EXPECT_EQ(f.irqLevel(), 0) << "未来的闹钟不应触发";
+}
+
+TEST(RtcTest, UnknownAddressReadsZero) {
+    RtcFixture f;
+    EXPECT_EQ(f.read(0x7C), 0u);
+}
+
+TEST(RtcTest, IrqDisabledIgnoresAlarm) {
+    RtcFixture f;
+    f.write(0x08, 0);
+    f.write(0x0C, 0);
+    f.ticks(2);
+    EXPECT_EQ(f.irqLevel(), 0) << "IRQ_EN=0 时不应拉中断";
+}

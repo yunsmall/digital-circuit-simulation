@@ -1,4 +1,5 @@
 // ROM — 只读存储器实现（内存 / 文件 双模式，字节寻址）
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/memory/ROM.h"
 #include "dcs/util/MemoryDepth.h"
 #include <cstring>
@@ -255,3 +256,28 @@ std::unique_ptr<Component> ROM::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"rom",
+                        {{"addr_width", "4"},
+                         {"data_width", "8", {"8", "16", "32", "64"}},
+                         {"read_latency", "0"},
+                         {"source_type", "mem", {"mem", "file"}},
+                         {"filepath", ""}},
+                        {"addr", "clk"},
+                        {"data_out"},
+                        dsc::ComponentCategory::Memory, "只读存储器，内存模式通过IStorage写入，文件模式从二进制文件加载"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           int aw = dsc::paramInt(p, "addr_width", 4);
+                           int dw = dsc::paramInt(p, "data_width", 8);
+                           int rl = dsc::paramInt(p, "read_latency", 0);
+                           std::string st = dsc::paramStr(p, "source_type", "mem");
+
+                           if (st == "file") {
+                               return std::make_unique<dsc::ROM>(n, aw, dw, std::filesystem::path(dsc::paramStr(p, "filepath", "")), rl);
+                           }
+                           return std::make_unique<dsc::ROM>(n, aw, dw, rl);
+                       });
+} // namespace

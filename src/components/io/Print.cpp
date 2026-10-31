@@ -1,4 +1,5 @@
 // Print — 仿真监控元件实现
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/Print.h"
 #include <cstdio>
 #include <format>
@@ -99,3 +100,12 @@ std::unique_ptr<Component> Print::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"print", {{"bit_width", "8"}, {"ascii", "0", {"0", "1"}}}, {"in", "clk", "en"}, {}, dsc::ComponentCategory::Misc, "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出）"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Print>(n, dsc::paramInt(p, "bit_width", 8), dsc::paramStr(p, "ascii", "0") == "1");
+                       });
+} // namespace

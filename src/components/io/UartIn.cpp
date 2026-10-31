@@ -1,6 +1,7 @@
 // UartIn — 宿主 stdin → 8N1 串行比特流
 // 发送状态机展开在 JIT 里；取字节要碰 stdin（系统调用），只在需要时才回调，
 // 空闲时每 POLL_INTERVAL 拍才问一次。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartIn.h"
 
 #include <cstring>
@@ -148,3 +149,12 @@ int UartIn::fetch(void *state_ptr, int do_poll) {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"uart_in", {{"baud_div", "16"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：把宿主 stdin 的字符按 8N1 发到 UART 的 rx 引脚（baud_div 要和 UART 一致）"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "baud_div", 16));
+        });
+} // namespace

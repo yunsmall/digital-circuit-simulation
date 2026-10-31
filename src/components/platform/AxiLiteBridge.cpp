@@ -1,5 +1,6 @@
 // AxiLiteBridge — AXI4-Lite 从设备到 Wishbone 主设备的桥
 // 状态机、握手与应答全部展开在 JIT 里，每拍没有跨模块调用。
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/AxiLiteBridge.h"
 
 #include <format>
@@ -151,3 +152,12 @@ std::unique_ptr<Component> AxiLiteBridge::clone(const std::string &new_name) con
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"axi_lite_bridge", {}, {"s_axi_awaddr", "s_axi_awvalid", "s_axi_wdata", "s_axi_wstrb", "s_axi_wvalid", "s_axi_bready", "s_axi_araddr", "s_axi_arvalid", "s_axi_rready", "wb_dat_i", "wb_ack_i"}, {"s_axi_awready", "s_axi_wready", "s_axi_bresp", "s_axi_bvalid", "s_axi_arready", "s_axi_rdata", "s_axi_rresp", "s_axi_rvalid", "wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Bus, "AXI4-Lite 从设备到 Wishbone 主设备的桥"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
+            return std::make_unique<dsc::AxiLiteBridge>(n);
+        });
+} // namespace

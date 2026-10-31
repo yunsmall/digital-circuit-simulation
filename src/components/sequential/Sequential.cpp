@@ -1,3 +1,4 @@
+#include "dcs/ComponentFactory.h"
 #include "dcs/components/sequential/Sequential.h"
 #include <format>
 #include <stdexcept>
@@ -235,7 +236,7 @@ std::string JKFlipFlop::genFuncDef_seq() const {
 // 寄存器
 // ============================================================
 Register::Register(const std::string &name, int bit_width, bool has_en, bool has_rst) :
-    SequentialComponent(name, "reg"), _bit_width(bit_width), _has_en(has_en), _has_rst(has_rst) {
+    SequentialComponent(name, "register"), _bit_width(bit_width), _has_en(has_en), _has_rst(has_rst) {
     setParam("bit_width", std::to_string(bit_width));
     setParam("has_en", _has_en ? "1" : "0");
     setParam("has_rst", _has_rst ? "1" : "0");
@@ -349,7 +350,7 @@ std::string Latch::genFuncDef_seq() const {
 // 计数器
 // ============================================================
 Counter::Counter(const std::string &name, int bit_width, bool has_load, bool has_en, bool has_updown, bool has_clr) :
-    SequentialComponent(name, "cnt"), _bit_width(bit_width), _has_load(has_load), _has_en(has_en),
+    SequentialComponent(name, "counter"), _bit_width(bit_width), _has_load(has_load), _has_en(has_en),
     _has_updown(has_updown), _has_clr(has_clr) {
     setParam("bit_width", std::to_string(bit_width));
     setParam("has_load", _has_load ? "1" : "0");
@@ -483,7 +484,7 @@ std::string Counter::genFuncDef_seq() const {
 // 移位寄存器
 // ============================================================
 ShiftRegister::ShiftRegister(const std::string &name, int length, bool has_dir, bool has_clr) :
-    SequentialComponent(name, "sr"), _length(length), _has_dir(has_dir), _has_clr(has_clr) {
+    SequentialComponent(name, "shift"), _length(length), _has_dir(has_dir), _has_clr(has_clr) {
     setParam("length", std::to_string(_length));
     setParam("has_dir", _has_dir ? "1" : "0");
     setParam("has_clr", _has_clr ? "1" : "0");
@@ -773,3 +774,85 @@ std::unique_ptr<Component> ClockDivider::clone(const std::string &n) const {
 }
 
 } // namespace dsc
+
+// ---- 工厂注册 ----
+namespace {
+DCS_REGISTER_COMPONENT(
+    {"dff", {{"bit_width", "8"}}, {"d", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "D触发器，clk上升沿采样d输出到q"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::DFlipFlop>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"tff", {{"bit_width", "8"}}, {"t", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "T触发器，clk上升沿且t=1时翻转"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::TFlipFlop>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"jkff", {{"bit_width", "8"}}, {"j", "k", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "JK触发器，j/k控制置位/复位，j=k=1时翻转"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::JKFlipFlop>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"register", {{"bit_width", "8"}}, {"d", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "寄存器，clk上升沿采样d"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Register>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"latch", {{"bit_width", "8"}}, {"d", "en"}, {"q"}, dsc::ComponentCategory::Sequential, "锁存器，en=1时透明，en=0时锁存"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Latch>(n, dsc::paramInt(p, "bit_width", 8));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"counter",
+                        {{"bit_width", "8"}, {"has_load", "0"}, {"has_en", "0"}, {"has_updown", "0"}, {"has_clr", "0"}},
+                        {"clk"},
+                        {"q"},
+                        dsc::ComponentCategory::Sequential, "计数器，支持加载/使能/升降方向/清零"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::Counter>(n, dsc::paramInt(p, "bit_width", 8), dsc::paramInt(p, "has_load", 0) != 0,
+                                                                 dsc::paramInt(p, "has_en", 0) != 0, dsc::paramInt(p, "has_updown", 0) != 0,
+                                                                 dsc::paramInt(p, "has_clr", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"shift", {{"length", "8"}, {"has_dir", "0"}, {"has_clr", "0"}}, {"sin", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "移位寄存器，支持串入/方向切换/清零"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::ShiftRegister>(
+                                   n, dsc::paramInt(p, "length", 8), dsc::paramInt(p, "has_dir", 0) != 0, dsc::paramInt(p, "has_clr", 0) != 0);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"clkgen", {{"high_ticks", "1"}, {"low_ticks", "1"}}, {}, {"clk"}, dsc::ComponentCategory::Sequential, "时钟发生器，可设高/低电平持续tick数"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::ClockGen>(n, dsc::paramInt(p, "high_ticks", 1), dsc::paramInt(p, "low_ticks", 1));
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"edgedet_rise", {{}}, {"clk", "in"}, {"out"}, dsc::ComponentCategory::Sequential, "上升沿检测，in上升沿时out=1一个周期"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Rising);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"edgedet_fall", {{}}, {"clk", "in"}, {"out"}, dsc::ComponentCategory::Sequential, "下降沿检测，in下降沿时out=1一个周期"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Falling);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"edgedet_both", {{}}, {"clk", "in"}, {"out"}, dsc::ComponentCategory::Sequential, "双边沿检测，in任意边沿时out=1一个周期"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::EdgeDetect>(n, dsc::EdgeType::Both);
+                       });
+
+DCS_REGISTER_COMPONENT(
+    {"clkdiv", {{"divisor", "2"}}, {"clk"}, {"out"}, dsc::ComponentCategory::Sequential, "时钟分频器，每N个clk周期翻转一次"},
+    [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+                           return std::make_unique<dsc::ClockDivider>(n, dsc::paramInt(p, "divisor", 2));
+                       });
+} // namespace

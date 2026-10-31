@@ -177,3 +177,20 @@ TEST(SpiTest, ClkdivWritableWhenIdle) {
     f.write(0x10, 0); // 0 分频无意义，忽略
     EXPECT_EQ(f.read(0x10), 4u) << "0 分频应被忽略";
 }
+
+TEST(SpiTest, UnknownRegisterReadsZero) {
+    Fixture f;
+    f.compile();
+    // addr 只解码低 5 位，0x7E → 0x1E，不对应任何寄存器
+    EXPECT_EQ(f.read(0x7E), 0u);
+}
+
+TEST(SpiTest, ZeroClkdivStillCompletes) {
+    Fixture f(0); // 构造函数会把 0 钳到 1
+    f.compile();
+    f.write(0x00, 0x5A);
+    f.write(0x0C, 1);
+    for (int i = 0; i < 60; ++i)
+        f.cycle();
+    EXPECT_EQ(f.read(0x08) & 2u, 2u) << "clkdiv=0 钳到最小值后仍应完成传输";
+}
