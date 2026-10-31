@@ -21,8 +21,21 @@
 #endif
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/PassManager.h>
+#include <llvm/Analysis/ProfileSummaryInfo.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar/DCE.h>
+#include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Scalar/SCCP.h>
+#include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/Utils/Mem2Reg.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <cstdlib>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
@@ -36,6 +49,42 @@ namespace {
 #ifdef DCS_USE_TCC
 // TCCState 已由 libtcc.h 在全局作用域声明；这里再加一个会让 dsc 内的名字遮蔽它
 #else
+// 实验用：DCS_JIT_PASS_SET=none|basic 控制 IR 优化集合。
+// none 是默认值（实测最快）；basic 只做不会让代码变大的经典精简 pass
+void runJitPasses(llvm::Module &m) {
+    const char *set = std::getenv("DCS_JIT_PASS_SET");
+    if (!set || std::string_view(set) == "none")
+        return;
+    const bool with_inline = std::string_view(set) == "inline";
+
+    llvm::PassBuilder pb;
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+    llvm::FunctionPassManager fpm;
+    fpm.addPass(llvm::PromotePass()); // mem2reg
+    fpm.addPass(llvm::EarlyCSEPass());
+    fpm.addPass(llvm::InstCombinePass());
+    fpm.addPass(llvm::SimplifyCFGPass());
+    fpm.addPass(llvm::GVNPass());
+    fpm.addPass(llvm::SCCPPass());
+    fpm.addPass(llvm::DCEPass());
+
+    llvm::ModulePassManager mpm;
+    if (with_inline)
+        mpm.addPass(pb.buildInlinerPipeline(llvm::OptimizationLevel::O2,
+                                            llvm::ThinOrFullLTOPhase::None));
+    mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+    mpm.run(m, mam);
+}
+
 void initCompilerEnv() {
     // 测试夹具会并行编译多个电路，一次性初始化必须线程安全
     static std::once_flag once;
@@ -162,6 +211,10 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     invoc.getLangOpts().CPlusPlus = false;
     invoc.getLangOpts().Bool = true;
     invoc.getLangOpts().Freestanding = true; // 不依赖标准库
+    // 只开后端 codegen 优化，不在 IR 上加 PassBuilder 流水线。实测过 O2/O3 的
+    // 完整优化流水线：always_inline 虽然会生效，但 circuit_tick 被内联成一个
+    // 巨型函数，icache 压力抵消了收益，吞吐反而下降 5~15%，JIT 编译时间翻倍。
+    // 生成的代码本来就是展开好的直线代码，不需要编译器再做大量改写
     invoc.getCodeGenOpts().OptimizationLevel = 2;
     invoc.getCodeGenOpts().RelocationModel = llvm::Reloc::PIC_;
 
@@ -180,6 +233,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 编译 C 代码失败"};
     }
     auto module = action->takeModule();
+    runJitPasses(*module);
 
     auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
     if (!jtmb) {

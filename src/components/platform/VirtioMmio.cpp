@@ -58,15 +58,86 @@ constexpr uint8_t BLK_S_OK = 0, BLK_S_IOERR = 1, BLK_S_UNSUPP = 2, BLK_S_RO = 3;
 } // namespace
 
 struct VirtioMmio::State {
+    BackendOps ops{};
     std::FILE *fp = nullptr;
     const uint8_t *image = nullptr;
     uint64_t image_size = 0;
     bool read_only = false;
+
+    // virtio-input：宿主 push 的 evdev 事件环。dcs 是单线程的，宿主只在两次
+    // tick 之间 push，JIT 直接读 head/tail，不用跨 JIT 回调
+    static constexpr uint32_t EVT_RING = 64;
+    InputEvent events[EVT_RING] = {};
+    uint32_t evt_head = 0; // 宿主写
+    uint32_t evt_tail = 0; // 设备读
 };
+
+namespace {
+// 默认后端：镜像来自宿主文件或电路里的 ROM
+uint32_t fileRead(void *ctx, uint64_t off, uint8_t *buf, uint32_t len) {
+    auto *s = static_cast<VirtioMmio::State *>(ctx);
+    if (off + len > s->image_size)
+        return 0;
+    if (s->fp) {
+        if (std::fseek(s->fp, (long) off, SEEK_SET) != 0)
+            return 0;
+        return std::fread(buf, 1, len, s->fp) == len ? 1 : 0;
+    }
+    if (s->image) {
+        std::memcpy(buf, s->image + off, len);
+        return 1;
+    }
+    return 0;
+}
+
+uint32_t fileWrite(void *ctx, uint64_t off, const uint8_t *buf, uint32_t len) {
+    auto *s = static_cast<VirtioMmio::State *>(ctx);
+    if (off + len > s->image_size)
+        return 0;
+    if (s->read_only || !s->fp)
+        return 0;
+    if (std::fseek(s->fp, (long) off, SEEK_SET) != 0)
+        return 0;
+    if (std::fwrite(buf, 1, len, s->fp) != len)
+        return 0;
+    std::fflush(s->fp);
+    return 1;
+}
+} // namespace
+
+void VirtioMmio::setBackend(const BackendOps &ops) {
+    _state->ops = ops;
+}
+
+void VirtioMmio::simInit() {
+    if (_state->ops.init)
+        _state->ops.init(_state->ops.ctx);
+}
+
+void VirtioMmio::simDeinit() {
+    if (_state->ops.deinit)
+        _state->ops.deinit(_state->ops.ctx);
+}
+
+// guest 复位设备：丢掉后端里未完成的请求
+static void virtioReset(void *state) {
+    auto *s = static_cast<VirtioMmio::State *>(state);
+    if (s->ops.reset)
+        s->ops.reset(s->ops.ctx);
+}
 
 VirtioMmio::VirtioMmio(const std::string &name, Kind kind, const std::string &path) :
     SequentialComponent(name, "virtio_mmio"), _state(std::make_unique<State>()), _kind(kind), _path(path) {
-    setParam("device", kind == Kind::Blk ? "blk" : "console");
+    const char *kind_name = "blk";
+    switch (kind) {
+        case Kind::Blk: kind_name = "blk"; break;
+        case Kind::Console: kind_name = "console"; break;
+        case Kind::Rng: kind_name = "rng"; break;
+        case Kind::Input: kind_name = "input"; break;
+        case Kind::Net: kind_name = "net"; break;
+        case Kind::NineP: kind_name = "9p"; break;
+    }
+    setParam("device", kind_name);
     setParam("path", path);
     addInput("clk", 1);
     addInput("wb_adr_i", 32);
@@ -108,6 +179,9 @@ bool VirtioMmio::prepare(std::string &error) {
         _state->image_size = (uint64_t) std::ftell(_state->fp);
         std::fseek(_state->fp, 0, SEEK_SET);
     }
+    _state->ops.ctx = _state.get();
+    _state->ops.read = fileRead;
+    _state->ops.write = fileWrite;
     _prepared = true;
     return true;
 }
@@ -120,6 +194,9 @@ void VirtioMmio::bindCircuit(Circuit *circuit) {
             _state->image = r->readOnlyMemPtr();
             _state->image_size = r->memSize();
             _state->read_only = true;
+            _state->ops.ctx = _state.get();
+            _state->ops.read = fileRead;
+            _state->ops.write = fileWrite;
             break;
         }
     }
@@ -127,11 +204,20 @@ void VirtioMmio::bindCircuit(Circuit *circuit) {
 
 std::vector<Component::JitSymbol> VirtioMmio::extraJitSymbols() const {    return {
             {"dcs_virtio_io", reinterpret_cast<void *>(&VirtioMmio::ioAccess)},
+            {"dcs_virtio_reset", reinterpret_cast<void *>(&virtioReset)},
     };
 }
 
 std::string VirtioMmio::genStateDecl() const {
-    const uint32_t dev_id = _kind == Kind::Blk ? 2 : 3;
+    uint32_t dev_id = 2;
+    switch (_kind) {
+        case Kind::Blk: dev_id = 2; break;
+        case Kind::Console: dev_id = 3; break;
+        case Kind::Rng: dev_id = 4; break;
+        case Kind::Input: dev_id = 18; break;
+        case Kind::Net: dev_id = 1; break;
+        case Kind::NineP: dev_id = 9; break;
+    }
     const uint32_t cap = (uint32_t) (_state->image_size / 512);
     return std::format(
             "#define _VIO_{0}_MAGIC 0x{1:X}u\n"
@@ -151,7 +237,8 @@ std::string VirtioMmio::genStateDecl() const {
             "static uint32_t _vio_daddr_{0}, _vio_dlen_{0}, _vio_dnext_{0};\n"
             "static uint16_t _vio_dflags_{0};\n"
             "static uint32_t _vio_type_{0}, _vio_sec_lo_{0}, _vio_sec_hi_{0};\n"
-            "static uint32_t _vio_off_{0}, _vio_written_{0};\n"
+            "static uint32_t _vio_off_{0}, _vio_written_{0}, _vio_step_{0};\n"
+            "static uint64_t _vio_rng_{0} = 0x9E3779B97F4A7C15ULL;\n"
             "static uint8_t _vio_st_{0};\n"
             // 主端口事务
             "static uint8_t _vio_mp_active_{0}, _vio_mp_write_{0}, _vio_mp_ackp_{0}, _vio_mp_done_{0};\n"
@@ -159,7 +246,8 @@ std::string VirtioMmio::genStateDecl() const {
             "static uint32_t _vio_mp_addr_{0}, _vio_mp_len_{0}, _vio_mp_beat_{0};\n"
             "static uint8_t _vio_buf_{0}[64];\n"
             "static void *_vio_state_{0};\n"
-            "extern uint32_t dcs_virtio_io(void *, uint32_t, uint32_t, uint8_t *, uint32_t, uint32_t);\n",
+            "extern uint32_t dcs_virtio_io(void *, uint32_t, uint32_t, uint8_t *, uint32_t, uint32_t);\n"
+            "extern void dcs_virtio_reset(void *);\n",
             _id, VIRTIO_MMIO_MAGIC, dev_id, cap, 0u, _state->read_only ? 1u : 0u);
 }
 
@@ -231,6 +319,7 @@ std::string VirtioMmio::genFuncDef_seq() const {
             "                if (_wdat == 0) {{\n"
             "                    _vio_int_{0} = 0; _vio_qready_{0} = 0; _vio_qnum_{0} = 0;\n"
             "                    _vio_last_avail_{0} = 0; _vio_used_idx_{0} = 0; _vio_phase_{0} = 0;\n"
+            "                    dcs_virtio_reset(_vio_state_{0});\n"
             "                }}\n"
             "                break;\n"
             "            case 0x080: _vio_desc_{0} = (_vio_desc_{0} & 0xFFFF0000u) | (_wdat & 0xFFFFu); break;\n"
@@ -284,6 +373,16 @@ std::string VirtioMmio::genFuncDef_seq() const {
             "        _vio_mp_gap_{0} = 0; _vio_mp_ackp_{0} = 0; _mp_gap_now = 1;\n"
             "    }}\n",
             _id);
+    // rng 的随机数在 JIT 里用 xorshift64 生成，生成期展开成 8 组直线代码，
+    // 每次最多填 64 字节；整个过程不跨模块回调
+    std::string rng_fill;
+    if (_kind == Kind::Rng) {
+        for (int k = 0; k < 8; k++) {
+            rng_fill += "            _r ^= _r << 13; _r ^= _r >> 7; _r ^= _r << 17;\n";
+            rng_fill += std::format("            dcs_memcpy(_vio_buf_{} + {}, &_r, 8);\n", _id, k * 8);
+        }
+    }
+    if (_kind == Kind::Blk || _kind == Kind::Console) {
     // 队列状态机：完成处理后推进阶段，空闲时发起下一个事务
     c += std::format(
             "    // ---- virtqueue 状态机（完成处理）----\n"
@@ -345,7 +444,7 @@ std::string VirtioMmio::genFuncDef_seq() const {
             "        case {13}: _vio_phase_{0} = {14}; break; // used ring 写完\n"
             "        case {14}: {{ // used.idx 写完\n"
             "            _vio_used_idx_{0}++; _vio_last_avail_{0}++;\n"
-            "            _vio_int_{0} |= 1u; _vio_phase_{0} = 0;\n"
+            "            _vio_int_{0} |= 1u; _vio_phase_{0} = {1}; // 回去检查 avail 里还有没有请求\n"
             "            break;\n"
             "        }}\n"
             "        default: _vio_phase_{0} = 0; break;\n"
@@ -401,6 +500,88 @@ std::string VirtioMmio::genFuncDef_seq() const {
             "    }}\n",
             _id, Q_AVAIL_IDX, Q_AVAIL_RING, Q_DESC, Q_HDR, Q_DATA, BLK_T_IN, (uint32_t) BLK_S_IOERR, Q_STATUS,
             Q_USED, Q_USED_IDX);
+    }
+    else if (_kind == Kind::Rng) {
+        // rng：每个 descriptor 都是设备可写的数据段，随机数在 JIT 里生成
+        c += std::format(
+                "    if (_mp_done) {{\n"
+                "        switch (_vio_phase_{0}) {{\n"
+                "        case {1}: {{\n"
+                "            _vio_avail_cache_{0} = (uint32_t)_vio_buf_{0}[0] | ((uint32_t)_vio_buf_{0}[1] << 8);\n"
+                "            _vio_phase_{0} = (_vio_avail_cache_{0} == _vio_last_avail_{0}) ? 0 : {2};\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {2}: {{\n"
+                "            _vio_head_{0} = (uint32_t)_vio_buf_{0}[0] | ((uint32_t)_vio_buf_{0}[1] << 8);\n"
+                "            _vio_idx_{0} = _vio_head_{0}; _vio_written_{0} = 0;\n"
+                "            _vio_phase_{0} = {3};\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {3}: {{\n"
+                "            uint64_t _a = 0; dcs_memcpy(&_a, _vio_buf_{0}, 8);\n"
+                "            _vio_daddr_{0} = (uint32_t)_a;\n"
+                "            _vio_dlen_{0} = (uint32_t)_vio_buf_{0}[8] | ((uint32_t)_vio_buf_{0}[9] << 8) |\n"
+                "                           ((uint32_t)_vio_buf_{0}[10] << 16) | ((uint32_t)_vio_buf_{0}[11] << 24);\n"
+                "            _vio_dflags_{0} = (uint16_t)((uint32_t)_vio_buf_{0}[12] | ((uint32_t)_vio_buf_{0}[13] << 8));\n"
+                "            _vio_dnext_{0} = (uint32_t)_vio_buf_{0}[14] | ((uint32_t)_vio_buf_{0}[15] << 8);\n"
+                "            _vio_off_{0} = 0;\n"
+                "            _vio_phase_{0} = {4};\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {4}: {{\n"
+                "            _vio_off_{0} += _vio_step_{0};\n"
+                "            _vio_written_{0} += _vio_step_{0};\n"
+                "            if (_vio_off_{0} >= _vio_dlen_{0}) {{\n"
+                "                if (_vio_dflags_{0} & 1) {{ _vio_idx_{0} = _vio_dnext_{0}; _vio_phase_{0} = {3}; }}\n"
+                "                else _vio_phase_{0} = {5};\n"
+                "            }}\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {5}: _vio_phase_{0} = {6}; break;\n"
+                "        case {6}: {{ _vio_used_idx_{0}++; _vio_last_avail_{0}++; _vio_int_{0} |= 1u; _vio_phase_{0} = {1}; break; }}\n"
+                "        default: _vio_phase_{0} = 0; break;\n"
+                "        }}\n"
+                "    }}\n",
+                _id, Q_AVAIL_IDX, Q_AVAIL_RING, Q_DESC, Q_DATA, Q_USED, Q_USED_IDX);
+        c += std::format(
+                "    if (!_vio_mp_active_{0} && !_mp_gap_now && _vio_phase_{0} != 0) {{\n"
+                "        {{\n"
+                "        uint32_t _a = 0, _l = 0; uint8_t _wr = 0;\n"
+                "        switch (_vio_phase_{0}) {{\n"
+                "        case {1}: _a = _vio_avail_{0} + 2; _l = 2; _wr = 0; break;\n"
+                "        case {2}: _a = _vio_avail_{0} + 4 + 2 * (_vio_last_avail_{0} % _vio_qnum_{0}); _l = 2; _wr = 0; break;\n"
+                "        case {3}: _a = _vio_desc_{0} + _vio_idx_{0} * 16; _l = 16; _wr = 0; break;\n"
+                "        case {4}: {{\n"
+                "            uint32_t _chunk = _vio_dlen_{0} - _vio_off_{0};\n"
+                "            if (_chunk > 64) _chunk = 64;\n"
+                "            _vio_step_{0} = _chunk;\n"
+                "            uint64_t _r = _vio_rng_{0};\n"
+                "{7}"
+                "            _vio_rng_{0} = _r;\n"
+                "            _a = _vio_daddr_{0} + _vio_off_{0}; _l = _chunk; _wr = 1;\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {5}: {{\n"
+                "            _a = _vio_used_{0} + 4 + 8 * (_vio_used_idx_{0} % _vio_qnum_{0}); _l = 8; _wr = 1;\n"
+                "            uint32_t _head = _vio_head_{0}; dcs_memcpy(_vio_buf_{0}, &_head, 4);\n"
+                "            uint32_t _n = _vio_written_{0}; dcs_memcpy(_vio_buf_{0} + 4, &_n, 4);\n"
+                "            break;\n"
+                "        }}\n"
+                "        case {6}: {{\n"
+                "            _a = _vio_used_{0} + 2; _l = 2; _wr = 1;\n"
+                "            uint16_t _ni = (uint16_t)(_vio_used_idx_{0} + 1); dcs_memcpy(_vio_buf_{0}, &_ni, 2);\n"
+                "            break;\n"
+                "        }}\n"
+                "        default: break;\n"
+                "        }}\n"
+                "        if (_l) {{\n"
+                "            _vio_mp_active_{0} = 1; _vio_mp_addr_{0} = _a; _vio_mp_len_{0} = _l;\n"
+                "            _vio_mp_beat_{0} = 0; _vio_mp_write_{0} = _wr; _vio_mp_ackp_{0} = 0;\n"
+                "        }}\n"
+                "        }}\n"
+                "    }}\n",
+                _id, Q_AVAIL_IDX, Q_AVAIL_RING, Q_DESC, Q_DATA, Q_USED, Q_USED_IDX, rng_fill);
+    }
     c += "    " + genOutputWrite(O_DAT, "_dout", 32) + "\n";
     c += "    " + genOutputWrite(O_ACK, "_ack", 1) + "\n";
     c += "    const uint8_t _irq_out = _vio_int_" + std::to_string(_id) + " != 0;\n";
@@ -427,28 +608,9 @@ uint32_t VirtioMmio::ioAccess(void *state, uint32_t off_lo, uint32_t off_hi, uin
                               uint32_t write) {
     auto *s = static_cast<State *>(state);
     const uint64_t off = ((uint64_t) off_hi << 32) | off_lo;
-    if (off + len > s->image_size)
-        return 0;
-    if (write) {
-        if (s->read_only || !s->fp)
-            return 0;
-        if (std::fseek(s->fp, (long) off, SEEK_SET) != 0)
-            return 0;
-        if (std::fwrite(buf, 1, len, s->fp) != len)
-            return 0;
-        std::fflush(s->fp);
-        return 1;
-    }
-    if (s->fp) {
-        if (std::fseek(s->fp, (long) off, SEEK_SET) != 0)
-            return 0;
-        return std::fread(buf, 1, len, s->fp) == len ? 1 : 0;
-    }
-    if (s->image) {
-        std::memcpy(buf, s->image + off, len);
-        return 1;
-    }
-    return 0;
+    if (write)
+        return s->ops.write ? s->ops.write(s->ops.ctx, off, buf, len) : 0;
+    return s->ops.read ? s->ops.read(s->ops.ctx, off, buf, len) : 0;
 }
 
 } // namespace dsc
@@ -456,15 +618,19 @@ uint32_t VirtioMmio::ioAccess(void *state, uint32_t off_lo, uint32_t off_hi, uin
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"virtio_mmio", {{"device", "blk", {"blk", "console"}}, {"path", ""}},
+    {"virtio_mmio", {{"device", "blk", {"blk", "console", "rng", "input", "net", "9p"}}, {"path", ""}},
      {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "m_dat_i", "m_ack_i"},
      {"wb_dat_o", "wb_ack_o", "irq", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Bus,
      "virtio-mmio modern 设备：从端口接 CPU，主端口经总线访问 virtqueue；blk 后端接宿主镜像或 ROM"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
         const std::string dev = dsc::paramStr(p, "device", "blk");
-        return std::make_unique<dsc::VirtioMmio>(n, dev == "console" ? dsc::VirtioMmio::Kind::Console
-                                                                     : dsc::VirtioMmio::Kind::Blk,
-                                                 dsc::paramStr(p, "path", ""));
+        auto kind = dsc::VirtioMmio::Kind::Blk;
+        if (dev == "console") kind = dsc::VirtioMmio::Kind::Console;
+        else if (dev == "rng") kind = dsc::VirtioMmio::Kind::Rng;
+        else if (dev == "input") kind = dsc::VirtioMmio::Kind::Input;
+        else if (dev == "net") kind = dsc::VirtioMmio::Kind::Net;
+        else if (dev == "9p") kind = dsc::VirtioMmio::Kind::NineP;
+        return std::make_unique<dsc::VirtioMmio>(n, kind, dsc::paramStr(p, "path", ""));
     });
 } // namespace

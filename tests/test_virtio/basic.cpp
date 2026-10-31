@@ -19,8 +19,8 @@ struct VirtioFixture {
     Net *clk, *adr, *dat_i, *dat_o, *we, *sel, *stb, *cyc, *ack, *irq;
     Net *m_adr, *m_dat_o, *m_we, *m_sel, *m_stb, *m_cyc, *m_dat_i, *m_ack;
 
-    explicit VirtioFixture(bool with_rom) {
-        auto d = std::make_unique<VirtioMmio>("vd0", VirtioMmio::Kind::Blk, "");
+    explicit VirtioFixture(bool with_rom, VirtioMmio::Kind kind = VirtioMmio::Kind::Blk) {
+        auto d = std::make_unique<VirtioMmio>("vd0", kind, "");
         dev = d.get();
         c->addComponent(std::move(d));
         auto r = std::make_unique<WishboneMemory>("ram0", 12, 32); // 4 KB
@@ -254,4 +254,167 @@ TEST(VirtioTest, StatusZeroResetsQueue) {
     f.write(0x070, 0);
     f.write(0x030, 0);
     EXPECT_EQ(f.read(0x044), 0u) << "status 写 0 应复位队列";
+}
+
+// virtio-rng：descriptor 是设备可写的数据段，随机数在 JIT 里生成
+TEST(VirtioRng, FillsBuffer) {
+    VirtioFixture f(false, VirtioMmio::Kind::Rng);
+    const uint32_t desc = 0x100, avail = 0x200, used = 0x300, data = 0x400;
+
+    struct D {
+        uint64_t addr;
+        uint32_t len;
+        uint16_t flags;
+        uint16_t next;
+    } d{data, 8, 2, 0}; // F_WRITE
+    std::memcpy(f.mem() + desc, &d, 16);
+    f.put16(avail + 0, 0);
+    f.put16(avail + 2, 1);
+    f.put16(avail + 4, 0);
+    f.put16(used + 0, 0);
+    std::memset(f.mem() + data, 0, 8);
+
+    f.write(0x030, 0);    // queue_sel
+    f.write(0x038, 8);    // queue_num
+    f.write(0x080, desc); // desc 地址
+    f.write(0x090, avail);
+    f.write(0x0A0, used);
+    f.write(0x044, 1);    // queue_ready
+    f.write(0x070, 1);    // status
+    f.write(0x050, 0);    // notify
+
+    for (int i = 0; i < 400; i++)
+        f.tick();
+
+    uint64_t v = 0;
+    std::memcpy(&v, f.mem() + data, 8);
+    std::fprintf(stderr, "desc: ");
+    for (int i = 0; i < 16; i++) std::fprintf(stderr, "%02X ", f.mem()[desc + i]);
+    std::fprintf(stderr, "used: ");
+    for (int i = 0; i < 16; i++) std::fprintf(stderr, "%02X ", f.mem()[used + i]);
+    std::fprintf(stderr, "data=%llX\n", (unsigned long long) v);
+    EXPECT_NE(v, 0u);
+    EXPECT_EQ(f.get16(used + 2), 1); // used.idx（vring_used 的 +0 是 flags）
+    EXPECT_EQ(f.get16(used + 4), 0); // used.ring[0].id
+    uint32_t used_len = 0;
+    std::memcpy(&used_len, f.mem() + used + 8, 4);
+    EXPECT_EQ(used_len, 8u);
+}
+
+namespace {
+
+// rng 队列搭建：desc_in 处放 desc_num 个描述符，avail 环里放 desc_num 个请求
+struct RngSetup {
+    uint32_t desc, avail, used, data;
+};
+
+void rngConfigure(VirtioFixture &f, const RngSetup &s, uint16_t desc_head, uint16_t avail_idx) {
+    f.put16(s.avail + 0, 0);        // flags
+    f.put16(s.avail + 2, avail_idx); // idx
+    f.put16(s.used + 0, 0);
+    f.put16(s.used + 2, 0);
+    f.write(0x030, 0);
+    f.write(0x038, 8);
+    f.write(0x080, s.desc);
+    f.write(0x090, s.avail);
+    f.write(0x0A0, s.used);
+    f.write(0x044, 1);
+    f.write(0x070, 1);
+}
+
+void putDesc(VirtioFixture &f, uint32_t desc_base, uint16_t idx, uint64_t addr, uint32_t len,
+             uint16_t flags, uint16_t next) {
+    struct D {
+        uint64_t addr;
+        uint32_t len;
+        uint16_t flags;
+        uint16_t next;
+    } d{addr, len, flags, next};
+    std::memcpy(f.mem() + desc_base + idx * 16, &d, 16);
+}
+
+uint32_t usedLen(VirtioFixture &f, const RngSetup &s, int i) {
+    uint32_t v = 0;
+    std::memcpy(&v, f.mem() + s.used + 4 + 8 * i + 4, 4);
+    return v;
+}
+
+} // namespace
+
+// 大缓冲区：256 字节要跨 4 轮 64 字节的主端口事务
+TEST(VirtioRng, LargeBuffer) {
+    VirtioFixture f(false, VirtioMmio::Kind::Rng);
+    RngSetup s{0x100, 0x200, 0x300, 0x400};
+    putDesc(f, s.desc, 0, s.data, 256, 2, 0);
+    std::memset(f.mem() + s.data, 0, 256);
+    f.put16(s.avail + 4, 0);
+    rngConfigure(f, s, 0, 1);
+    f.write(0x050, 0);
+
+    for (int i = 0; i < 1500; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 1);
+    EXPECT_EQ(usedLen(f, s, 0), 256u);
+    // 高 64 字节也要被写到，不能只写第一块
+    uint64_t tail = 0;
+    std::memcpy(&tail, f.mem() + s.data + 248, 8);
+    EXPECT_NE(tail, 0u);
+}
+
+// 链式描述符：两个可写段，written 是两段之和
+TEST(VirtioRng, ChainedDescriptors) {
+    VirtioFixture f(false, VirtioMmio::Kind::Rng);
+    RngSetup s{0x100, 0x200, 0x300, 0x400};
+    putDesc(f, s.desc, 0, s.data, 8, 3, 1);        // NEXT|WRITE
+    putDesc(f, s.desc, 1, s.data + 8, 8, 2, 0);    // WRITE
+    f.put16(s.avail + 4, 0);
+    rngConfigure(f, s, 0, 1);
+    f.write(0x050, 0);
+
+    for (int i = 0; i < 800; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 1);
+    EXPECT_EQ(usedLen(f, s, 0), 16u);
+}
+
+// 队列没 ready 时不处理请求
+TEST(VirtioRng, IgnoresWhenNotReady) {
+    VirtioFixture f(false, VirtioMmio::Kind::Rng);
+    RngSetup s{0x100, 0x200, 0x300, 0x400};
+    putDesc(f, s.desc, 0, s.data, 8, 2, 0);
+    f.put16(s.avail + 4, 0);
+    // 不写 queue_ready
+    f.write(0x030, 0);
+    f.write(0x038, 8);
+    f.write(0x080, s.desc);
+    f.write(0x090, s.avail);
+    f.write(0x0A0, s.used);
+    f.write(0x070, 1);
+    f.write(0x050, 0);
+
+    for (int i = 0; i < 400; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 0u);
+}
+
+// 连续两个请求：used.idx 递增到 2，两个 used 条目各自记录长度
+TEST(VirtioRng, TwoRequests) {
+    VirtioFixture f(false, VirtioMmio::Kind::Rng);
+    RngSetup s{0x100, 0x200, 0x300, 0x400};
+    putDesc(f, s.desc, 0, s.data, 4, 2, 0);
+    putDesc(f, s.desc, 1, s.data + 16, 4, 2, 0);
+    f.put16(s.avail + 4, 0);
+    f.put16(s.avail + 6, 1);
+    rngConfigure(f, s, 0, 2);
+    f.write(0x050, 0);
+
+    for (int i = 0; i < 1200; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 2);
+    EXPECT_EQ(usedLen(f, s, 0), 4u);
+    EXPECT_EQ(usedLen(f, s, 1), 4u);
 }
