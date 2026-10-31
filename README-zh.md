@@ -207,6 +207,22 @@ CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Z
 | `dll` | 外部 DLL 元件 | `path` |
 | `composite` | 可复用子电路 | `definition`（蓝图名） |
 
+### JIT 优化级别
+
+生成的 C 代码在交给 JIT 之前会跑一组只做精简的 IR pass（mem2reg、early-cse、
+instcombine、simplifycfg、GVN、SCCP、DCE），默认开启。环境变量可以覆盖：
+
+| 值 | 行为 |
+|----|------|
+| `basic`（默认） | 只跑不会让代码变大的精简 pass |
+| `none` | 一条 pass 都不跑，用于排查生成代码本身的问题 |
+| `inline` | 额外跑 Inliner。实测没有稳定收益：`circuit_tick` 被内联成巨型函数，icache 压力抵消了内联收益，JIT 编译时间也翻倍 |
+
+```bash
+DCS_JIT_PASS_SET=inline ./build/RelWithDebInfo/dcs_bench
+DCS_JIT_PASS_SET=none ./build/RelWithDebInfo/dcs_bench
+```
+
 ## 性能基准
 
 `benchmarks/` 提供六个 ELF 负载场景（整数 ALU、访存、分支、乘除、双精度浮点、混合）

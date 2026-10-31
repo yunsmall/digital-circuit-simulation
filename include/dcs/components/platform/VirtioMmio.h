@@ -80,6 +80,12 @@ public:
 private:
 
 private:
+    // 各设备的队列状态机（每个设备一个实现文件，共享寄存器/主端口/队列骨架）
+    std::string genBlkDone() const;
+    std::string genBlkStart() const;
+    std::string genRngDone() const;
+    std::string genRngStart() const;
+
     std::unique_ptr<State> _state;
     Kind _kind = Kind::Blk;
     std::string _path;

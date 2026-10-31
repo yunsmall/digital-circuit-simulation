@@ -49,13 +49,16 @@ namespace {
 #ifdef DCS_USE_TCC
 // TCCState 已由 libtcc.h 在全局作用域声明；这里再加一个会让 dsc 内的名字遮蔽它
 #else
-// 实验用：DCS_JIT_PASS_SET=none|basic 控制 IR 优化集合。
-// none 是默认值（实测最快）；basic 只做不会让代码变大的经典精简 pass
+// IR 优化集合，DCS_JIT_PASS_SET=none|basic|inline 可覆盖。
+// 默认 basic：只做 mem2reg/instcombine/gvn/sccp/dce 这类纯精简 pass，不会让生成的
+// 代码变大；inline 模式会跑 Inliner（代码膨胀、icache 压力上升），实测没有稳定收益，
+// 所以默认不开。none 用于排查生成代码本身的问题
 void runJitPasses(llvm::Module &m) {
     const char *set = std::getenv("DCS_JIT_PASS_SET");
-    if (!set || std::string_view(set) == "none")
+    const std::string_view mode = set ? std::string_view(set) : std::string_view("basic");
+    if (mode == "none")
         return;
-    const bool with_inline = std::string_view(set) == "inline";
+    const bool with_inline = mode == "inline";
 
     llvm::PassBuilder pb;
     llvm::LoopAnalysisManager lam;

@@ -207,6 +207,23 @@ A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond extensions, and Sdtrig hardware breakpoints
 | `dll` | External DLL component | `path` |
 | `composite` | Reusable sub-circuit | `definition` (blueprint name) |
 
+### JIT optimization level
+
+Generated C code runs through a small set of IR passes before JIT compilation
+(mem2reg, early-cse, instcombine, simplifycfg, GVN, SCCP, DCE). On by default;
+`DCS_JIT_PASS_SET` overrides it:
+
+| Value | Behavior |
+|-------|----------|
+| `basic` (default) | shrink-only passes, no code growth |
+| `none` | no passes at all, useful when debugging generated code |
+| `inline` | additionally runs the Inliner. Measured no stable gain: `circuit_tick` becomes one huge function and icache pressure cancels the benefit, while JIT compile time doubles |
+
+```bash
+DCS_JIT_PASS_SET=inline ./build/RelWithDebInfo/dcs_bench
+DCS_JIT_PASS_SET=none ./build/RelWithDebInfo/dcs_bench
+```
+
 ## Benchmarks
 
 `benchmarks/` ships six ELF workloads (integer ALU, memory, branches, mul/div, double
