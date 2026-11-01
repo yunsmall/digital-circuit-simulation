@@ -37,8 +37,12 @@ Thumbs.db
 .claude/
 CLAUDE.local.md
 
-# 官方 riscv-tests 的编译产物，用 tests/riscv-official/build.sh 生成
+# 官方 riscv-tests 的编译产物，用 tests/riscv-official/build.sh（RV64 用 build_rv64.sh）生成
 tests/riscv-official/out/
+tests/riscv-official/out64/
+
+# 基准场景的交叉编译产物，用 benchmarks/build.sh 生成
+benchmarks/out/
 
 # Linux 启动用的镜像（boot.elf 三十多 MB，不进版本库）
 images/
