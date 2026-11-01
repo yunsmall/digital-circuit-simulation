@@ -154,6 +154,14 @@ ping -c 3 8.8.8.8
 
 ## 几个容易踩的坑
 
+- **busybox 的 applet 要建链接**：`make defconfig` 编出的 busybox 带 400 多个
+  applet，但 initramfs 里如果只手工建几个软链接，用户只能看到 `ls/cat/echo` 那几个。
+  init 脚本里跑一次 `/bin/busybox --install -s /bin` 就全部可用（`vi`、`top`、
+  `grep`、`ip`、`ping`、`wget`、`tar`、`awk`……）。
+- **用 clang 编 busybox 必须 `-DBB_GLOBAL_CONST=`**：clang 会把 `BB_GLOBAL_CONST`
+  （`const` 指针）当成不可变对象，把 `SET_PTR_TO_GLOBALS` 之后的读写都基于旧指针
+  （初始为 NULL）做，`awk` 一启动就写 0x4 段错误。`build-busybox.sh` 里已经通过
+  `CONFIG_EXTRA_CFLAGS` 关掉这个优化。
 - **`reg-shift = <2>`**：UART 元件按 4 字节步进映射寄存器，设备树必须写 `reg-shift=2`，
   否则内核按字节偏移访问，读到的 LSR/IIR 全是错位数据。
 - **PLIC 的 enable 是 32 位位图寄存器**：`0x2000 + context*0x80 + word*4`，

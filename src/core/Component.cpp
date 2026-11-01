@@ -173,7 +173,11 @@ std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin
         return "";
     int b = byte_count(pin_w);
     std::string s = std::format("dcs_memcpy(_w[{}], &{}, {});", net_id, val, b);
-    s += std::format("\n    dcs_memset(_w[{}] + {}, 0, {});", net_id, b, 16 - b);
+    // 线网槽的高 8 字节从 init 起一直是 0：<=64 位的驱动只写低 8 字节，
+    // >64 位的驱动写满 16 字节且自带零扩展。所以每拍只需要清当前字节窗口里
+    // 超出位宽的那几位，不用再把 16-b 字节全清一遍
+    if (b < 8)
+        s += std::format("\n    dcs_memset(_w[{}] + {}, 0, {});", net_id, b, 8 - b);
     return s;
 }
 

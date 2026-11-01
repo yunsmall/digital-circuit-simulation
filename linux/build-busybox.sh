@@ -69,6 +69,10 @@ cd $BB
 make defconfig > /dev/null
 sed -i 's/^# CONFIG_STATIC is not set$/CONFIG_STATIC=y/' .config
 sed -i 's/^CONFIG_TC=y$/# CONFIG_TC is not set/' .config   # 6.12 UAPI 已删除 CBQ 定义
+# clang 把 BB_GLOBAL_CONST（const 指针）当成不可变对象，会把
+# SET_PTR_TO_GLOBALS 之后的读写都基于旧指针做（旧值为空），awk 等 applet
+# 一启动就写 0x4 崩掉。关掉这个优化，生成代码才是顺序正确的
+sed -i 's/^CONFIG_EXTRA_CFLAGS=.*/CONFIG_EXTRA_CFLAGS="-DBB_GLOBAL_CONST="/' .config
 make -j6 CC="$CC" AR=$AR_BIN RANLIB=$RANLIB_BIN STRIP=$STRIP_BIN HOSTCC=$CC_BIN > /dev/null
 
 # ---- 5. initramfs ----
@@ -83,6 +87,10 @@ cat > $ROOT/init <<'INIT'
 /bin/busybox mount -t proc none /proc
 /bin/busybox mount -t sysfs none /sys
 /bin/busybox mount -t devtmpfs none /dev 2>/dev/null
+# busybox 编了 400 多个 applet，但镜像里不给它们建链接的话，用户只能看到少数几个。
+# --install -s 一次性在 /bin 建好全部软链接（vi/top/grep/ip/wget/...）
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin
 echo ""
 echo "[dcs] busybox init, 输入命令开始玩"
 # 内核交给 PID 1 的 fd 不绑定控制终端（/proc/1/stat 的 tty_nr 是 -1），ash 只在

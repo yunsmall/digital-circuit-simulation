@@ -237,6 +237,10 @@ if(DCS_BUILD_EXECUTABLE)
         # libslirp 在 vcpkg 里只提供 pkg-config 模块（vcpkg print-usage libslirp）
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(SLIRP REQUIRED IMPORTED_TARGET slirp)
+        # 两个可执行文件都要能加载带 virtio_net 的电路（--json-to-c / 纯电路仿真
+        # 也要能认出 backend=slirp），后端只编进可执行文件，不污染 dcs_lib
+        target_sources(dcs PRIVATE src/net/SlirpBackend.cpp)
+        target_link_libraries(dcs PRIVATE PkgConfig::SLIRP)
         target_sources(dcs_soc PRIVATE src/net/SlirpBackend.cpp)
         target_link_libraries(dcs_soc PRIVATE PkgConfig::SLIRP)
     endif()

@@ -144,6 +144,10 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     c += "    uint32_t _rq = 0;\n";
     for (int mi = 0; mi < M; mi++)
         c += std::format("    _rq |= (uint32_t)(_m{0}_stb & _m{0}_cyc) << {0};\n", mi);
+    // 本拍是否要刷新输出：空闲拍（无请求、上一拍也没持锁）时所有主/从侧信号
+    // 都是上一拍留下的 0，重写 2M+6N 个输出纯属浪费；撤销那一拍必须写，
+    // 否则 ack/stb 会永远保持高
+    c += std::format("    const uint8_t _wbic_was_busy = _wbic_busy_{};\n", _id);
     c += std::format("    if (_wbic_busy_{}) {{\n", _id);
     c += std::format("        const int _bg = _wbic_grant_{};\n", _id);
     c += "        if (_rq & (1u << _bg)) _grant = _bg;\n";
@@ -182,6 +186,8 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     }
 
     // 主设备侧输出
+    c += "    const uint8_t _wbic_out = (uint8_t)(_wbic_was_busy | (_grant >= 0) | (_rq != 0));\n";
+    c += "    if (_wbic_out) {\n";
     for (int mi = 0; mi < M; mi++) {
         c += std::format("    uint32_t _mo{}_dat = 0; uint8_t _mo{}_ack = 0;\n", mi, mi);
         c += std::format("    if (_grant == {} && !_gap) {{\n", mi);
@@ -211,6 +217,7 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         c += "    " + genOutputWrite(base + 4, std::format("_so{}_stb", i), 1) + "\n";
         c += "    " + genOutputWrite(base + 5, std::format("_so{}_cyc", i), 1) + "\n";
     }
+    c += "    }\n";
     // 主设备拿了总线却一直不撤销：说明被选中的从设备没回 ack，把地址和持有者打出来
     c += std::format(
             "    if (_wbic_busy_{0}) {{\n"
