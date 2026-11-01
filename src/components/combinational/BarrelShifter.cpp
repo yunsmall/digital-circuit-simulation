@@ -49,7 +49,7 @@ std::string BarrelShifter::genFuncDef_comb() const {
                                    ? std::format("{} _amt = 0; dcs_memcpy(&_amt, _w[{}], {});", c_int_type(_sh_bits),
                                                  amt_nid, byte_count(_sh_bits))
                                    : std::format("{} _amt = 0;", c_int_type(_sh_bits));
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     _amt &= {};

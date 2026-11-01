@@ -46,7 +46,7 @@ std::string Watchdog::genFuncDef_seq() const {
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
     c += std::format("// Watchdog {}\n", name());
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _addr = 0; dcs_memcpy(&_addr, _w[" + nid(I_ADDR) + "], 1);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_WDAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";

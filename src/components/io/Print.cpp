@@ -76,7 +76,7 @@ std::string Print::genFuncDef_seq() const {
 
     return std::format(R"(extern void dcs_print(const char*, const uint8_t*, int);
 extern void dcs_print_char(unsigned char);
-DCS_INLINE void {}() {{
+static void {}() {{
     {}
     {}
     {}

@@ -57,7 +57,7 @@ std::string Shifter::genFuncDef_comb() const {
     }})", _bit_width - 1, mask, mask);
     }
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {}

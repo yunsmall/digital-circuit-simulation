@@ -65,7 +65,7 @@ std::string FIFO::genFuncDef_seq() const {
 
     std::string code;
     code += "// FIFO: " + std::to_string(_data_width) + "b x " + fd + "\n";
-    code += "DCS_INLINE void " + funcName_seq() + "(void) {\n";
+    code += "static void " + funcName_seq() + "(void) {\n";
     code += "    const int d_bytes = " + std::to_string(d_bytes) + ";\n";
 
     // 读取输入

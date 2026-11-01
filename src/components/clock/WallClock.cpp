@@ -61,7 +61,7 @@ std::string WallClock::genInitCode() const {
 std::string WallClock::genFuncDef_seq() const {
     auto st = stateVarName();
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", inputs()[0]->netId());
     // 时间只在时钟上升沿推进；非沿拍只把锁存值输出，和真实时钟元件一致
     c += std::format("    if (_clk && !{}.prev_clk) {{\n", st);

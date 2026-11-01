@@ -90,7 +90,7 @@ std::string UART::genFuncDef_seq() const {
     };
     std::string c;
     c += std::format("// UART {}\n", name());
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += "    " + rd(I_STB, "_stb", 1) + "\n";
     c += "    " + rd(I_CYC, "_cyc", 1) + "\n";
     c += "    " + rd(I_RX, "_rx", 1) + "\n";

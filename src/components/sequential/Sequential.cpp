@@ -118,7 +118,7 @@ std::string DFlipFlop::genFuncDef_seq() const {
     else
         write_q = "    // 输出悬空";
 
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1}
     {2}{3}
     {4}
@@ -164,7 +164,7 @@ std::string TFlipFlop::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1}
     {2}
     bool _rising = (_clk && !{3}.prev_clk);
@@ -216,7 +216,7 @@ std::string JKFlipFlop::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1} {2} {3}
     bool _rising = (_clk && !{4}.prev_clk);
     if (_rising) {{
@@ -295,7 +295,7 @@ std::string Register::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.data", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1} {2}{3}
     bool _rising = (_clk && !{4}.prev_clk);
 {5}
@@ -338,7 +338,7 @@ std::string Latch::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1} {2}
     if (_en) {{ dcs_memcpy({3}.q, &_dval, {4}); }}
 {5}
@@ -469,7 +469,7 @@ std::string Counter::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.count", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1}{2}
     bool _rising = (_clk && !{3}.prev_clk);
     {4}
@@ -569,7 +569,7 @@ std::string ShiftRegister::genFuncDef_seq() const {
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.stages", st), _length));
     else
         write_q = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {0}(void) {{
+    return std::format(R"(static void {0}(void) {{
     {1} {2}{3}
     bool _rising = (_clk && !{4}.prev_clk);
 {5}
@@ -642,7 +642,7 @@ std::string ClockGen::genFuncDef_seq() const {
         write_o = std::format("    {}\n", genOutputWrite(0, "_clk", 1));
     else
         write_o = "    // 输出悬空\n";
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     int _pos = {}._cnt;
     uint8_t _clk = (_pos < {}) ? 1 : 0;
     if (++_pos >= {}) _pos = 0;
@@ -702,7 +702,7 @@ std::string EdgeDetect::genFuncDef_seq() const {
     else
         cond = std::format("(_in != {}.prev_in)", st);
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     bool _rising = (_clk && !{}.prev_clk);
@@ -756,7 +756,7 @@ std::string ClockDivider::genFuncDef_seq() const {
                                : "uint8_t _clk = 0;";
 
     // out_val 从 counter 实时计算，不入状态，避免初始化问题
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     bool _rising = (_clk && !{}.prev_clk);
     if (_rising)

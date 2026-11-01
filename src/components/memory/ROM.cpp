@@ -213,7 +213,7 @@ std::string ROM::genFuncDef_seq() const {
 
     std::string code;
     code += std::format("// ROM: {}b × {}\n", _data_width, _depth);
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += std::format("static void {}() {{\n", funcName_seq());
     code += "    " + gen_read_wire(a_nid, _addr_width, a_nw, "_addr") + "\n";
     code += "    " + clk_read + "\n";
     code += std::format("    _addr &= {};\n", addr_mask);

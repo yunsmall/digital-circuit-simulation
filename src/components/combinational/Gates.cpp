@@ -70,7 +70,7 @@ std::string LogicGate::genFuncDef_comb() const {
     if (neg)
         expr << ")";
 
-    return std::format(R"(DCS_INLINE void {}(void) {{
+    return std::format(R"(static void {}(void) {{
 {}
     {} _out = {};
     {}
@@ -97,7 +97,7 @@ std::string UnaryGate::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {} _out = {};
     {}
@@ -130,7 +130,7 @@ std::string GateTSBUF::genFuncDef_comb() const {
     std::string read_oe = oe_nid >= 0 ? std::format("uint8_t _oe = 0; dcs_memcpy(&_oe, _w[{}], 1);", oe_nid)
                                       : "uint8_t _oe = 0;"; // 悬空按框架约定读 0：不驱动总线
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {}

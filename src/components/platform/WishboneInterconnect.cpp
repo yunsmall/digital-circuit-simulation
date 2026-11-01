@@ -122,7 +122,7 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     const int N = numSlaves();
     std::string c;
     c += std::format("// WishboneInterconnect: {} slaves, {} masters\n", N, M);
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
 
     // 空闲快速路径：先只读各主设备的 stb/cyc 十根线。没有请求、上一拍也没有
     // 持锁时，互连不可能产生任何新动作（输出在上一拍已经写成全 0），
@@ -241,7 +241,7 @@ std::string WishboneInterconnect::genFuncDef_comb() const {
     const int N = numSlaves();
     std::string c;
     c += std::format("// WishboneInterconnect comb: {} 个从设备的应答多路选择\n", N);
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     // 只读被选中从设备的应答和读数据：生成期展开成 switch，不做 2N 次无条件读
     c += "    uint32_t _sd = 0; uint8_t _sa = 0;\n";
     c += std::format("    switch (_wbic_si_{}) {{\n", _id);

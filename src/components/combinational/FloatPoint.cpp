@@ -25,7 +25,7 @@ static std::string gen_float_func(const Component *comp, int precision, const ch
     int b_nw = b_nid >= 0 ? comp->inputs()[1]->net()->bit_width() : 0;
     int o_nid = comp->outputs()[0]->netId();
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {} _a = 0, _b = 0;
@@ -87,7 +87,7 @@ std::string FloatBinOp::genFuncDef_comb() const {
     const char *mant_mask = _precision == 32 ? "0x007FFFFFu" : "0x000FFFFFFFFFFFFFULL";
 
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += "    " + gen_read_wire(a_nid, _precision, a_nw, "_tmp_a") + "\n";
     c += "    " + gen_read_wire(b_nid, _precision, b_nw, "_tmp_b") + "\n";
     c += std::format("    {} _a = 0, _b = 0;\n", ct);
@@ -170,7 +170,7 @@ std::string FloatCmp::genFuncDef_comb() const {
     int b_nw = b_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
     int o_nid = outputs()[0]->netId();
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {} _a, _b;
@@ -218,7 +218,7 @@ std::string FloatConst::genFuncDef_comb() const {
     else
         lit = _precision <= 32 ? std::format("{:.9g}", _value) : std::format("{:.17g}", _value);
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {} _c = {};
     {}
 }})",
@@ -269,7 +269,7 @@ std::string FloatToInt::genFuncDef_comb() const {
                       "    else _ival = (uint64_t)(int64_t)_fval;",
                       hi_case);
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {} _fval;
     dcs_memcpy(&_fval, &_tmp_in, {});
@@ -330,7 +330,7 @@ std::string IntToFloat::genFuncDef_comb() const {
         : ({})(int64_t)_u;)", ct, ct, ct, ct, ct);
     }
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {}

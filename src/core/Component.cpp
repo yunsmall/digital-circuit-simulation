@@ -78,11 +78,11 @@ std::vector<int> Component::getCombinationalDeps(int out_idx) const {
 }
 
 std::string Component::genFuncDecl_comb() const {
-    return std::format("DCS_INLINE void {}(void);", funcName_comb());
+    return std::format("static void {}(void);", funcName_comb());
 }
 
 std::string Component::genFuncDecl_seq() const {
-    return std::format("DCS_INLINE void {}(void);", funcName_seq());
+    return std::format("static void {}(void);", funcName_seq());
 }
 
 std::string Component::funcName_comb() const {

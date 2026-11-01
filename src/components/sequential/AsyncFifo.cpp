@@ -64,7 +64,7 @@ std::string AsyncFifo::genFuncDef_seq() const {
     const auto nw = [this](int i) { return inputs()[i]->net() ? inputs()[i]->net()->bit_width() : 0; };
 
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += std::format("    uint8_t _wclk = _w[{}][0] & 1;\n", net(0));
     c += std::format("    uint8_t _wen = _w[{}][0] & 1;\n", net(1));
     c += std::format("    uint8_t _rclk = _w[{}][0] & 1;\n", net(3));

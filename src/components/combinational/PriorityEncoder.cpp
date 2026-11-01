@@ -34,10 +34,10 @@ std::string PriorityEncoder::genFuncDef_comb() const {
 
     // 从高位到低位查找第一个为1的位
     std::string code;
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    code += std::format("static void {}() {{\n", funcName_comb());
     code += reads;
     // 链式 if-else 从高位到低位检查
-    code = std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    code = std::format("static void {}() {{\n", funcName_comb());
     code += reads;
     code += std::format("    {} _out = 0;\n", c_int_type(_out_bits));
     code += "    uint8_t _valid = 0;\n";

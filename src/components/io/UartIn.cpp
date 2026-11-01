@@ -86,7 +86,7 @@ std::string UartIn::genFuncDef_seq() const {
     std::string c;
     c += std::format("// UartIn {}\n", name());
     c += "extern int _dcs_uart_in_fetch(void *, int);\n";
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += std::format(
             "    if (!_uin_busy_{0}) {{\n"
             "        int _c = -1;\n"

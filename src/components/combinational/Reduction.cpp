@@ -35,7 +35,7 @@ std::string Reduction::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     uint8_t _out = _tmp_in & 1;
     for (int _i = 1; _i < {}; _i++)

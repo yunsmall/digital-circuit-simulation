@@ -27,7 +27,7 @@ std::string Bcd2Seg::genFuncDef_comb() const {
 
     std::string c;
     c += std::format("static const uint8_t _seg_tab_{0}[16] = {1};\n", _id, kSegTable);
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += "    " + gen_read_wire(in_nid, 4, in_nw, "_in") + "\n";
     c += "    " + gen_read_wire(dp_nid, 1, dp_nw, "_dp") + "\n";
     c += std::format("    const uint32_t _v = (uint32_t) _in & 15u;\n");

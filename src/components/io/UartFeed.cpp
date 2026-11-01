@@ -44,7 +44,7 @@ std::string UartFeed::genFuncDef_seq() const {
     std::string c;
     c += std::format("// UartFeed {}\n", name());
     c += "extern int _dcs_feed_pop(void *);\n";
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     // 生产者把标志置 1，这里读一次；读不到就整拍跳过，不产生任何调用
     c += std::format(
             "    if (!_feed_busy_{0} && *_feed_flag_{0}) {{\n"

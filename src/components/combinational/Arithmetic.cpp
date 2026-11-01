@@ -75,7 +75,7 @@ std::string Mux::genFuncDef_comb() const {
     if (out_nid >= 0)
         write = std::format("    {}\n", genOutputWrite(0, "_out", _bit_width));
 
-    return std::format(R"(DCS_INLINE void {}(void) {{
+    return std::format(R"(static void {}(void) {{
 {}
 {}
     {} _out = 0;
@@ -138,7 +138,7 @@ std::string Adder::genFuncDef_comb() const {
 
     // 进位检测：用 uint64_t 扩展精度
     if (_bit_width < 64) {
-        return std::format(R"(DCS_INLINE void {0}(void) {{
+        return std::format(R"(static void {0}(void) {{
     {1}
     {2}
     {3}
@@ -154,7 +154,7 @@ std::string Adder::genFuncDef_comb() const {
     }
     else {
         // 64 位：不能使用 >> 64（UB），用溢出检测
-        return std::format(R"(DCS_INLINE void {0}(void) {{
+        return std::format(R"(static void {0}(void) {{
     {1}
     {2}
     {3}
@@ -247,7 +247,7 @@ std::string Comparator::genFuncDef_comb() const {
         cmp_expr = std::format("    uint8_t _out = (({})({})_a {} ({})({})_b) ? 1 : 0;", cast,
                                c_int_type(_bit_width), cmpOpCOp(_op), cast, c_int_type(_bit_width));
     }
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {}
@@ -299,7 +299,7 @@ std::string Decoder::genFuncDef_comb() const {
         }
     }
 
-    return std::format(R"(DCS_INLINE void {}(void) {{
+    return std::format(R"(static void {}(void) {{
 {}
     int _idx = {};
 {}
@@ -369,7 +369,7 @@ std::string Encoder::genFuncDef_comb() const {
         writes += std::format("    {}\n", genOutputWrite(i, std::format("_out{}", i), 1));
     }
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
 {}
     int _idx = 0;
 {}
@@ -419,7 +419,7 @@ std::string Subtractor::genFuncDef_comb() const {
 
     // 64 位用溢出检测，<64 位用扩展精度，ct 同时用于类型声明和转型
     if (_bit_width < 64) {
-        return std::format(R"(DCS_INLINE void {}() {{
+        return std::format(R"(static void {}() {{
     {}
     {}
     {}
@@ -434,7 +434,7 @@ std::string Subtractor::genFuncDef_comb() const {
                            _bit_width, genOutputWrite(0, "_diff", _bit_width), bout_write);
     }
     else {
-        return std::format(R"(DCS_INLINE void {}() {{
+        return std::format(R"(static void {}() {{
     {}
     {}
     {}
@@ -507,7 +507,7 @@ std::string Multiplier::genFuncDef_comb() const {
     }
 
     if (!_signed) {
-        return std::format("DCS_INLINE void {0}() {{{{\n"
+        return std::format("static void {0}() {{{{\n"
                            "    {1}\n"
                            "    {2}\n"
                            "    {3}\n"
@@ -530,7 +530,7 @@ std::string Multiplier::genFuncDef_comb() const {
                                              "    {{ uint64_t _u = _b; if (_u & (1ULL << {})) _u |= ~{}; _sb = (int64_t)_u; }}\n",
                                              _bit_width - 1, gen_mask(_bit_width), _bit_width - 1, gen_mask(_bit_width))
                                : std::string("    _sa = (int64_t)_a; _sb = (int64_t)_b;\n");
-    return std::format("DCS_INLINE void {0}() {{{{\n"
+    return std::format("static void {0}() {{{{\n"
                        "    {1}\n"
                        "    {2}\n"
                        "    int64_t _sa, _sb;\n"
@@ -590,7 +590,7 @@ std::string Divider::genFuncDef_comb() const {
                                              _bit_width - 1, gen_mask(_bit_width), _bit_width - 1, gen_mask(_bit_width))
                                : std::string("    uint64_t _ua = _a, _ub = _b;\n");
     // 全部用编号占位符，避免 std::format 混用限制
-    return std::format(R"(DCS_INLINE void {0}() {{
+    return std::format(R"(static void {0}() {{
     {1}
     {2}
     {6}
@@ -632,7 +632,7 @@ std::string Abs::genFuncDef_comb() const {
     int bw = _bit_width;
 
     // 纯无符号位运算取反，避免有符号溢出 UB
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     uint64_t _v = _tmp_in;
     if (_v & (1ULL << {}))
@@ -687,7 +687,7 @@ std::string MinMax::genFuncDef_comb() const {
     uint64_t _out = (_a {} _b) ? _a : _b;)", _is_max ? ">" : "<");
     }
 
-    return std::format(R"(DCS_INLINE void {}() {{
+    return std::format(R"(static void {}() {{
     {}
     {}
     {}

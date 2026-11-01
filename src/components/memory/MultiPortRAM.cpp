@@ -108,7 +108,7 @@ std::string MultiPortRAM::genFuncDef_seq() const {
     code += "// MultiPortRAM: " + std::to_string(_data_width) + "b × " + cap_s + "B, " +
             std::to_string(_num_read) + "R/" + std::to_string(_num_write) + "W, rd_lat=" +
             std::to_string(_read_latency) + "\n";
-    code += "DCS_INLINE void " + funcName_seq() + "(void) {\n";
+    code += "static void " + funcName_seq() + "(void) {\n";
     code += "    const int d_bytes = " + std::to_string(d_bytes) + ";\n";
 
     // ---- 第1步：读取所有输入 ----

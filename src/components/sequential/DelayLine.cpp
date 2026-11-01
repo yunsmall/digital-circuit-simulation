@@ -54,7 +54,7 @@ std::string DelayLine::genFuncDef_seq() const {
                                        ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
                                        : "    bool _clk = false;";
 
-        return std::format(R"(DCS_INLINE void {0}() {{
+        return std::format(R"(static void {0}() {{
     {1}
     {2}
     bool _rising = (_clk && !{3}.prev_clk);
@@ -77,7 +77,7 @@ std::string DelayLine::genFuncDef_seq() const {
     }
     else {
         // 无时钟模式：每 tick 直接读输入，移位后输出
-        return std::format(R"(DCS_INLINE void {0}() {{
+        return std::format(R"(static void {0}() {{
     {1}
     // 先输出旧值，再写入新值移位
     {2}

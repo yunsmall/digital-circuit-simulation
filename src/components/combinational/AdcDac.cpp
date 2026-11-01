@@ -27,7 +27,7 @@ std::string Dac::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += "    " + gen_read_wire(in_nid, _bit_width, in_nw, "_v") + "\n";
     c += std::format("    const double _full = {};\n", full_scale(_bit_width));
     c += std::format("    const double _vref = {};\n", _vref);
@@ -57,7 +57,7 @@ std::string Adc::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += "    " + gen_read_wire(in_nid, 32, in_nw, "_inbits") + "\n";
     c += std::format("    const double _full = {};\n", full_scale(_bit_width));
     c += std::format("    const double _vref = {};\n", _vref);

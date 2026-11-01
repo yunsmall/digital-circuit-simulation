@@ -54,7 +54,7 @@ std::string UartTerm::genFuncDef_seq() const {
     const int half = _baud_div / 2;
     std::string c;
     c += std::format("// UartTerm {}\n", name());
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     // 悬空输入读到 0，不能直接下标 -1
     const auto *rx_pin = inputs()[I_RX].get();
     const int rx_nw = rx_pin->net() ? rx_pin->net()->bit_width() : 0;

@@ -76,7 +76,7 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
 
     std::string code;
     code += std::format("// WishboneROMAdapter id={}\n", id);
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += std::format("static void {}() {{\n", funcName_seq());
 
     // 读 adr / stb
     if (adr_in >= 0) {

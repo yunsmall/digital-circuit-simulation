@@ -91,7 +91,7 @@ std::string Memory::genFuncDef_seq() const {
     std::string code;
     code += "// Memory: " + std::to_string(_data_width) + "b × " + cap_s + "B, rd_lat=" +
             std::to_string(_read_latency) + ", wr_lat=" + std::to_string(_write_latency) + "\n";
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += std::format("static void {}() {{\n", funcName_seq());
     code += std::format("    const int d_bytes = {};\n", d_bytes);
 
     // 读取输入

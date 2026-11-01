@@ -66,7 +66,7 @@ std::string Iobuf::genStateDecl() const {
 
 std::string Iobuf::genFuncDef_comb() const {
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += std::format("    static unsigned char _vio_in_{0}[48];\n", _id);
     c += std::format("    static unsigned char _vio_out_{0}[48];\n", _id);
     c += std::format("    dcs_memcpy(_vio_in_{0} + 0, _w[{1}], 1);\n", _id, inputs()[0]->netId());

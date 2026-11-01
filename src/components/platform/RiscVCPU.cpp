@@ -91,7 +91,7 @@ std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     const std::string sfx = (XLEN == 32) ? "_32" : "_64";
     code += "extern void _dcs_cpu_tick" + sfx + "(void *, const uint8_t *const *, uint8_t *const *);\n";
     code += "extern void _dcs_cpu_reset" + sfx + "(void *);\n\n";
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += std::format("static void {}() {{\n", funcName_seq());
     code += genInputPtrArray("_in");
     // 输出直接写线网：packOut 每拍写满全部输出（写 4 字节或 1 字节），
     // 槽位高位靠 init/reset 的清零保持为 0，省掉原来经 _obuf 的一轮中转拷贝
@@ -3082,13 +3082,22 @@ bool RiscVCPU<XLEN>::handlePte(CpuState &s, uint64_t pte) {
         // 总线只有 32 位地址线：物理地址超过 4GB 会被截断成别名，软件完全看不出
         if (pa_ppn > 0xFFFFFULL) return fail(af_cause);
 
-        int idx = s.tlb_cycle % RV::TLB_SIZE; s.tlb_cycle++;
-        auto &e = s.tlb[idx];
-        e.vpn = (uint32_t)(s.mmu_vaddr >> 12);
+        // 装进 2 路组相联的对应组：优先空的 way，否则换替换指针指向的那一路
+        const uint32_t fvpn = (uint32_t)(s.mmu_vaddr >> 12);
+        const uint32_t fasid = (uint32_t)P::asid((uint64_t)s.satp);
+        const int fset = (int)(((fvpn >> 4) ^ fvpn ^ fasid) & (uint32_t)(RV::TLB_SETS - 1));
+        int way = s.tlb_lru[fset] & 1;
+        if (!s.tlb[fset * RV::TLB_WAYS + 0].valid)
+            way = 0;
+        else if (!s.tlb[fset * RV::TLB_WAYS + 1].valid)
+            way = 1;
+        auto &e = s.tlb[fset * RV::TLB_WAYS + way];
+        e.vpn = fvpn;
         e.ppn = (uint32_t)pa_ppn;
         e.asid = (uint16_t)P::asid((uint64_t)s.satp);
         e.flags = (uint8_t)(pte & 0xFF);
         e.valid = true; e.global = (pte >> 5) & 1;
+        s.tlb_lru[fset] = (uint8_t)(way ^ 1);
         // TLB 已装填：取指翻译回 FETCH，数据访问回 EXECUTE 重试原指令
         s.phase = s.mmu_is_exec ? Phase::FETCH : Phase::EXECUTE;
         return true;
@@ -3155,10 +3164,13 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
     using P = SvParams<XLEN>;
     const uint32_t asid = P::asid((uint64_t)s.satp);
     const uint64_t vpn = (uint64_t)vaddr >> 12;
-    // TLB 查找
-    for (int i = 0; i < RV::TLB_SIZE; i++) {
-        auto &e = s.tlb[i];
-        if (e.valid && e.vpn == (uint32_t)vpn && (e.global || e.asid == asid)) [[likely]] {
+    // 2 路组相联查找：哈希只取 vpn 和 asid，两次比较就结束。
+    // 热路径上每条指令都要翻一次取指地址，线性扫 32 项会白烧几十次比较
+    const uint32_t vpn32 = (uint32_t) vpn;
+    const int set = (int) (((vpn32 >> 4) ^ vpn32 ^ asid) & (uint32_t)(RV::TLB_SETS - 1));
+    for (int w = 0; w < RV::TLB_WAYS; w++) {
+        auto &e = s.tlb[set * RV::TLB_WAYS + w];
+        if (e.valid && e.vpn == vpn32 && (e.global || e.asid == asid)) [[likely]] {
             if (uint32_t cause = checkPerms(e.flags, is_write, is_exec, priv, s.mstatus))
             { takeTrap(s, cause, vaddr); return false; }
             // 软件会清 A/D 做页老化，所以命中时不能假定它已经置位：
@@ -3174,6 +3186,8 @@ bool RiscVCPU<XLEN>::mmuTranslate(CpuState &s, XLenOf<XLEN> vaddr, XLenOf<XLEN> 
                     takeTrap(s, cause, vaddr);
                     return false;
                 }
+                // 刚用过的那一路留到下次替换
+                s.tlb_lru[set] = (uint8_t)(w ^ 1);
                 paddr = (XLen) pa64;
                 return true;
             }

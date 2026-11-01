@@ -262,7 +262,7 @@ std::string DllComponent::genTickFunc(const char *phase) const {
     code += std::format("extern void  _dcs_dll_tick_{0}_{1}(void*, const uint8_t*, uint8_t*);\n", phase, id);
     code += std::format("extern void  _dcs_dll_reset_{0}(void*, uint8_t*);\n", id);
     code += std::format("\nstatic void* _dcs_dll_state_{0};\n\n", id);
-    code += std::format("DCS_INLINE void _update_{}_{}(void) {{\n", id, phase);
+    code += std::format("static void _update_{}_{}(void) {{\n", id, phase);
     code += reads;
     code += out_decls;
     code += std::format("    uint8_t _dll_in[{}][16];\n", in_count);

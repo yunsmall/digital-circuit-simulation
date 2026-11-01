@@ -2,16 +2,18 @@
 #ifndef DCS_SHIM_UTIL_H
 #define DCS_SHIM_UTIL_H
 
-// 生成的元件函数统一用这个前缀：static + 强制内联。
-// 每个元件函数每拍都要调用一次，函数序言/返回在几十万拍的仿真里是实打实的开销；
-// 强制内联把它们全部展开进 circuit_tick，省掉这部分。TCC 本身不做内联优化，
-// 关键字放它身上不产生额外代价
+// 生成的元件函数一律是普通 static 函数，不强制展开：LLVM 后端不开内联 pass
+// （实测把元件函数全部内联进 circuit_tick 后指令缓存被挤爆，吞吐反而下降
+// 5~15%，JIT 编译时间还翻倍），元件之间保持普通函数调用。
+// 只有每拍被调几十次的极热小包装才用 DCS_FORCE_INLINE。
+
+// 每拍被调几十次的小包装（线网搬运）：调用开销会盖过函数体，必须展开
 #if defined(__TINYC__)
-#define DCS_INLINE static inline
+#define DCS_FORCE_INLINE static inline
 #elif defined(_MSC_VER) && !defined(__clang__)
-#define DCS_INLINE static __forceinline
+#define DCS_FORCE_INLINE static __forceinline
 #else
-#define DCS_INLINE static inline __attribute__((always_inline))
+#define DCS_FORCE_INLINE static inline __attribute__((always_inline))
 #endif
 
 // 65~128 位的线网值。不用 __int128：TCC 不支持，而宽线网只需要按字节搬运
@@ -22,10 +24,10 @@ typedef struct {
 
 #ifdef __clang__
 // LLVM/Clang 后端：直接用编译器内置函数，编译器会按内联展开
-static inline void *dcs_memcpy(void *dst, const void *src, unsigned long long n) {
+DCS_FORCE_INLINE void *dcs_memcpy(void *dst, const void *src, unsigned long long n) {
     return __builtin_memcpy(dst, src, n);
 }
-static inline void *dcs_memset(void *dst, int c, unsigned long long n) {
+DCS_FORCE_INLINE void *dcs_memset(void *dst, int c, unsigned long long n) {
     return __builtin_memset(dst, c, n);
 }
 #elif defined(__TINYC__)

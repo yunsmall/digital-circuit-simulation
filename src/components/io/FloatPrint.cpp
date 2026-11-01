@@ -56,7 +56,7 @@ std::string FloatPrint::genFuncDef_seq() const {
     const char *dcs_func = (_precision == 32) ? "dcs_fprint32" : "dcs_fprint64";
 
     return std::format(R"(extern void {0}(const char*, const uint8_t*);
-DCS_INLINE void {1}() {{
+static void {1}() {{
     {2}
     {3}
     bool _rising = (_clk && !{4}.prev_clk);

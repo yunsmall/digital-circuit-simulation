@@ -87,7 +87,7 @@ std::string PLIC::genFuncDef_seq() const {
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
     c += std::format("// PLIC {}\n", name());
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     // 空闲快速路径：中断源位图和总线握手都没变化时，本拍不可能产生新状态或新输出。
     // 只读 3 根线就返回，省掉地址译码和每拍 16 次优先级比较
     c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";

@@ -61,7 +61,7 @@ std::string Assert::genFuncDef_seq() const {
 
     std::string c;
     c += "extern void dcs_assert_fail(void *, unsigned long long);\n";
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
                       : std::string("    bool _clk = false;\n");
     c += "    " + gen_read_wire(cond_nid, 1, cond_nw, "_cond") + "\n";

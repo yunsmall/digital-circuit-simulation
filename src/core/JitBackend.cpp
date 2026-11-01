@@ -51,12 +51,15 @@ namespace {
 // TCCState 已由 libtcc.h 在全局作用域声明；这里再加一个会让 dsc 内的名字遮蔽它
 #else
 // IR 优化集合，DCS_JIT_PASS_SET=none|basic|inline 可覆盖。
-// 默认 basic：只做 mem2reg/instcombine/gvn/sccp/dce 这类纯精简 pass，不会让生成的
-// 代码变大；inline 模式会跑 Inliner（代码膨胀、icache 压力上升），实测没有稳定收益，
-// 所以默认不开。none 用于排查生成代码本身的问题
+// 默认 inline：生成的元件函数都是普通 static 函数、没有任何强制内联属性，
+// 交给 LLVM 的成本模型自己决定——小函数（线网搬运包装、常量、CPU 包装）会
+// 展开，大的元件函数保持独立。实测整机 5 亿拍比只跑 basic 快约 3%。
+// basic 只做 mem2reg/instcombine/gvn/sccp/dce 这类纯精简 pass；none 用于排查
+// 生成代码本身的问题。注意：元件函数一旦重新加回 always_inline，inline 模式
+// 会把 circuit_tick 撑成巨型函数，icache 挤爆后会掉 5~15%
 void runJitPasses(llvm::Module &m) {
     const char *set = std::getenv("DCS_JIT_PASS_SET");
-    const std::string_view mode = set ? std::string_view(set) : std::string_view("basic");
+    const std::string_view mode = set ? std::string_view(set) : std::string_view("inline");
     if (mode == "none")
         return;
     const bool with_inline = mode == "inline";
@@ -228,10 +231,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     invoc.getLangOpts().CPlusPlus = false;
     invoc.getLangOpts().Bool = true;
     invoc.getLangOpts().Freestanding = true; // 不依赖标准库
-    // 只开后端 codegen 优化，不在 IR 上加 PassBuilder 流水线。实测过 O2/O3 的
-    // 完整优化流水线：always_inline 虽然会生效，但 circuit_tick 被内联成一个
-    // 巨型函数，icache 压力抵消了收益，吞吐反而下降 5~15%，JIT 编译时间翻倍。
-    // 生成的代码本来就是展开好的直线代码，不需要编译器再做大量改写
+    // 只开后端 codegen 优化，IR 层的精简 pass 由 runJitPasses 按 DCS_JIT_PASS_SET
+    // 选择。生成代码里的元件函数没有任何强制内联属性，交给 LLVM 成本模型决定
+    // 内联哪些：小的包装会展开，大的元件保持独立函数，不会把 circuit_tick 撑大
     invoc.getCodeGenOpts().OptimizationLevel = 2;
     invoc.getCodeGenOpts().RelocationModel = llvm::Reloc::PIC_;
 

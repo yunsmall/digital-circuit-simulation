@@ -181,7 +181,11 @@ namespace RV {
     constexpr uint64_t SBI_FID_SRST_RESET       = 0;
 
     // ---- TLB ----
+    // 2 路组相联：每次翻译最多两次比较。之前是全相联 32 项线性扫描，
+    // 在"每条指令都要翻译一次取指地址"的热路径上白烧几十次比较
+    constexpr int TLB_WAYS = 2;
     constexpr int TLB_SIZE = 32;
+    constexpr int TLB_SETS = TLB_SIZE / TLB_WAYS;
 } // namespace RV
 
 // 只有 32 和 64 两种位宽有意义（RV32/RV64），传别的值编译期直接拒绝
@@ -329,7 +333,8 @@ private:
         // vpn 在 Sv39 下是 31 位（39-12+4），ppn 取 32 位物理地址的低 20 位，都能装进 uint32_t
         struct TlbEntry { uint32_t vpn, ppn; uint16_t asid; uint8_t flags; bool valid, global; };
         TlbEntry tlb[RV::TLB_SIZE];
-        uint32_t tlb_cycle; // 用于 LRU 替换
+        // 每个组的替换指针：0 表示下一项换 way0，1 表示换 way1
+        uint8_t tlb_lru[RV::TLB_SETS];
 
         // 顶层 PTE 缓存（1 项）：Sv32 覆盖 4MB、Sv39 覆盖 1GB。
         // 存的是最高级非叶子 PTE 的 PPN，命中后可直接跳过最高一级总线读

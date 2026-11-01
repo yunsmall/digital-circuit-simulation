@@ -80,7 +80,7 @@ std::string I2C::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
     c += std::format("// I2C {}\n", name());
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";

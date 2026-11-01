@@ -34,7 +34,7 @@ std::string Alu::genFuncDef_comb() const {
                                  : "((int64_t) _b)";
 
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     c += "    " + gen_read_wire(a_nid, _bit_width, a_nw, "_a") + "\n";
     c += "    " + gen_read_wire(b_nid, _bit_width, b_nw, "_b") + "\n";
     c += "    " + gen_read_wire(op_nid, 4, op_nw, "_op") + "\n";

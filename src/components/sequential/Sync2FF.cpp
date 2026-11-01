@@ -36,7 +36,7 @@ std::string Sync2FF::genFuncDef_seq() const {
     auto st = stateVarName();
 
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
                       : std::string("    bool _clk = false;\n");
     c += "    " + gen_read_wire(d_nid, _bit_width, d_nw, "_d") + "\n";

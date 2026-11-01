@@ -65,7 +65,7 @@ std::string RegFile::genFuncDef_comb() const {
     const int base = 1 + _write_ports * 3;
     auto st = stateVarName();
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += std::format("static void {}() {{\n", funcName_comb());
     for (int i = 0; i < _read_ports; i++) {
         const int idx = base + i;
         int nid = inputs()[idx]->netId();
@@ -82,7 +82,7 @@ std::string RegFile::genFuncDef_seq() const {
     const int ab = addrBits();
     auto st = stateVarName();
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     int clk_nid = inputs()[0]->netId();
     c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
                       : std::string("    bool _clk = false;\n");

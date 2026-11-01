@@ -90,7 +90,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
 
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
-    code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += std::format("static void {}() {{\n", funcName_seq());
     code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
     code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
     code += std::format(R"(

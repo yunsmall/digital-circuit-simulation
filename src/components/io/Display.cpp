@@ -95,7 +95,7 @@ std::string Display::genFuncDef_seq() const {
 
     std::string c;
     c += "extern void dcs_display_update(void *, unsigned long long);\n";
-    c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    c += std::format("static void {}() {{\n", funcName_seq());
     c += "    " + gen_read_wire(in_nid, _bit_width, in_nw, "_raw") + "\n";
     c += "    const uint64_t _val = (uint64_t) _raw;\n";
     // 只有真的变了才进宿主，静止画面的显示件每拍都零开销

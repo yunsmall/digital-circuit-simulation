@@ -298,7 +298,7 @@ std::string genSeq(const DeviceSpec &s) {
     const auto &n = s.in_nets;
     std::string c;
     c += std::format("// {}\n", s.node_name);
-    c += std::format("DCS_INLINE void {}() {{\n", s.func_name);
+    c += std::format("static void {}() {{\n", s.func_name);
     // 空闲快速路径：绝大多数拍设备既没有 MMIO 事务、也没有在途的队列/主端口，
     // 这时只需要 stb/cyc 两根线和几个状态字就能判定。先做这个判定，剩下的
     // 7 根输入线、寄存器译码、队列状态机和 9 根输出线全部跳过。

@@ -31,7 +31,7 @@ std::string SignExt::genFuncDef_comb() const {
     std::string hi_hex = std::format("0x{:X}ULL", hi_m);
 
     std::string code;
-    code += "DCS_INLINE void " + funcName_comb() + "(void) {\n";
+    code += "static void " + funcName_comb() + "(void) {\n";
     code += "    " + gen_read_wire(in_nid, _src, in_nw, "_in") + "\n";
     code += "    " + std::string(c_int_type(_dst)) + " _out = 0;\n";
     code += "    if (_in & (1ULL << " + std::to_string(_src - 1) + ")) {\n";
