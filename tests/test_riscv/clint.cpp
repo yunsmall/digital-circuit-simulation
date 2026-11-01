@@ -60,12 +60,12 @@ TEST(ClintTest, SFENCE_VMA) {
 
     auto run = [&](int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
         }
     };
-    circuit->setWire(clk->id(), {0}); circuit->setWire(rst->id(), {1});
-    circuit->tick(); circuit->setWire(rst->id(), {0});
+    circuit->setWire(clk->id(), 0); circuit->setWire(rst->id(), 1);
+    circuit->tick(); circuit->setWire(rst->id(), 0);
     run(40);
 
     EXPECT_EQ(cpu->reg(3), 77);
@@ -121,12 +121,12 @@ TEST(ClintTest, FENCE_I) {
 
     auto run = [&](int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
         }
     };
-    circuit->setWire(clk->id(), {0}); circuit->setWire(rst->id(), {1});
-    circuit->tick(); circuit->setWire(rst->id(), {0});
+    circuit->setWire(clk->id(), 0); circuit->setWire(rst->id(), 1);
+    circuit->tick(); circuit->setWire(rst->id(), 0);
     run(40);
 
     EXPECT_EQ(cpu->reg(3), 88);
@@ -241,13 +241,13 @@ TEST(ClintTest, TimerInterrupt) {
 
     auto run = [&](int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
         }
     };
-    circuit->setWire(clk->id(), {0}); circuit->setWire(rst->id(), {1});
-    circuit->setWire(irq->id(), {0});
-    circuit->tick(); circuit->setWire(rst->id(), {0});
+    circuit->setWire(clk->id(), 0); circuit->setWire(rst->id(), 1);
+    circuit->setWire(irq->id(), 0);
+    circuit->tick(); circuit->setWire(rst->id(), 0);
     run(300);
 
     // 写 mtimecmp=0 后 mtime 已 >= mtimecmp，MTI 触发中断
@@ -294,9 +294,9 @@ TEST(ClintTest, MtiLowAfterReset) {
     ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
     circuit->init();
     for (int i = 0; i < 1000; i++) {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     EXPECT_EQ(circuit->getWire(mti->id())[0], 0)
@@ -327,15 +327,15 @@ struct ClintRegFixture {
         auto err = c->compile();
         EXPECT_EQ(err.code, ErrorCode::OK) << err.message;
         c->init();
-        c->setWire(clk->id(), {0});
-        c->setWire(stb->id(), {0});
-        c->setWire(cyc->id(), {0});
-        c->setWire(we->id(), {0});
+        c->setWire(clk->id(), 0);
+        c->setWire(stb->id(), 0);
+        c->setWire(cyc->id(), 0);
+        c->setWire(we->id(), 0);
         for (int i = 0; i < 2; i++) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {0}); c->tick();
-        c->setWire(clk->id(), {1}); c->tick();
+        c->setWire(clk->id(), 0); c->tick();
+        c->setWire(clk->id(), 1); c->tick();
     }
     void set32(Net *n, uint32_t v) {
         c->setWire(n->id(), {(uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24)});
@@ -346,10 +346,10 @@ struct ClintRegFixture {
     }
     void write(uint32_t a, uint32_t v) {
         set32(adr, a); set32(dat_i, v);
-        c->setWire(we->id(), {1}); c->setWire(sel->id(), {0x0F});
-        c->setWire(stb->id(), {1}); c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), 1); c->setWire(sel->id(), 0x0F);
+        c->setWire(stb->id(), 1); c->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; i++) tick();
-        c->setWire(stb->id(), {0}); c->setWire(cyc->id(), {0});
+        c->setWire(stb->id(), 0); c->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; i++) tick();
     }
     void write64(uint32_t a, uint64_t v) {
@@ -358,11 +358,11 @@ struct ClintRegFixture {
     }
     uint32_t read(uint32_t a) {
         set32(adr, a);
-        c->setWire(we->id(), {0}); c->setWire(sel->id(), {0x0F});
-        c->setWire(stb->id(), {1}); c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), 0); c->setWire(sel->id(), 0x0F);
+        c->setWire(stb->id(), 1); c->setWire(cyc->id(), 1);
         for (int i = 0; i < 6; i++) tick();
         auto v = get32(dat_o);
-        c->setWire(stb->id(), {0}); c->setWire(cyc->id(), {0});
+        c->setWire(stb->id(), 0); c->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; i++) tick();
         return v;
     }

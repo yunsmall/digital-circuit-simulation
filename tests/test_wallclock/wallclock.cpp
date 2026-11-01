@@ -40,7 +40,7 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
     }
 
     uint32_t v(Net *n) const {
@@ -51,11 +51,11 @@ struct Fx {
     // cycles 个完整时钟周期（低 → 高 → 低），每个上升沿推进一次时间
     void cycles(int n = 1) {
         for (int i = 0; i < n; i++) {
-            c->setWire(clk->id(), {0});
+            c->setWire(clk->id(), 0);
             c->tick();
-            c->setWire(clk->id(), {1});
+            c->setWire(clk->id(), 1);
             c->tick();
-            c->setWire(clk->id(), {0});
+            c->setWire(clk->id(), 0);
             c->tick();
         }
     }
@@ -63,7 +63,7 @@ struct Fx {
     // 不产生时钟沿
     void hold(int n) {
         for (int i = 0; i < n; i++) {
-            c->setWire(clk->id(), {0});
+            c->setWire(clk->id(), 0);
             c->tick();
         }
     }

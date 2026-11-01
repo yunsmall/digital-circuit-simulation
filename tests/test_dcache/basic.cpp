@@ -73,17 +73,21 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        setWire(c_stb, {0});
-        setWire(c_cyc, {0});
-        setWire(c_we, {0});
-        setWire(c_sel, {0x0F});
-        setWire(sn_stb, {0});
-        setWire(sn_cyc, {0});
+        setWire(c_stb, 0);
+        setWire(c_cyc, 0);
+        setWire(c_we, 0);
+        setWire(c_sel, 0x0F);
+        setWire(sn_stb, 0);
+        setWire(sn_cyc, 0);
         tick();
     }
 
     void setWire(Net *n, std::vector<uint8_t> v) {
         circuit->setWire(n->id(), std::move(v));
+    }
+    // 单个值的写法走这条：用花括号会被当成 vector 初值，参数类型对不上
+    void setWire(Net *n, uint64_t v) {
+        circuit->setWire(n->id(), v);
     }
     void tick() {
         circuit->tick();
@@ -108,13 +112,13 @@ struct Fixture {
     // 发起一笔事务，返回读数据和（可选）等到 ack 用了几个 tick
     uint32_t access(uint32_t addr, bool we, uint32_t wdata, uint8_t sel = 0x0F, int *ticks = nullptr,
                     int max_ticks = 100) {
-        setWire(c_sel, {sel});
+        setWire(c_sel, sel);
         setAddr(c_adr, addr);
         setWire(c_dat_o, {(uint8_t) (wdata & 0xFF), (uint8_t) ((wdata >> 8) & 0xFF), (uint8_t) ((wdata >> 16) & 0xFF),
                           (uint8_t) ((wdata >> 24) & 0xFF)});
-        setWire(c_we, {(uint8_t) (we ? 1 : 0)});
-        setWire(c_stb, {1});
-        setWire(c_cyc, {1});
+        setWire(c_we, (uint8_t) (we ? 1 : 0));
+        setWire(c_stb, 1);
+        setWire(c_cyc, 1);
         uint32_t result = 0;
         int i = 0;
         for (; i < max_ticks; ++i) {
@@ -124,8 +128,8 @@ struct Fixture {
                 break;
             }
         }
-        setWire(c_stb, {0});
-        setWire(c_cyc, {0});
+        setWire(c_stb, 0);
+        setWire(c_cyc, 0);
         tick();
         tick();
         if (ticks)
@@ -136,12 +140,12 @@ struct Fixture {
     // 模拟互连把其它主设备的写事务转发到 RAM 侧：stb 上升沿触发失效
     void snoopWrite(uint32_t addr, bool we = true) {
         setAddr(sn_adr, addr);
-        setWire(sn_we, {(uint8_t) (we ? 1 : 0)});
-        setWire(sn_stb, {1});
-        setWire(sn_cyc, {1});
+        setWire(sn_we, (uint8_t) (we ? 1 : 0));
+        setWire(sn_stb, 1);
+        setWire(sn_cyc, 1);
         tick();
-        setWire(sn_stb, {0});
-        setWire(sn_cyc, {0});
+        setWire(sn_stb, 0);
+        setWire(sn_cyc, 0);
         tick();
     }
 };
@@ -263,25 +267,25 @@ TEST(DcacheTest, OwnWriteThroughIsNotInvalidated) {
     f.access(a, false, 0); // 填充
 
     // 写直通期间，互连会把这次写也转发到 RAM 侧；它不能把刚更新的行失效掉
-    f.setWire(f.c_sel, {0x0F});
+    f.setWire(f.c_sel, 0x0F);
     f.setAddr(f.c_adr, a);
     f.setWire(f.c_dat_o, {0xEF, 0xBE, 0xAD, 0xDE});
-    f.setWire(f.c_we, {1});
-    f.setWire(f.c_stb, {1});
-    f.setWire(f.c_cyc, {1});
+    f.setWire(f.c_we, 1);
+    f.setWire(f.c_stb, 1);
+    f.setWire(f.c_cyc, 1);
     bool ack = false;
     for (int i = 0; i < 20 && !ack; ++i) {
         f.setAddr(f.sn_adr, a);
-        f.setWire(f.sn_we, {1});
-        f.setWire(f.sn_stb, {1});
-        f.setWire(f.sn_cyc, {1});
+        f.setWire(f.sn_we, 1);
+        f.setWire(f.sn_stb, 1);
+        f.setWire(f.sn_cyc, 1);
         f.tick();
         ack = f.circuit->getWire(f.c_ack->id())[0];
     }
-    f.setWire(f.sn_stb, {0});
-    f.setWire(f.sn_cyc, {0});
-    f.setWire(f.c_stb, {0});
-    f.setWire(f.c_cyc, {0});
+    f.setWire(f.sn_stb, 0);
+    f.setWire(f.sn_cyc, 0);
+    f.setWire(f.c_stb, 0);
+    f.setWire(f.c_cyc, 0);
     f.tick();
     f.tick();
 
@@ -300,22 +304,22 @@ TEST(DcacheTest, OwnWriteEchoOnCompletionTickIsIgnored) {
 
     // 真实 SoC 里互连会把这次写直通转发到 RAM 侧，回波上升沿正好落在完成那一拍：
     // 那时 busy 已经清掉，靠写事务期间记住的地址才能认出是自己的回波
-    f.setWire(f.c_sel, {0x0F});
+    f.setWire(f.c_sel, 0x0F);
     f.setAddr(f.c_adr, a);
     f.setWire(f.c_dat_o, {0x11, 0x22, 0x33, 0x44});
-    f.setWire(f.c_we, {1});
-    f.setWire(f.c_stb, {1});
-    f.setWire(f.c_cyc, {1});
+    f.setWire(f.c_we, 1);
+    f.setWire(f.c_stb, 1);
+    f.setWire(f.c_cyc, 1);
     f.tick(); // 第 1 拍：请求上总线
     f.setAddr(f.sn_adr, a);
-    f.setWire(f.sn_we, {1});
-    f.setWire(f.sn_stb, {1});
-    f.setWire(f.sn_cyc, {1});
+    f.setWire(f.sn_we, 1);
+    f.setWire(f.sn_stb, 1);
+    f.setWire(f.sn_cyc, 1);
     f.tick(); // 第 2 拍：完成 + 回波上升沿
-    f.setWire(f.sn_stb, {0});
-    f.setWire(f.sn_cyc, {0});
-    f.setWire(f.c_stb, {0});
-    f.setWire(f.c_cyc, {0});
+    f.setWire(f.sn_stb, 0);
+    f.setWire(f.sn_cyc, 0);
+    f.setWire(f.c_stb, 0);
+    f.setWire(f.c_cyc, 0);
     f.tick();
     f.tick();
 
@@ -358,8 +362,8 @@ TEST(DcacheTest, ResetDropsAllLines) {
     f.put(a, 0x0BADF00D);
     f.access(a, false, 0);
     f.circuit->reset();
-    f.setWire(f.c_stb, {0});
-    f.setWire(f.c_cyc, {0});
+    f.setWire(f.c_stb, 0);
+    f.setWire(f.c_cyc, 0);
     int ticks = 0;
     EXPECT_EQ(f.access(a, false, 0, 0x0F, &ticks), 0x0BADF00Du);
     EXPECT_GT(ticks, 1) << "复位后缓存必须清空";

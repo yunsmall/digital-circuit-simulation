@@ -56,30 +56,30 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
-        circuit->setWire(we->id(), {0});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
+        circuit->setWire(we->id(), 0);
         for (int i = 0; i < 2; ++i) // 让 seq 输出先传播到线网
             cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     void write(uint32_t addr, uint32_t v) {
         circuit->setWire(adr->id(), {(uint8_t) (addr & 0xFF), 0, 0, 0});
         circuit->setWire(dat_i->id(), {(uint8_t) (v & 0xFF), (uint8_t) ((v >> 8) & 0xFF),
                                        (uint8_t) ((v >> 16) & 0xFF), (uint8_t) ((v >> 24) & 0xFF)});
-        circuit->setWire(we->id(), {1});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 1);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; ++i) cycle();
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
     }
 };
@@ -107,19 +107,19 @@ struct TermOnly {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(rx->id(), {(uint8_t) 1}); // 串口线空闲为高
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(rx->id(), (uint8_t) 1); // 串口线空闲为高
         for (int i = 0; i < 2; ++i)
             cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     void level(int v, int cycles) {
-        circuit->setWire(rx->id(), {(uint8_t) v});
+        circuit->setWire(rx->id(), (uint8_t) v);
         for (int i = 0; i < cycles; ++i)
             cycle();
     }

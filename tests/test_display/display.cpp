@@ -142,8 +142,8 @@ TEST(Display, TwoInstancesHaveDistinctOwners) {
     c->connect(d2, "in", n2);
     ASSERT_EQ(c->compile().code, ErrorCode::OK);
     c->init();
-    c->setWire(n1->id(), {0x11});
-    c->setWire(n2->id(), {0x22});
+    c->setWire(n1->id(), 0x11);
+    c->setWire(n2->id(), 0x22);
     c->tick();
     ASSERT_GE(ev.size(), 2u);
     EXPECT_NE(ev[0].owner, ev[1].owner);

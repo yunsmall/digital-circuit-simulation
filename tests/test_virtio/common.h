@@ -89,17 +89,17 @@ struct VirtioFixture {
         auto err = c->compile();
         EXPECT_EQ(err.code, ErrorCode::OK) << err.message;
         c->init();
-        c->setWire(clk->id(), {0});
-        c->setWire(stb->id(), {0});
-        c->setWire(cyc->id(), {0});
-        c->setWire(we->id(), {0});
+        c->setWire(clk->id(), 0);
+        c->setWire(stb->id(), 0);
+        c->setWire(cyc->id(), 0);
+        c->setWire(we->id(), 0);
         for (int i = 0; i < 2; i++) tick();
     }
 
     void tick() {
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
     }
     void set32(Net *n, uint32_t v) {
@@ -111,25 +111,25 @@ struct VirtioFixture {
     }
     void write(uint32_t a, uint32_t v) {
         set32(adr, a); set32(dat_i, v);
-        c->setWire(we->id(), {1});
-        c->setWire(sel->id(), {0x0F});
-        c->setWire(stb->id(), {1});
-        c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), 1);
+        c->setWire(sel->id(), 0x0F);
+        c->setWire(stb->id(), 1);
+        c->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; i++) tick();
-        c->setWire(stb->id(), {0});
-        c->setWire(cyc->id(), {0});
+        c->setWire(stb->id(), 0);
+        c->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; i++) tick();
     }
     uint32_t read(uint32_t a) {
         set32(adr, a);
-        c->setWire(we->id(), {0});
-        c->setWire(sel->id(), {0x0F});
-        c->setWire(stb->id(), {1});
-        c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), 0);
+        c->setWire(sel->id(), 0x0F);
+        c->setWire(stb->id(), 1);
+        c->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; i++) tick();
         auto v = get32(dat_o);
-        c->setWire(stb->id(), {0});
-        c->setWire(cyc->id(), {0});
+        c->setWire(stb->id(), 0);
+        c->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; i++) tick();
         return v;
     }

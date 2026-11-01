@@ -31,7 +31,7 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         setD(0);
     }
 
@@ -53,15 +53,15 @@ struct Fx {
     // 一个完整时钟周期：先低后高，上升沿采样；最后再走一拍低电平，
     // 让时序函数本拍写出的输出传播到线网，后续 getQ 才是这一沿后的值
     void edge() {
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
     }
 
-    void idle() { c->setWire(clk->id(), {0}); }
+    void idle() { c->setWire(clk->id(), 0); }
 };
 
 } // namespace

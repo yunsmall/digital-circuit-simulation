@@ -84,14 +84,14 @@ struct Fixture {
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
         for (auto *n : {clk, awvalid, wvalid, arvalid, bready, rready})
-            circuit->setWire(n->id(), {(uint8_t) 0});
-        circuit->setWire(wstrb->id(), {(uint8_t) 0x0F});
+            circuit->setWire(n->id(), (uint8_t) 0);
+        circuit->setWire(wstrb->id(), (uint8_t) 0x0F);
         for (int i = 0; i < 2; ++i) cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {(uint8_t) 0});
+        circuit->setWire(clk->id(), (uint8_t) 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {(uint8_t) 1});
+        circuit->setWire(clk->id(), (uint8_t) 1);
         circuit->tick();
     }
     bool bit(Net *n) { return circuit->getWire(n->id())[0] != 0; }
@@ -106,27 +106,27 @@ struct Fixture {
         circuit->setWire(awaddr->id(), {(uint8_t)(addr & 0xFF), (uint8_t)((addr >> 8) & 0xFF), 0, 0});
         circuit->setWire(wdata->id(), {(uint8_t)(data & 0xFF), (uint8_t)((data >> 8) & 0xFF),
                                       (uint8_t)((data >> 16) & 0xFF), (uint8_t)((data >> 24) & 0xFF)});
-        circuit->setWire(awvalid->id(), {(uint8_t) 1});
-        circuit->setWire(wvalid->id(), {(uint8_t) 1});
-        circuit->setWire(bready->id(), {(uint8_t) 1});
+        circuit->setWire(awvalid->id(), (uint8_t) 1);
+        circuit->setWire(wvalid->id(), (uint8_t) 1);
+        circuit->setWire(bready->id(), (uint8_t) 1);
         for (int i = 0; i < 30; ++i) {
             cycle();
             if (bit(awready) && bit(wready)) {
-                circuit->setWire(awvalid->id(), {(uint8_t) 0});
-                circuit->setWire(wvalid->id(), {(uint8_t) 0});
+                circuit->setWire(awvalid->id(), (uint8_t) 0);
+                circuit->setWire(wvalid->id(), (uint8_t) 0);
             }
         }
     }
     uint32_t axiRead(uint32_t addr) {
         circuit->setWire(araddr->id(), {(uint8_t)(addr & 0xFF), (uint8_t)((addr >> 8) & 0xFF), 0, 0});
-        circuit->setWire(arvalid->id(), {(uint8_t) 1});
-        circuit->setWire(rready->id(), {(uint8_t) 1});
+        circuit->setWire(arvalid->id(), (uint8_t) 1);
+        circuit->setWire(rready->id(), (uint8_t) 1);
         uint32_t got = 0;
         for (int i = 0; i < 30; ++i) {
             cycle();
             if (bit(rvalid)) {
                 got = word(rdata);
-                circuit->setWire(arvalid->id(), {(uint8_t) 0});
+                circuit->setWire(arvalid->id(), (uint8_t) 0);
             }
         }
         return got;
@@ -154,18 +154,18 @@ TEST(AxiBridgeTest, WriteDataBeforeAddress) {
     f.put(0x60, 0);
     // 先只送 W 通道
     f.circuit->setWire(f.wdata->id(), {0xEF, 0xBE, 0xAD, 0xDE});
-    f.circuit->setWire(f.wvalid->id(), {(uint8_t) 1});
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 1);
     for (int i = 0; i < 5; ++i)
         f.cycle();
-    f.circuit->setWire(f.wvalid->id(), {(uint8_t) 0});
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 0);
     // 再送 AW 通道
     f.circuit->setWire(f.awaddr->id(), {0x60, 0, 0, 0});
-    f.circuit->setWire(f.awvalid->id(), {(uint8_t) 1});
-    f.circuit->setWire(f.bready->id(), {(uint8_t) 1});
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.bready->id(), (uint8_t) 1);
     for (int i = 0; i < 20; ++i) {
         f.cycle();
         if (f.bit(f.awready))
-            f.circuit->setWire(f.awvalid->id(), {(uint8_t) 0});
+            f.circuit->setWire(f.awvalid->id(), (uint8_t) 0);
     }
     EXPECT_EQ(f.peek(0x60), 0xDEADBEEFu) << "W 先于 AW 到达也要各自锁存，凑齐后一起发出";
 }
@@ -174,7 +174,7 @@ TEST(AxiBridgeTest, WriteStrobePropagates) {
     Fixture f;
     f.compile();
     f.put(0x70, 0x11223344);
-    f.circuit->setWire(f.wstrb->id(), {0x01});
+    f.circuit->setWire(f.wstrb->id(), 0x01);
     f.axiWrite(0x70, 0xAA);
     EXPECT_EQ(f.peek(0x70), 0x112233AAu) << "AXI 的 wstrb 要透传到 Wishbone 的 sel";
 }
@@ -185,22 +185,22 @@ TEST(AxiBridgeTest, BvalidHeldUntilBready) {
     f.put(0x90, 0);
     f.circuit->setWire(f.awaddr->id(), {0x90, 0, 0, 0});
     f.circuit->setWire(f.wdata->id(), {0x78, 0x56, 0x34, 0x12});
-    f.circuit->setWire(f.wstrb->id(), {0x0F});
-    f.circuit->setWire(f.awvalid->id(), {(uint8_t) 1});
-    f.circuit->setWire(f.wvalid->id(), {(uint8_t) 1});
-    f.circuit->setWire(f.bready->id(), {(uint8_t) 0});
+    f.circuit->setWire(f.wstrb->id(), 0x0F);
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.bready->id(), (uint8_t) 0);
     for (int i = 0; i < 20; ++i) {
         f.cycle();
         if (f.bit(f.awready) && f.bit(f.wready)) {
-            f.circuit->setWire(f.awvalid->id(), {(uint8_t) 0});
-            f.circuit->setWire(f.wvalid->id(), {(uint8_t) 0});
+            f.circuit->setWire(f.awvalid->id(), (uint8_t) 0);
+            f.circuit->setWire(f.wvalid->id(), (uint8_t) 0);
         }
     }
     EXPECT_TRUE(f.bit(f.bvalid)) << "写事务完成应拉高 bvalid";
     for (int i = 0; i < 5; ++i)
         f.cycle();
     EXPECT_TRUE(f.bit(f.bvalid)) << "bready 为低时 bvalid 必须保持";
-    f.circuit->setWire(f.bready->id(), {(uint8_t) 1});
+    f.circuit->setWire(f.bready->id(), (uint8_t) 1);
     for (int i = 0; i < 5; ++i)
         f.cycle();
     EXPECT_FALSE(f.bit(f.bvalid)) << "bready 握手后 bvalid 应撤销";
@@ -211,19 +211,19 @@ TEST(AxiBridgeTest, RvalidHeldUntilRready) {
     f.compile();
     f.put(0xA0, 0xA5A5A5A5);
     f.circuit->setWire(f.araddr->id(), {0xA0, 0, 0, 0});
-    f.circuit->setWire(f.arvalid->id(), {(uint8_t) 1});
-    f.circuit->setWire(f.rready->id(), {(uint8_t) 0});
+    f.circuit->setWire(f.arvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.rready->id(), (uint8_t) 0);
     for (int i = 0; i < 20; ++i) {
         f.cycle();
         if (f.bit(f.arready))
-            f.circuit->setWire(f.arvalid->id(), {(uint8_t) 0});
+            f.circuit->setWire(f.arvalid->id(), (uint8_t) 0);
     }
     EXPECT_TRUE(f.bit(f.rvalid)) << "读事务完成应拉高 rvalid";
     EXPECT_EQ(f.word(f.rdata), 0xA5A5A5A5u);
     for (int i = 0; i < 5; ++i)
         f.cycle();
     EXPECT_TRUE(f.bit(f.rvalid)) << "rready 为低时 rvalid 必须保持";
-    f.circuit->setWire(f.rready->id(), {(uint8_t) 1});
+    f.circuit->setWire(f.rready->id(), (uint8_t) 1);
     for (int i = 0; i < 5; ++i)
         f.cycle();
     EXPECT_FALSE(f.bit(f.rvalid)) << "rready 握手后 rvalid 应撤销";

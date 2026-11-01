@@ -113,14 +113,14 @@ struct Bus {
         if (err.code != ErrorCode::OK)
             return 0;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(rst->id(), {1});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(rst->id(), 1);
         circuit->tick();
-        circuit->setWire(rst->id(), {0});
+        circuit->setWire(rst->id(), 0);
         for (int i = 0; i < max_cycles; i++) {
-            circuit->setWire(clk->id(), {0});
+            circuit->setWire(clk->id(), 0);
             circuit->tick();
-            circuit->setWire(clk->id(), {1});
+            circuit->setWire(clk->id(), 1);
             circuit->tick();
             if (cpu->pc() == trap)
                 return (uint64_t) i + 1;

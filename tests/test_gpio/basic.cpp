@@ -45,21 +45,21 @@ struct GpioFixture {
         for (int i = 0; i < n; i++) c->tick();
     }
     void write(uint32_t a, uint32_t d) {
-        c->setWire(addr->id(), {(uint8_t) a});
+        c->setWire(addr->id(), (uint8_t) a);
         c->setWire(wdata->id(), {(uint8_t) d, (uint8_t) (d >> 8), (uint8_t) (d >> 16), (uint8_t) (d >> 24)});
-        c->setWire(we->id(), {1});
-        c->setWire(en->id(), {1});
+        c->setWire(we->id(), 1);
+        c->setWire(en->id(), 1);
         ticks(2);
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
     }
     uint32_t read(uint32_t a) {
-        c->setWire(addr->id(), {(uint8_t) a});
-        c->setWire(we->id(), {0});
-        c->setWire(en->id(), {1});
+        c->setWire(addr->id(), (uint8_t) a);
+        c->setWire(we->id(), 0);
+        c->setWire(en->id(), 1);
         ticks(3);
         auto v = c->getWire(rdata->id());
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
         return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
     }
@@ -111,24 +111,24 @@ TEST(GpioTest, EnStaysHighWritesOnce) {
     GpioFixture f;
     f.write(0x04, 0x11111111);
     // 握手按 en 上升沿触发：在同一个 en 高电平期间换数据，不该重复写
-    f.c->setWire(f.addr->id(), {0x04});
+    f.c->setWire(f.addr->id(), 0x04);
     f.c->setWire(f.wdata->id(), {0x22, 0x22, 0x22, 0x22});
-    f.c->setWire(f.we->id(), {1});
-    f.c->setWire(f.en->id(), {1});
+    f.c->setWire(f.we->id(), 1);
+    f.c->setWire(f.en->id(), 1);
     f.ticks(2);
     f.c->setWire(f.wdata->id(), {0x33, 0x33, 0x33, 0x33});
     f.ticks(2); // en 仍为高，这次不该写入
-    f.c->setWire(f.en->id(), {0});
+    f.c->setWire(f.en->id(), 0);
     f.ticks(1);
     EXPECT_EQ(f.read(0x04), 0x22222222u) << "en 持续为高时不应重复写入";
 }
 
 TEST(GpioTest, ReadyFollowsEnable) {
     GpioFixture f;
-    f.c->setWire(f.en->id(), {0});
+    f.c->setWire(f.en->id(), 0);
     f.ticks(2);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0], 0);
-    f.c->setWire(f.en->id(), {1});
+    f.c->setWire(f.en->id(), 1);
     f.ticks(2);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0], 1);
 }

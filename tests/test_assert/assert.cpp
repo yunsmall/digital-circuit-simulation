@@ -28,17 +28,17 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
-        c->setWire(cond->id(), {1});
+        c->setWire(clk->id(), 0);
+        c->setWire(cond->id(), 1);
     }
 
     void edge(bool cond_val) {
-        c->setWire(cond->id(), {(uint8_t) (cond_val ? 1 : 0)});
-        c->setWire(clk->id(), {0});
+        c->setWire(cond->id(), (uint8_t) (cond_val ? 1 : 0));
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
     }
 };
@@ -63,8 +63,8 @@ TEST(Assert, PassingConditionDoesNotFail) {
 
 TEST(Assert, NoEdgeNoFailure) {
     Fx f;
-    f.c->setWire(f.cond->id(), {0});
-    f.c->setWire(f.clk->id(), {0});
+    f.c->setWire(f.cond->id(), 0);
+    f.c->setWire(f.clk->id(), 0);
     for (int i = 0; i < 10; i++)
         f.c->tick();
     EXPECT_EQ(f.a->failCount(), 0u);

@@ -92,14 +92,14 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(rst->id(), {1});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(rst->id(), 1);
         circuit->tick();
-        circuit->setWire(rst->id(), {0});
+        circuit->setWire(rst->id(), 0);
         for (int i = 0; i < cycles; ++i) {
-            circuit->setWire(clk->id(), {0});
+            circuit->setWire(clk->id(), 0);
             circuit->tick();
-            circuit->setWire(clk->id(), {1});
+            circuit->setWire(clk->id(), 1);
             circuit->tick();
         }
     }

@@ -104,15 +104,15 @@ struct IcFixture {
     void setM(int mi, uint32_t adr, uint32_t dat, bool we, uint8_t sel, bool stb, bool cyc) {
         setU32(*circuit, mb[mi].adr, adr);
         setU32(*circuit, mb[mi].dat, dat);
-        circuit->setWire(mb[mi].we->id(), {(uint8_t) (we ? 1 : 0)});
-        circuit->setWire(mb[mi].sel->id(), {sel});
-        circuit->setWire(mb[mi].stb->id(), {(uint8_t) (stb ? 1 : 0)});
-        circuit->setWire(mb[mi].cyc->id(), {(uint8_t) (cyc ? 1 : 0)});
+        circuit->setWire(mb[mi].we->id(), (uint8_t) (we ? 1 : 0));
+        circuit->setWire(mb[mi].sel->id(), sel);
+        circuit->setWire(mb[mi].stb->id(), (uint8_t) (stb ? 1 : 0));
+        circuit->setWire(mb[mi].cyc->id(), (uint8_t) (cyc ? 1 : 0));
     }
 
     void releaseM(int mi) {
-        circuit->setWire(mb[mi].stb->id(), {0});
-        circuit->setWire(mb[mi].cyc->id(), {0});
+        circuit->setWire(mb[mi].stb->id(), 0);
+        circuit->setWire(mb[mi].cyc->id(), 0);
     }
 
     uint32_t mDat(int mi) const { return toU32(circuit->getWire(mb[mi].dat_o->id())); }
@@ -121,7 +121,7 @@ struct IcFixture {
     // ---- 从设备侧：测试扮演从设备 ----
     void setS(int si, uint32_t dat, bool ack) {
         setU32(*circuit, sb[si].dat_i, dat);
-        circuit->setWire(sb[si].ack_i->id(), {(uint8_t) (ack ? 1 : 0)});
+        circuit->setWire(sb[si].ack_i->id(), (uint8_t) (ack ? 1 : 0));
     }
 
     uint32_t sAdr(int si) const { return toU32(circuit->getWire(sb[si].adr->id())); }

@@ -121,9 +121,9 @@ struct CpuTestFixture {
 
     void runCycles(int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk_net->id(), {0});
+            circuit->setWire(clk_net->id(), 0);
             circuit->tick();
-            circuit->setWire(clk_net->id(), {1});
+            circuit->setWire(clk_net->id(), 1);
             circuit->tick();
         }
     }
@@ -141,10 +141,10 @@ TEST(RiscVCPUTest, BasicALU) {
             0x00100073, // ebreak → 陷阱
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(40);
 
     EXPECT_EQ(f.cpu->reg(1), 42);
@@ -165,10 +165,10 @@ TEST(RiscVCPUTest, MemoryAccess) {
             0x00100073, // ebreak → 陷阱
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(50);
 
     EXPECT_EQ(f.cpu->reg(1), 0xAB);
@@ -194,10 +194,10 @@ TEST(RiscVCPUTest, Branch) {
             0x00100073, // ebreak → 陷阱
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(50);
 
     EXPECT_EQ(f.cpu->reg(3), 0);  // 分支跳过了 addi x3
@@ -216,10 +216,10 @@ TEST(RiscVCPUTest, JumpAndLink) {
             0x00100073, // ebreak → 陷阱
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(50);
 
     EXPECT_EQ(f.cpu->reg(1), 12); // 返回地址 (用户程序内偏移)
@@ -240,11 +240,11 @@ TEST(RiscVCPUTest, CSRReadWrite) {
             0x00100073, // ebreak → 陷阱
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
-    f.circuit->setWire(f.irq_net->id(), {0});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
+    f.circuit->setWire(f.irq_net->id(), 0);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(50);
 
     EXPECT_EQ(f.cpu->reg(2), 0x88u); // csrrs 读回的 mtvec 旧值
@@ -289,14 +289,14 @@ TEST(RiscVCPUTest, ExternalInterrupt) {
     m[260 + 2] = (inst2 >> 16) & 0xFF; m[260 + 3] = (inst2 >> 24) & 0xFF;
 
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
-    f.circuit->setWire(f.irq_net->id(), {0});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
+    f.circuit->setWire(f.irq_net->id(), 0);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
 
     f.runCycles(60);
-    f.circuit->setWire(f.irq_net->id(), {1});
+    f.circuit->setWire(f.irq_net->id(), 1);
     f.runCycles(40);
 
     EXPECT_EQ(f.cpu->reg(2), 0x8000000Bu);
@@ -322,11 +322,11 @@ TEST(RiscVCPUTest, TrapMret) {
         0x30200073, // 0x1C: mret
     });
     f.compile();
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
-    f.circuit->setWire(f.irq_net->id(), {0});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
+    f.circuit->setWire(f.irq_net->id(), 0);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     f.runCycles(80);
 
     EXPECT_EQ(f.cpu->reg(3), 99);

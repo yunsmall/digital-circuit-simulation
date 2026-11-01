@@ -51,14 +51,14 @@ struct Fx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        c->setWire(clk->id(), {(uint8_t) 0});
-        c->setWire(rst->id(), {(uint8_t) 1});
-        c->setWire(seip->id(), {(uint8_t) (seip_high ? 1 : 0)});
+        c->setWire(clk->id(), (uint8_t) 0);
+        c->setWire(rst->id(), (uint8_t) 1);
+        c->setWire(seip->id(), (uint8_t) (seip_high ? 1 : 0));
         c->tick();
-        c->setWire(rst->id(), {(uint8_t) 0});
+        c->setWire(rst->id(), (uint8_t) 0);
         for (int i = 0; i < n; ++i) {
-            c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-            c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+            c->setWire(clk->id(), (uint8_t) 0); c->tick();
+            c->setWire(clk->id(), (uint8_t) 1); c->tick();
         }
     }
 };

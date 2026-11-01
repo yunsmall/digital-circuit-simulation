@@ -118,11 +118,11 @@ struct Rv64Fixture {
     void run(int n) {
         circuit->compile();
         circuit->init();
-        circuit->setWire(rst->id(), {1}); circuit->tick();
-        circuit->setWire(rst->id(), {0});
+        circuit->setWire(rst->id(), 1); circuit->tick();
+        circuit->setWire(rst->id(), 0);
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
         }
     }
 };

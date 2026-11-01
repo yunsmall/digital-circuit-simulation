@@ -66,19 +66,19 @@ struct MmuTestFixture {
 
     void runCycles(int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk_net->id(), {0});
+            circuit->setWire(clk_net->id(), 0);
             circuit->tick();
-            circuit->setWire(clk_net->id(), {1});
+            circuit->setWire(clk_net->id(), 1);
             circuit->tick();
         }
     }
 
     void reset() {
-        circuit->setWire(clk_net->id(), {0});
-        circuit->setWire(rst_net->id(), {1});
-        circuit->setWire(irq_net->id(), {0});
+        circuit->setWire(clk_net->id(), 0);
+        circuit->setWire(rst_net->id(), 1);
+        circuit->setWire(irq_net->id(), 0);
         circuit->tick();
-        circuit->setWire(rst_net->id(), {0});
+        circuit->setWire(rst_net->id(), 0);
     }
 };
 

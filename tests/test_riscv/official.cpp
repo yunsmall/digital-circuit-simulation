@@ -94,9 +94,9 @@ struct Fixture {
     }
 
     void cycle() {
-        circuit->setWire(clk_net->id(), {0});
+        circuit->setWire(clk_net->id(), 0);
         circuit->tick();
-        circuit->setWire(clk_net->id(), {1});
+        circuit->setWire(clk_net->id(), 1);
         circuit->tick();
     }
 };
@@ -132,10 +132,10 @@ uint32_t runElf(const std::string &path, std::string &err) {
         err = "compile 失败";
         return 0;
     }
-    f.circuit->setWire(f.clk_net->id(), {0});
-    f.circuit->setWire(f.rst_net->id(), {1});
+    f.circuit->setWire(f.clk_net->id(), 0);
+    f.circuit->setWire(f.rst_net->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst_net->id(), {0});
+    f.circuit->setWire(f.rst_net->id(), 0);
     // 链接在高地址的镜像要从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算
     f.cpu->setPc((uint32_t) img.entry);
 

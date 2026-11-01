@@ -48,16 +48,16 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
-        circuit->setWire(we->id(), {0});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
+        circuit->setWire(we->id(), 0);
     }
 
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
 
@@ -66,14 +66,14 @@ struct Fixture {
                                     (uint8_t)((addr >> 24) & 0xFF)});
         circuit->setWire(dat_i->id(), {(uint8_t)(val & 0xFF), (uint8_t)((val >> 8) & 0xFF), (uint8_t)((val >> 16) & 0xFF),
                                       (uint8_t)((val >> 24) & 0xFF)});
-        circuit->setWire(we->id(), {1});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 1);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 6; ++i)
             cycle();
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 4; ++i)
             cycle();
     }
@@ -81,22 +81,22 @@ struct Fixture {
     uint32_t read(uint32_t addr) {
         circuit->setWire(adr->id(), {(uint8_t)(addr & 0xFF), (uint8_t)((addr >> 8) & 0xFF), (uint8_t)((addr >> 16) & 0xFF),
                                     (uint8_t)((addr >> 24) & 0xFF)});
-        circuit->setWire(we->id(), {0});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 0);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 8; ++i)
             cycle();
         auto v = circuit->getWire(dat_o->id());
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 4; ++i)
             cycle();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
 
     void setSrc(uint32_t mask) {
-        circuit->setWire(src->id(), {(uint8_t)(mask & 0xFF)});
+        circuit->setWire(src->id(), (uint8_t)(mask & 0xFF));
         cycle();
         cycle(); // 时序输出到线网要再等一拍
     }
@@ -212,9 +212,9 @@ TEST(PlicTest, UnmappedOffsetReadsZeroAndStillAcks) {
     f.compile();
     f.write(0x300000, 0xFFFFFFFF); // 未实现的偏移，写被忽略
     f.circuit->setWire(f.adr->id(), {0x00, 0x00, 0x30, 0x00});
-    f.circuit->setWire(f.we->id(), {0});
-    f.circuit->setWire(f.stb->id(), {1});
-    f.circuit->setWire(f.cyc->id(), {1});
+    f.circuit->setWire(f.we->id(), 0);
+    f.circuit->setWire(f.stb->id(), 1);
+    f.circuit->setWire(f.cyc->id(), 1);
     for (int i = 0; i < 4; ++i)
         f.cycle();
     EXPECT_NE(f.circuit->getWire(f.ack->id())[0], 0) << "未实现的偏移也必须应答，否则总线挂死";
@@ -327,15 +327,15 @@ TEST(PlicTest, UartIrqReachesPlicAndClaimWorks) {
     ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
     c.init();
     for (auto *n : {clk, uwe, ustb, ucyc, pwe, pstb, pcyc})
-        c.setWire(n->id(), {(uint8_t) 0});
-    c.setWire(usel->id(), {(uint8_t) 0x0F});
-    c.setWire(psel->id(), {(uint8_t) 0x0F});
-    c.setWire(urx->id(), {(uint8_t) 1}); // 串口线空闲为高
+        c.setWire(n->id(), (uint8_t) 0);
+    c.setWire(usel->id(), (uint8_t) 0x0F);
+    c.setWire(psel->id(), (uint8_t) 0x0F);
+    c.setWire(urx->id(), (uint8_t) 1); // 串口线空闲为高
 
     auto cycle = [&] {
-        c.setWire(clk->id(), {0});
+        c.setWire(clk->id(), 0);
         c.tick();
-        c.setWire(clk->id(), {1});
+        c.setWire(clk->id(), 1);
         c.tick();
     };
     for (int i = 0; i < 2; ++i)
@@ -346,13 +346,13 @@ TEST(PlicTest, UartIrqReachesPlicAndClaimWorks) {
                               (uint8_t)((a >> 24) & 0xFF)});
         c.setWire(dat->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), (uint8_t)((v >> 16) & 0xFF),
                               (uint8_t)((v >> 24) & 0xFF)});
-        c.setWire(we->id(), {(uint8_t) 1});
-        c.setWire(stb->id(), {(uint8_t) 1});
-        c.setWire(cyc->id(), {(uint8_t) 1});
+        c.setWire(we->id(), (uint8_t) 1);
+        c.setWire(stb->id(), (uint8_t) 1);
+        c.setWire(cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 4; ++i)
             cycle();
-        c.setWire(stb->id(), {(uint8_t) 0});
-        c.setWire(cyc->id(), {(uint8_t) 0});
+        c.setWire(stb->id(), (uint8_t) 0);
+        c.setWire(cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 2; ++i)
             cycle();
     };
@@ -369,16 +369,16 @@ TEST(PlicTest, UartIrqReachesPlicAndClaimWorks) {
 
     // claim 应返回源 1
     c.setWire(pa->id(), {0x04, 0x10, 0x20, 0x00}); // 0x201004
-    c.setWire(pwe->id(), {(uint8_t) 0});
-    c.setWire(pstb->id(), {(uint8_t) 1});
-    c.setWire(pcyc->id(), {(uint8_t) 1});
+    c.setWire(pwe->id(), (uint8_t) 0);
+    c.setWire(pstb->id(), (uint8_t) 1);
+    c.setWire(pcyc->id(), (uint8_t) 1);
     for (int i = 0; i < 4; ++i)
         cycle();
     auto v = c.getWire(pdout->id());
     const uint32_t claim = uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     EXPECT_EQ(claim, 1u) << "claim 应返回 UART 对应的源 1";
-    c.setWire(pstb->id(), {(uint8_t) 0});
-    c.setWire(pcyc->id(), {(uint8_t) 0});
+    c.setWire(pstb->id(), (uint8_t) 0);
+    c.setWire(pcyc->id(), (uint8_t) 0);
     for (int i = 0; i < 2; ++i)
         cycle();
 }

@@ -51,20 +51,20 @@ public:
     void finish() {
         _c.compile();
         _c.init();
-        _c.setWire(clk->id(), { (uint8_t)0 });
-        _c.setWire(rst->id(), { (uint8_t)1 });
-        _c.setWire(stb->id(), { (uint8_t)0 });
-        _c.setWire(cyc->id(), { (uint8_t)0 });
+        _c.setWire(clk->id(), (uint8_t)0);
+        _c.setWire(rst->id(), (uint8_t)1);
+        _c.setWire(stb->id(), (uint8_t)0);
+        _c.setWire(cyc->id(), (uint8_t)0);
         _c.tick();
-        _c.setWire(rst->id(), { (uint8_t)0 });
+        _c.setWire(rst->id(), (uint8_t)0);
         _c.tick();
     }
 
     void tick(int n = 1) {
         for (int i = 0; i < n; ++i) {
-            _c.setWire(clk->id(), { (uint8_t)0 });
+            _c.setWire(clk->id(), (uint8_t)0);
             _c.tick();
-            _c.setWire(clk->id(), { (uint8_t)1 });
+            _c.setWire(clk->id(), (uint8_t)1);
             _c.tick();
         }
     }
@@ -74,12 +74,12 @@ public:
     void drive(uint32_t a, bool w, uint32_t d, uint8_t s, bool st, bool cy) {
         _c.setWire(adr->id(), { (uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF),
                                 (uint8_t)((a >> 16) & 0xFF), (uint8_t)((a >> 24) & 0xFF) });
-        _c.setWire(we->id(), { (uint8_t)(w ? 1 : 0) });
+        _c.setWire(we->id(), (uint8_t)(w ? 1 : 0));
         _c.setWire(dat_o->id(), { (uint8_t)(d & 0xFF), (uint8_t)((d >> 8) & 0xFF),
                                   (uint8_t)((d >> 16) & 0xFF), (uint8_t)((d >> 24) & 0xFF) });
-        _c.setWire(sel->id(), { (uint8_t)(s & 0x0F) });
-        _c.setWire(stb->id(), { (uint8_t)(st ? 1 : 0) });
-        _c.setWire(cyc->id(), { (uint8_t)(cy ? 1 : 0) });
+        _c.setWire(sel->id(), (uint8_t)(s & 0x0F));
+        _c.setWire(stb->id(), (uint8_t)(st ? 1 : 0));
+        _c.setWire(cyc->id(), (uint8_t)(cy ? 1 : 0));
     }
 
     // getWire 返回字节数组（小端），拼回 32 位

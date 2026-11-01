@@ -53,8 +53,8 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
-        c->setWire(we0->id(), {0});
+        c->setWire(clk->id(), 0);
+        c->setWire(we0->id(), 0);
         setW(*c, waddr0, 0);
         setW(*c, wdata0, 0);
         setW(*c, raddr0, 0);
@@ -62,11 +62,11 @@ struct Fx {
     }
 
     void edge() {
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
     }
 
@@ -76,9 +76,9 @@ struct Fx {
         for (int i = 0; i < bytes; i++)
             d[i] = (uint8_t) (val >> (8 * i));
         c->setWire(wdata0->id(), d);
-        c->setWire(we0->id(), {(uint8_t) (enable ? 1 : 0)});
+        c->setWire(we0->id(), (uint8_t) (enable ? 1 : 0));
         edge();
-        c->setWire(we0->id(), {0});
+        c->setWire(we0->id(), 0);
     }
 
     uint64_t read0(uint32_t addr) {
@@ -120,9 +120,9 @@ TEST(RegFile, ReadBeforeWriteSameCycleSeesOldValue) {
     // 同一拍发起写和读：组合读看到的是写之前的值
     setW(*f.c, f.raddr0, 2);
     setW(*f.c, f.waddr0, 2);
-    f.c->setWire(f.wdata0->id(), {0x55});
-    f.c->setWire(f.we0->id(), {1});
-    f.c->setWire(f.clk->id(), {0});
+    f.c->setWire(f.wdata0->id(), 0x55);
+    f.c->setWire(f.we0->id(), 1);
+    f.c->setWire(f.clk->id(), 0);
     f.c->tick();
     EXPECT_EQ(getW(*f.c, f.rdata0), 0xAA);
     f.edge();
@@ -159,8 +159,8 @@ TEST(RegFile, ResetClearsAllEntries) {
     f.write(7, 2);
     f.c->reset();
     f.c->init();
-    f.c->setWire(f.clk->id(), {0});
-    f.c->setWire(f.we0->id(), {0});
+    f.c->setWire(f.clk->id(), 0);
+    f.c->setWire(f.we0->id(), 0);
     EXPECT_EQ(f.read0(0), 0);
     EXPECT_EQ(f.read0(7), 0);
 }

@@ -67,39 +67,39 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {(uint8_t) 0});
-        circuit->setWire(c_stb->id(), {(uint8_t) 0});
-        circuit->setWire(c_cyc->id(), {(uint8_t) 0});
-        circuit->setWire(c_we->id(), {(uint8_t) 0});
-        circuit->setWire(c_sel->id(), {(uint8_t) 0x0F});
+        circuit->setWire(clk->id(), (uint8_t) 0);
+        circuit->setWire(c_stb->id(), (uint8_t) 0);
+        circuit->setWire(c_cyc->id(), (uint8_t) 0);
+        circuit->setWire(c_we->id(), (uint8_t) 0);
+        circuit->setWire(c_sel->id(), (uint8_t) 0x0F);
         for (int i = 0; i < 2; ++i) cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {(uint8_t) 0});
+        circuit->setWire(clk->id(), (uint8_t) 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {(uint8_t) 1});
+        circuit->setWire(clk->id(), (uint8_t) 1);
         circuit->tick();
     }
     void write(uint32_t addr, uint32_t v) {
         circuit->setWire(c_adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
         circuit->setWire(c_dat_o->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), (uint8_t)((v >> 16) & 0xFF), (uint8_t)((v >> 24) & 0xFF)});
-        circuit->setWire(c_we->id(), {(uint8_t) 1});
-        circuit->setWire(c_stb->id(), {(uint8_t) 1});
-        circuit->setWire(c_cyc->id(), {(uint8_t) 1});
+        circuit->setWire(c_we->id(), (uint8_t) 1);
+        circuit->setWire(c_stb->id(), (uint8_t) 1);
+        circuit->setWire(c_cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 4; ++i) cycle();
-        circuit->setWire(c_stb->id(), {(uint8_t) 0});
-        circuit->setWire(c_cyc->id(), {(uint8_t) 0});
+        circuit->setWire(c_stb->id(), (uint8_t) 0);
+        circuit->setWire(c_cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 2; ++i) cycle();
     }
     uint32_t read(uint32_t addr) {
         circuit->setWire(c_adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
-        circuit->setWire(c_we->id(), {(uint8_t) 0});
-        circuit->setWire(c_stb->id(), {(uint8_t) 1});
-        circuit->setWire(c_cyc->id(), {(uint8_t) 1});
+        circuit->setWire(c_we->id(), (uint8_t) 0);
+        circuit->setWire(c_stb->id(), (uint8_t) 1);
+        circuit->setWire(c_cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 6; ++i) cycle();
         auto v = circuit->getWire(c_dat_i->id());
-        circuit->setWire(c_stb->id(), {(uint8_t) 0});
-        circuit->setWire(c_cyc->id(), {(uint8_t) 0});
+        circuit->setWire(c_stb->id(), (uint8_t) 0);
+        circuit->setWire(c_cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 2; ++i) cycle();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }

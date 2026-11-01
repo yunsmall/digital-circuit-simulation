@@ -31,7 +31,7 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         setIn(0);
     }
 
@@ -51,11 +51,11 @@ struct Fx {
     }
 
     void edge() {
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
     }
 };
@@ -98,7 +98,7 @@ TEST(Debounce, IgnoresNonEdgeTicks) {
     Fx f(8, 2);
     f.setIn(1);
     // 一直保持低电平，没有上升沿就不该计数
-    f.c->setWire(f.clk->id(), {0});
+    f.c->setWire(f.clk->id(), 0);
     for (int i = 0; i < 10; i++)
         f.c->tick();
     EXPECT_EQ(f.getOut(), 0u);

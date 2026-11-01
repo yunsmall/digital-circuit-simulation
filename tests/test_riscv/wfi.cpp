@@ -73,21 +73,21 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(rst->id(), {1});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(rst->id(), 1);
         circuit->tick();
-        circuit->setWire(rst->id(), {0});
+        circuit->setWire(rst->id(), 0);
         for (int i = 0; i < cycles; ++i) {
-            circuit->setWire(clk->id(), {0});
+            circuit->setWire(clk->id(), 0);
             circuit->tick();
-            circuit->setWire(clk->id(), {1});
+            circuit->setWire(clk->id(), 1);
             circuit->tick();
         }
     }
     void oneCycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     bool isHalted() { return circuit->getWire(halted->id())[0] != 0; }
@@ -113,7 +113,7 @@ TEST(WfiTest, HaltsAndWakesOnInterrupt) {
     EXPECT_TRUE(f.isHalted()) << "无中断时 WFI 应停机（halted 引脚）";
 
     // 送一个机器定时器中断（mie.MTIE 未开也能唤醒 WFI）
-    f.circuit->setWire(f.mti->id(), {1});
+    f.circuit->setWire(f.mti->id(), 1);
     f.oneCycle();
     f.oneCycle();
     EXPECT_FALSE(f.isHalted()) << "中断到来后应唤醒";

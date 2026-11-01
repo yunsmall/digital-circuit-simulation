@@ -35,24 +35,24 @@ struct UartFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        c->setWire(clk->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 0});
-        c->setWire(cyc->id(), {(uint8_t) 0});
-        c->setWire(we->id(), {(uint8_t) 0});
-        c->setWire(rx->id(), {(uint8_t) 1});
+        c->setWire(clk->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 0);
+        c->setWire(cyc->id(), (uint8_t) 0);
+        c->setWire(we->id(), (uint8_t) 0);
+        c->setWire(rx->id(), (uint8_t) 1);
         for (int i = 0; i < 2; ++i) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     uint32_t rd(uint32_t a) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), 0, 0, 0});
-        c->setWire(we->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 6; ++i) tick();
         auto v = c->getWire(dat_o->id());
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 2; ++i) tick();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
@@ -64,10 +64,10 @@ TEST(EdgeCases, UartRejectsBadStopBit) {
     // 起始位 0 + 8 位数据 0x5A + 停止位写成 0（帧错误）
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 0};
     for (int i = 0; i < 10; ++i) {
-        f.c->setWire(f.rx->id(), {(uint8_t) bits[i]});
+        f.c->setWire(f.rx->id(), (uint8_t) bits[i]);
         for (int k = 0; k < 4; ++k) f.tick();
     }
-    f.c->setWire(f.rx->id(), {(uint8_t) 1});
+    f.c->setWire(f.rx->id(), (uint8_t) 1);
     for (int k = 0; k < 8; ++k) f.tick();
     EXPECT_EQ(f.rd(0x08) & 2u, 0u) << "停止位为 0 时不应交付数据";
 }
@@ -76,9 +76,9 @@ TEST(EdgeCases, UartIgnoresNoisePulse) {
     UartFx f(8);
     f.open();
     // 一个远短于半位的低脉冲，应被判为噪声丢弃
-    f.c->setWire(f.rx->id(), {(uint8_t) 0});
+    f.c->setWire(f.rx->id(), (uint8_t) 0);
     f.tick();
-    f.c->setWire(f.rx->id(), {(uint8_t) 1});
+    f.c->setWire(f.rx->id(), (uint8_t) 1);
     for (int k = 0; k < 10; ++k) f.tick();
     EXPECT_EQ(f.rd(0x08) & 2u, 0u) << "短脉冲不应被当成起始位";
 }
@@ -105,35 +105,35 @@ struct PlicFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        c->setWire(clk->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
-        c->setWire(we->id(), {(uint8_t) 0});
+        c->setWire(clk->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
+        c->setWire(we->id(), (uint8_t) 0);
         for (int i = 0; i < 2; ++i) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     void wr(uint32_t a, uint32_t v) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF), (uint8_t)((a >> 16) & 0xFF), (uint8_t)((a >> 24) & 0xFF)});
         c->setWire(dat_i->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), (uint8_t)((v >> 16) & 0xFF), (uint8_t)((v >> 24) & 0xFF)});
-        c->setWire(we->id(), {(uint8_t) 1});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 1);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 6; ++i) tick();
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 4; ++i) tick();
     }
     uint32_t rd(uint32_t a) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF), (uint8_t)((a >> 16) & 0xFF), (uint8_t)((a >> 24) & 0xFF)});
-        c->setWire(we->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int i = 0; i < 8; ++i) tick();
         auto v = c->getWire(dat_o->id());
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int i = 0; i < 4; ++i) tick();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
-    void setSrc(uint32_t m) { c->setWire(src->id(), {(uint8_t)(m & 0xFF)}); tick(); tick(); }
+    void setSrc(uint32_t m) { c->setWire(src->id(), (uint8_t)(m & 0xFF)); tick(); tick(); }
     bool irqHigh() { return c->getWire(irq->id())[0] != 0; }
 };
 
@@ -186,31 +186,31 @@ struct I2cFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        c->setWire(clk->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
-        c->setWire(we->id(), {(uint8_t) 0}); c->setWire(sda_in->id(), {(uint8_t) 1});
+        c->setWire(clk->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
+        c->setWire(we->id(), (uint8_t) 0); c->setWire(sda_in->id(), (uint8_t) 1);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     void wr(uint32_t a, uint32_t v) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), 0, 0, 0});
         c->setWire(dat_i->id(), {(uint8_t)(v & 0xFF), 0, 0, 0});
-        c->setWire(we->id(), {(uint8_t) 1});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 1);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int k = 0; k < 4; ++k) tick();
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 2; ++k) tick();
     }
     uint32_t rd(uint32_t a) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), 0, 0, 0});
-        c->setWire(we->id(), {(uint8_t) 0});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 0);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int k = 0; k < 6; ++k) tick();
         auto v = c->getWire(dat_o->id());
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 2; ++k) tick();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
@@ -268,21 +268,21 @@ struct CacheFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        c->setWire(clk->id(), {(uint8_t) 0});
-        c->setWire(c_stb->id(), {(uint8_t) 0}); c->setWire(c_cyc->id(), {(uint8_t) 0});
-        c->setWire(c_we->id(), {(uint8_t) 0}); c->setWire(c_sel->id(), {(uint8_t) 0x0F});
+        c->setWire(clk->id(), (uint8_t) 0);
+        c->setWire(c_stb->id(), (uint8_t) 0); c->setWire(c_cyc->id(), (uint8_t) 0);
+        c->setWire(c_we->id(), (uint8_t) 0); c->setWire(c_sel->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     uint32_t access(uint32_t a, bool we, uint32_t d, uint8_t s = 0x0F) {
         c->setWire(c_adr->id(), {(uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF), 0, 0});
         c->setWire(c_dat_o->id(), {(uint8_t)(d & 0xFF), (uint8_t)((d >> 8) & 0xFF), (uint8_t)((d >> 16) & 0xFF), (uint8_t)((d >> 24) & 0xFF)});
-        c->setWire(c_we->id(), {(uint8_t)(we ? 1 : 0)});
-        c->setWire(c_sel->id(), {s});
-        c->setWire(c_stb->id(), {(uint8_t) 1}); c->setWire(c_cyc->id(), {(uint8_t) 1});
+        c->setWire(c_we->id(), (uint8_t)(we ? 1 : 0));
+        c->setWire(c_sel->id(), s);
+        c->setWire(c_stb->id(), (uint8_t) 1); c->setWire(c_cyc->id(), (uint8_t) 1);
         uint32_t r = 0;
         for (int k = 0; k < 60; ++k) {
             tick();
@@ -292,7 +292,7 @@ struct CacheFx {
                 break;
             }
         }
-        c->setWire(c_stb->id(), {(uint8_t) 0}); c->setWire(c_cyc->id(), {(uint8_t) 0});
+        c->setWire(c_stb->id(), (uint8_t) 0); c->setWire(c_cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 3; ++k) tick();
         return r;
     }

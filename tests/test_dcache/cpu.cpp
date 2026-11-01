@@ -110,9 +110,9 @@ struct CpuCacheFixture {
 
     void runCycles(int n) {
         for (int i = 0; i < n; i++) {
-            circuit->setWire(clk->id(), {0});
+            circuit->setWire(clk->id(), 0);
             circuit->tick();
-            circuit->setWire(clk->id(), {1});
+            circuit->setWire(clk->id(), 1);
             circuit->tick();
         }
     }
@@ -136,10 +136,10 @@ TEST(DcacheCpuTest, StoreThenLoadThroughCache) {
             0x00100073, // ebreak
     });
     f.compile();
-    f.circuit->setWire(f.clk->id(), {0});
-    f.circuit->setWire(f.rst->id(), {1});
+    f.circuit->setWire(f.clk->id(), 0);
+    f.circuit->setWire(f.rst->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst->id(), {0});
+    f.circuit->setWire(f.rst->id(), 0);
     f.runCycles(200);
 
     EXPECT_EQ(f.cpu->pc(), trap);
@@ -159,10 +159,10 @@ TEST(DcacheCpuTest, RepeatedLoadsHitAndStayCorrect) {
             0x00100073,
     });
     f.compile();
-    f.circuit->setWire(f.clk->id(), {0});
-    f.circuit->setWire(f.rst->id(), {1});
+    f.circuit->setWire(f.clk->id(), 0);
+    f.circuit->setWire(f.rst->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst->id(), {0});
+    f.circuit->setWire(f.rst->id(), 0);
     f.runCycles(200);
 
     EXPECT_EQ(f.cpu->reg(3), 0xAAu);
@@ -184,10 +184,10 @@ TEST(DcacheCpuTest, ByteStoreAndLoad) {
             0x00100073,
     });
     f.compile();
-    f.circuit->setWire(f.clk->id(), {0});
-    f.circuit->setWire(f.rst->id(), {1});
+    f.circuit->setWire(f.clk->id(), 0);
+    f.circuit->setWire(f.rst->id(), 1);
     f.circuit->tick();
-    f.circuit->setWire(f.rst->id(), {0});
+    f.circuit->setWire(f.rst->id(), 0);
     f.runCycles(220);
 
     EXPECT_EQ(f.cpu->reg(3), 0x12345655u);

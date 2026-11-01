@@ -49,41 +49,41 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
-        circuit->setWire(we->id(), {0});
-        circuit->setWire(sda_in->id(), {1}); // 外部上拉
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
+        circuit->setWire(we->id(), 0);
+        circuit->setWire(sda_in->id(), 1); // 外部上拉
         for (int i = 0; i < 2; ++i) cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     void write(uint32_t addr, uint32_t v) {
         circuit->setWire(adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
         circuit->setWire(dat_i->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), 0, 0});
-        circuit->setWire(we->id(), {1});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 1);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; ++i) cycle();
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
     }
     uint32_t read(uint32_t addr) {
         circuit->setWire(adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
-        circuit->setWire(we->id(), {0});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 0);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 6; ++i) cycle();
         auto v = circuit->getWire(dat_o->id());
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
@@ -135,7 +135,7 @@ TEST(I2cTest, SlaveAckCompletesWithoutNack) {
     f.compile();
     f.write(0x10, 0x50);
     f.write(0x00, 0xA5);
-    f.circuit->setWire(f.sda_in->id(), {(uint8_t) 0}); // 从机全程拉低 = 每个 ACK 位都应答
+    f.circuit->setWire(f.sda_in->id(), (uint8_t) 0); // 从机全程拉低 = 每个 ACK 位都应答
     f.write(0x0C, 1);
     for (int i = 0; i < 200; ++i)
         f.cycle();

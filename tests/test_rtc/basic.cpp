@@ -43,21 +43,21 @@ struct RtcFixture {
         for (int i = 0; i < n; i++) c->tick();
     }
     void write(uint32_t a, uint32_t d) {
-        c->setWire(addr->id(), {(uint8_t) a});
+        c->setWire(addr->id(), (uint8_t) a);
         c->setWire(wdata->id(), {(uint8_t) d, (uint8_t) (d >> 8), (uint8_t) (d >> 16), (uint8_t) (d >> 24)});
-        c->setWire(we->id(), {1});
-        c->setWire(en->id(), {1});
+        c->setWire(we->id(), 1);
+        c->setWire(en->id(), 1);
         ticks(2);
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
     }
     uint32_t read(uint32_t a) {
-        c->setWire(addr->id(), {(uint8_t) a});
-        c->setWire(we->id(), {0});
-        c->setWire(en->id(), {1});
+        c->setWire(addr->id(), (uint8_t) a);
+        c->setWire(we->id(), 0);
+        c->setWire(en->id(), 1);
         ticks(3); // seq 输出写 _c_out 后下一拍才传播到线网
         auto v = c->getWire(rdata->id());
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
         return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
     }
@@ -98,10 +98,10 @@ TEST(RtcTest, AlarmRaisesIrq) {
 
 TEST(RtcTest, ReadyFollowsEnable) {
     RtcFixture f(100);
-    f.c->setWire(f.en->id(), {1});
+    f.c->setWire(f.en->id(), 1);
     f.ticks(3);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0] & 1, 1) << "en 有效时 ready 必须为高";
-    f.c->setWire(f.en->id(), {0});
+    f.c->setWire(f.en->id(), 0);
     f.ticks(3);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0] & 1, 0);
 }

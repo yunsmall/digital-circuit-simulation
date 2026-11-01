@@ -76,17 +76,17 @@ TEST(RiscVCPUDebug, SingleAddiInstruction) {
     c.init();
 
     // 复位
-    c.setWire(clk->id(), {0});
-    c.setWire(rst->id(), {1});
+    c.setWire(clk->id(), 0);
+    c.setWire(rst->id(), 1);
     c.tick();
-    c.setWire(rst->id(), {0});
+    c.setWire(rst->id(), 0);
     std::cout << "After reset: pc=" << cpu->pc() << " halted=" << cpu->halted() << std::endl;
 
     // 运行若干个周期并打印状态
     for (int cycle = 0; cycle < 20; cycle++) {
-        c.setWire(clk->id(), {0});
+        c.setWire(clk->id(), 0);
         c.tick();
-        c.setWire(clk->id(), {1});
+        c.setWire(clk->id(), 1);
         c.tick();
 
         if (cycle < 5 || cpu->halted()) {

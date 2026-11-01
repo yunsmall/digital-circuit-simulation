@@ -48,17 +48,17 @@ struct RbFixture {
     void begin(uint32_t a, uint32_t d, bool write, bool rdy = true) {
         set32(adr, c.get(), a);
         set32(dat, c.get(), d);
-        c->setWire(we->id(), {(uint8_t) (write ? 1 : 0)});
-        c->setWire(sel->id(), {0x0F});
-        c->setWire(ready->id(), {(uint8_t) (rdy ? 1 : 0)});
-        c->setWire(stb->id(), {1});
-        c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), (uint8_t) (write ? 1 : 0));
+        c->setWire(sel->id(), 0x0F);
+        c->setWire(ready->id(), (uint8_t) (rdy ? 1 : 0));
+        c->setWire(stb->id(), 1);
+        c->setWire(cyc->id(), 1);
         c->tick(); // 发起拍：en 拉高，addr/wdata 锁存
     }
     void end() {
-        c->setWire(stb->id(), {0});
+        c->setWire(stb->id(), 0);
         ticks(2);
-        c->setWire(cyc->id(), {0});
+        c->setWire(cyc->id(), 0);
         ticks(1);
     }
     int en() const { return c->getWire(o_en->id())[0] & 1; }
@@ -115,7 +115,7 @@ TEST(RegBridgeTest, AckWaitsForReady) {
     f.begin(0x00, 0, false, false); // ready 先不给
     f.ticks(5);
     EXPECT_EQ(f.ack(), 0) << "ready 未到不应回 ack";
-    f.c->setWire(f.ready->id(), {1});
+    f.c->setWire(f.ready->id(), 1);
     f.ticks(3);
     EXPECT_EQ(f.ack(), 1) << "ready 到达后应回 ack";
     f.end();
@@ -134,7 +134,7 @@ TEST(RegBridgeTest, WriteDataHeldWhileWaitingReady) {
     f.ticks(4);
     EXPECT_EQ(f.get32(f.o_wdat), 0xDEADBEEFu) << "等待 ready 期间写数据必须保持";
     EXPECT_EQ(f.ack(), 0);
-    f.c->setWire(f.ready->id(), {1});
+    f.c->setWire(f.ready->id(), 1);
     f.ticks(3);
     EXPECT_EQ(f.ack(), 1);
     f.end();
@@ -157,7 +157,7 @@ TEST(RegBridgeTest, ReadLatchesDataOnlyAfterReady) {
     f.c->setWire(f.rdat->id(), {0x22, 0x22, 0x22, 0x22});
     f.ticks(3);
     EXPECT_EQ(f.ack(), 0);
-    f.c->setWire(f.ready->id(), {1});
+    f.c->setWire(f.ready->id(), 1);
     f.ticks(3);
     EXPECT_EQ(f.ack(), 1);
     EXPECT_EQ(f.get32(f.o_dat), 0x22222222u) << "应在 ready 生效时锁存当时的数据";

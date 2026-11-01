@@ -46,43 +46,43 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
-        circuit->setWire(we->id(), {0});
-        circuit->setWire(rx->id(), {1}); // 串口空闲为高
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
+        circuit->setWire(we->id(), 0);
+        circuit->setWire(rx->id(), 1); // 串口空闲为高
         for (int i = 0; i < 2; ++i)       // 让 JIT 输出传播到线网，再开始断言
             cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     void write(uint32_t addr, uint32_t v) {
         circuit->setWire(adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
         circuit->setWire(dat_i->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), (uint8_t)((v >> 16) & 0xFF),
                                       (uint8_t)((v >> 24) & 0xFF)});
-        circuit->setWire(we->id(), {1});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 1);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 4; ++i) cycle();
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
     }
     uint32_t read(uint32_t addr) {
         circuit->setWire(adr->id(), {(uint8_t)(addr & 0xFF), 0, 0, 0});
-        circuit->setWire(we->id(), {0});
-        circuit->setWire(sel->id(), {0x0F});
-        circuit->setWire(stb->id(), {1});
-        circuit->setWire(cyc->id(), {1});
+        circuit->setWire(we->id(), 0);
+        circuit->setWire(sel->id(), 0x0F);
+        circuit->setWire(stb->id(), 1);
+        circuit->setWire(cyc->id(), 1);
         for (int i = 0; i < 6; ++i) cycle();
         auto v = circuit->getWire(dat_o->id());
-        circuit->setWire(stb->id(), {0});
-        circuit->setWire(cyc->id(), {0});
+        circuit->setWire(stb->id(), 0);
+        circuit->setWire(cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
         return uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24);
     }
@@ -127,11 +127,11 @@ TEST(UartTest, ReceiveSamplesByte) {
     // 线上送 0x5A：起始位 0，然后 LSB 先 0,1,0,1,1,0,1,0，停止位 1
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 1};
     for (int i = 0; i < 10; ++i) {
-        f.circuit->setWire(f.rx->id(), {(uint8_t) bits[i]});
+        f.circuit->setWire(f.rx->id(), (uint8_t) bits[i]);
         for (int k = 0; k < 4; ++k) // 4 个 cycle = 8 tick
             f.cycle();
     }
-    f.circuit->setWire(f.rx->id(), {1});
+    f.circuit->setWire(f.rx->id(), 1);
     f.cycle();
     EXPECT_EQ(f.read(0x14) & 1u, 1u) << "应置 LSR.DR";
     EXPECT_EQ(f.read(0x00), 0x5Au) << "读回收到的字节";
@@ -181,11 +181,11 @@ TEST(UartTest, IirRdaTakesPriorityOverThri) {
     f.write(0x04, 0x03); // RX 和 TX 中断都开
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 1};
     for (int i = 0; i < 10; ++i) {
-        f.circuit->setWire(f.rx->id(), {(uint8_t) bits[i]});
+        f.circuit->setWire(f.rx->id(), (uint8_t) bits[i]);
         for (int k = 0; k < 4; ++k)
             f.cycle();
     }
-    f.circuit->setWire(f.rx->id(), {1});
+    f.circuit->setWire(f.rx->id(), 1);
     f.cycle();
     EXPECT_EQ(f.read(0x08) & 0x0F, 0x04u) << "RX 数据可用时 IIR 应报 RDA";
 }

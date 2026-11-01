@@ -67,17 +67,17 @@ struct Fixture {
         auto err = circuit->compile();
         ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
         circuit->init();
-        circuit->setWire(clk->id(), {0});
-        circuit->setWire(c_stb->id(), {0});
-        circuit->setWire(c_cyc->id(), {0});
-        circuit->setWire(c_we->id(), {0});
-        circuit->setWire(c_sel->id(), {0x0F});
+        circuit->setWire(clk->id(), 0);
+        circuit->setWire(c_stb->id(), 0);
+        circuit->setWire(c_cyc->id(), 0);
+        circuit->setWire(c_we->id(), 0);
+        circuit->setWire(c_sel->id(), 0x0F);
         for (int i = 0; i < 2; ++i) cycle();
     }
     void cycle() {
-        circuit->setWire(clk->id(), {0});
+        circuit->setWire(clk->id(), 0);
         circuit->tick();
-        circuit->setWire(clk->id(), {1});
+        circuit->setWire(clk->id(), 1);
         circuit->tick();
     }
     void put(uint32_t addr, uint32_t v) { std::memcpy(mem->writableMemPtr() + addr, &v, 4); }
@@ -88,12 +88,12 @@ struct Fixture {
     }
 
     uint32_t accessWithSel(uint32_t addr, bool we, uint32_t wdata, uint8_t sel, int max_cycles = 60) {
-        circuit->setWire(c_sel->id(), {sel});
+        circuit->setWire(c_sel->id(), sel);
         circuit->setWire(c_adr->id(), {(uint8_t)(addr & 0xFF), (uint8_t)((addr >> 8) & 0xFF), (uint8_t)((addr >> 16) & 0xFF), (uint8_t)((addr >> 24) & 0xFF)});
         circuit->setWire(c_dat_o->id(), {(uint8_t)(wdata & 0xFF), (uint8_t)((wdata >> 8) & 0xFF), (uint8_t)((wdata >> 16) & 0xFF), (uint8_t)((wdata >> 24) & 0xFF)});
-        circuit->setWire(c_we->id(), {(uint8_t)(we ? 1 : 0)});
-        circuit->setWire(c_stb->id(), {1});
-        circuit->setWire(c_cyc->id(), {1});
+        circuit->setWire(c_we->id(), (uint8_t)(we ? 1 : 0));
+        circuit->setWire(c_stb->id(), 1);
+        circuit->setWire(c_cyc->id(), 1);
         uint32_t result = 0;
         for (int i = 0; i < max_cycles; ++i) {
             cycle();
@@ -103,8 +103,8 @@ struct Fixture {
                 break;
             }
         }
-        circuit->setWire(c_stb->id(), {0});
-        circuit->setWire(c_cyc->id(), {0});
+        circuit->setWire(c_stb->id(), 0);
+        circuit->setWire(c_cyc->id(), 0);
         for (int i = 0; i < 2; ++i) cycle();
         return result;
     }
@@ -178,10 +178,10 @@ TEST(CacheTest, AckHeldWhileStbHigh) {
     f.access(0x500, false, 0); // 填充
     // 手动发起一笔读并一直保持 stb，模拟主设备等应答
     f.circuit->setWire(f.c_adr->id(), {0x00, 0x05, 0x00, 0x00});
-    f.circuit->setWire(f.c_we->id(), {0});
-    f.circuit->setWire(f.c_sel->id(), {0x0F});
-    f.circuit->setWire(f.c_stb->id(), {1});
-    f.circuit->setWire(f.c_cyc->id(), {1});
+    f.circuit->setWire(f.c_we->id(), 0);
+    f.circuit->setWire(f.c_sel->id(), 0x0F);
+    f.circuit->setWire(f.c_stb->id(), 1);
+    f.circuit->setWire(f.c_cyc->id(), 1);
     int ack_seen = 0;
     for (int i = 0; i < 10; ++i) {
         f.cycle();

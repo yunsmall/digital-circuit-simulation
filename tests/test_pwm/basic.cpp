@@ -38,21 +38,21 @@ struct PwmFixture {
         for (int i = 0; i < n; i++) c->tick();
     }
     void write(uint32_t a, uint32_t d) {
-        c->setWire(addr->id(), {(uint8_t) a});
+        c->setWire(addr->id(), (uint8_t) a);
         c->setWire(wdata->id(), {(uint8_t) d, (uint8_t) (d >> 8), (uint8_t) (d >> 16), (uint8_t) (d >> 24)});
-        c->setWire(we->id(), {1});
-        c->setWire(en->id(), {1});
+        c->setWire(we->id(), 1);
+        c->setWire(en->id(), 1);
         ticks(2);
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
     }
     uint32_t read(uint32_t a) {
-        c->setWire(addr->id(), {(uint8_t) a});
-        c->setWire(we->id(), {0});
-        c->setWire(en->id(), {1});
+        c->setWire(addr->id(), (uint8_t) a);
+        c->setWire(we->id(), 0);
+        c->setWire(en->id(), 1);
         ticks(3);
         auto v = c->getWire(rdata->id());
-        c->setWire(en->id(), {0});
+        c->setWire(en->id(), 0);
         ticks(1);
         return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
     }

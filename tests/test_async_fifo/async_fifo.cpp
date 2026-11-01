@@ -37,10 +37,10 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(wclk->id(), {0});
-        c->setWire(rclk->id(), {0});
-        c->setWire(wen->id(), {0});
-        c->setWire(ren->id(), {0});
+        c->setWire(wclk->id(), 0);
+        c->setWire(rclk->id(), 0);
+        c->setWire(wen->id(), 0);
+        c->setWire(ren->id(), 0);
         setData(0);
         settle();
     }
@@ -70,28 +70,28 @@ struct Fx {
 
     // 只给写时钟一个上升沿，不改变读时钟
     void wrPulse() {
-        c->setWire(wclk->id(), {0});
+        c->setWire(wclk->id(), 0);
         c->tick();
-        c->setWire(wclk->id(), {1});
+        c->setWire(wclk->id(), 1);
         c->tick();
-        c->setWire(wclk->id(), {0});
+        c->setWire(wclk->id(), 0);
         c->tick();
     }
 
     void rdPulse() {
-        c->setWire(rclk->id(), {0});
+        c->setWire(rclk->id(), 0);
         c->tick();
-        c->setWire(rclk->id(), {1});
+        c->setWire(rclk->id(), 1);
         c->tick();
-        c->setWire(rclk->id(), {0});
+        c->setWire(rclk->id(), 0);
         c->tick();
     }
 
     void write(uint64_t v) {
         setData(v);
-        c->setWire(wen->id(), {1});
+        c->setWire(wen->id(), 1);
         wrPulse();
-        c->setWire(wen->id(), {0});
+        c->setWire(wen->id(), 0);
         settle();
     }
 
@@ -114,9 +114,9 @@ struct Fx {
         settle(); // 让上一拍写的满/空标志传播到线网
         if (isEmpty())
             return false;
-        c->setWire(ren->id(), {1});
+        c->setWire(ren->id(), 1);
         rdPulse();
-        c->setWire(ren->id(), {0});
+        c->setWire(ren->id(), 0);
         settle();
         v = data();
         return true;
@@ -201,19 +201,19 @@ TEST(AsyncFifo, SimultaneousEdgesReadOldData) {
     ASSERT_FALSE(f.isEmpty());
 
     f.setData(2);
-    f.c->setWire(f.wen->id(), {1});
-    f.c->setWire(f.ren->id(), {1});
-    f.c->setWire(f.wclk->id(), {0});
-    f.c->setWire(f.rclk->id(), {0});
+    f.c->setWire(f.wen->id(), 1);
+    f.c->setWire(f.ren->id(), 1);
+    f.c->setWire(f.wclk->id(), 0);
+    f.c->setWire(f.rclk->id(), 0);
     f.c->tick();
-    f.c->setWire(f.wclk->id(), {1});
-    f.c->setWire(f.rclk->id(), {1});
+    f.c->setWire(f.wclk->id(), 1);
+    f.c->setWire(f.rclk->id(), 1);
     f.c->tick();
-    f.c->setWire(f.wclk->id(), {0});
-    f.c->setWire(f.rclk->id(), {0});
+    f.c->setWire(f.wclk->id(), 0);
+    f.c->setWire(f.rclk->id(), 0);
     f.c->tick();
-    f.c->setWire(f.wen->id(), {0});
-    f.c->setWire(f.ren->id(), {0});
+    f.c->setWire(f.wen->id(), 0);
+    f.c->setWire(f.ren->id(), 0);
     f.settle();
 
     // 同拍上升沿里读到的数据挂在 rd_data 上：必须是写入之前的值 1
@@ -229,10 +229,10 @@ TEST(AsyncFifo, SimultaneousEdgesReadOldData) {
 TEST(AsyncFifo, NoClockEdgeNoWrite) {
     Fx f;
     f.setData(0x33);
-    f.c->setWire(f.wen->id(), {1});
+    f.c->setWire(f.wen->id(), 1);
     for (int i = 0; i < 5; i++)
         f.c->tick();
-    f.c->setWire(f.wen->id(), {0});
+    f.c->setWire(f.wen->id(), 0);
     f.syncReadSide();
     EXPECT_TRUE(f.isEmpty());
 }
@@ -281,8 +281,8 @@ TEST(AsyncFifo, ResetClearsEverything) {
     ASSERT_FALSE(f.isEmpty());
 
     f.c->init();
-    f.c->setWire(f.wclk->id(), {0});
-    f.c->setWire(f.rclk->id(), {0});
+    f.c->setWire(f.wclk->id(), 0);
+    f.c->setWire(f.rclk->id(), 0);
     f.settle();
 
     EXPECT_TRUE(f.isEmpty());

@@ -55,7 +55,7 @@ struct Fx {
     uint64_t run(uint64_t av, uint64_t bv, uint32_t o) {
         setU64(*c, a, av, bytes);
         setU64(*c, b, bv, bytes);
-        c->setWire(op->id(), {(uint8_t) (o & 0xF)});
+        c->setWire(op->id(), (uint8_t) (o & 0xF));
         c->tick();
         return getU64(*c, out);
     }

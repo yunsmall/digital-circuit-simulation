@@ -62,14 +62,14 @@ struct FeedToUartFixture {
     }
     uint32_t readReg(uint32_t a) {
         set32(c.get(), adr, a);
-        c->setWire(we->id(), {0});
-        c->setWire(sel->id(), {0x0F});
-        c->setWire(stb->id(), {1});
-        c->setWire(cyc->id(), {1});
+        c->setWire(we->id(), 0);
+        c->setWire(sel->id(), 0x0F);
+        c->setWire(stb->id(), 1);
+        c->setWire(cyc->id(), 1);
         ticks(4);
         uint32_t v = get32(rdat);
-        c->setWire(stb->id(), {0});
-        c->setWire(cyc->id(), {0});
+        c->setWire(stb->id(), 0);
+        c->setWire(cyc->id(), 0);
         ticks(2);
         return v;
     }

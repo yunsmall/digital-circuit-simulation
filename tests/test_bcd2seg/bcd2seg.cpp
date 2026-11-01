@@ -33,8 +33,8 @@ struct Fx {
     }
 
     uint8_t run(uint32_t v, bool point = false) {
-        c->setWire(in->id(), {(uint8_t) (v & 0xF)});
-        c->setWire(dp->id(), {(uint8_t) (point ? 1 : 0)});
+        c->setWire(in->id(), (uint8_t) (v & 0xF));
+        c->setWire(dp->id(), (uint8_t) (point ? 1 : 0));
         c->tick();
         return c->getWire(seg->id())[0];
     }

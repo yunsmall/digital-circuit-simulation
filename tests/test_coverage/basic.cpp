@@ -39,20 +39,20 @@ struct SpiFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        for (auto *n : {clk, stb, cyc, we, miso}) c->setWire(n->id(), {(uint8_t) 0});
+        for (auto *n : {clk, stb, cyc, we, miso}) c->setWire(n->id(), (uint8_t) 0);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     void wr(uint32_t a, uint32_t v) {
         c->setWire(adr->id(), {(uint8_t)(a & 0xFF), 0, 0, 0});
         c->setWire(dat_i->id(), {(uint8_t)(v & 0xFF), 0, 0, 0});
-        c->setWire(we->id(), {(uint8_t) 1});
-        c->setWire(stb->id(), {(uint8_t) 1}); c->setWire(cyc->id(), {(uint8_t) 1});
+        c->setWire(we->id(), (uint8_t) 1);
+        c->setWire(stb->id(), (uint8_t) 1); c->setWire(cyc->id(), (uint8_t) 1);
         for (int k = 0; k < 4; ++k) tick();
-        c->setWire(stb->id(), {(uint8_t) 0}); c->setWire(cyc->id(), {(uint8_t) 0});
+        c->setWire(stb->id(), (uint8_t) 0); c->setWire(cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 2; ++k) tick();
     }
     bool bit(Net *n) { return c->getWire(n->id())[0] != 0; }
@@ -127,21 +127,21 @@ struct DmaFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        for (auto *n : {clk, c_stb, c_cyc, c_we}) c->setWire(n->id(), {(uint8_t) 0});
-        c->setWire(c_sel->id(), {(uint8_t) 0x0F});
+        for (auto *n : {clk, c_stb, c_cyc, c_we}) c->setWire(n->id(), (uint8_t) 0);
+        c->setWire(c_sel->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     void wr(uint32_t a, uint32_t v) {
         c->setWire(c_adr->id(), {(uint8_t)(a & 0xFF), 0, 0, 0});
         c->setWire(c_dat_o->id(), {(uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF), (uint8_t)((v >> 16) & 0xFF), (uint8_t)((v >> 24) & 0xFF)});
-        c->setWire(c_we->id(), {(uint8_t) 1});
-        c->setWire(c_stb->id(), {(uint8_t) 1}); c->setWire(c_cyc->id(), {(uint8_t) 1});
+        c->setWire(c_we->id(), (uint8_t) 1);
+        c->setWire(c_stb->id(), (uint8_t) 1); c->setWire(c_cyc->id(), (uint8_t) 1);
         for (int k = 0; k < 4; ++k) tick();
-        c->setWire(c_stb->id(), {(uint8_t) 0}); c->setWire(c_cyc->id(), {(uint8_t) 0});
+        c->setWire(c_stb->id(), (uint8_t) 0); c->setWire(c_cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 2; ++k) tick();
     }
     void put(uint32_t a, uint32_t v) { std::memcpy(m->writableMemPtr() + a, &v, 4); }
@@ -223,13 +223,13 @@ struct AxiFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        for (auto *n : {clk, awvalid, wvalid, arvalid, bready, rready}) c->setWire(n->id(), {(uint8_t) 0});
-        c->setWire(wstrb->id(), {(uint8_t) 0x0F});
+        for (auto *n : {clk, awvalid, wvalid, arvalid, bready, rready}) c->setWire(n->id(), (uint8_t) 0);
+        c->setWire(wstrb->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     bool bit(Net *n) { return c->getWire(n->id())[0] != 0; }
     uint32_t peek(uint32_t a) { uint32_t v; std::memcpy(&v, m->writableMemPtr() + a, 4); return v; }
@@ -242,10 +242,10 @@ TEST(Coverage, AxiByteStrobeOnlyWritesSelectedBytes) {
     f.put(0x40, 0x11223344);
     f.c->setWire(f.awaddr->id(), {(uint8_t) 0x40, 0, 0, 0});
     f.c->setWire(f.wdata->id(), {(uint8_t) 0xAA, (uint8_t) 0xBB, 0, 0});
-    f.c->setWire(f.wstrb->id(), {(uint8_t) 0x03}); // 只写低两个字节
-    f.c->setWire(f.awvalid->id(), {(uint8_t) 1});
-    f.c->setWire(f.wvalid->id(), {(uint8_t) 1});
-    f.c->setWire(f.bready->id(), {(uint8_t) 1});
+    f.c->setWire(f.wstrb->id(), (uint8_t) 0x03); // 只写低两个字节
+    f.c->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.c->setWire(f.wvalid->id(), (uint8_t) 1);
+    f.c->setWire(f.bready->id(), (uint8_t) 1);
     for (int k = 0; k < 40; ++k) f.tick();
     EXPECT_EQ(f.peek(0x40), 0x1122BBAAu) << "只应改选中的两个字节";
 }
@@ -256,10 +256,10 @@ TEST(Coverage, AxiBvalidHoldsUntilReady) {
     f.put(0x50, 0);
     f.c->setWire(f.awaddr->id(), {(uint8_t) 0x50, 0, 0, 0});
     f.c->setWire(f.wdata->id(), {(uint8_t) 0x5A, 0, 0, 0});
-    f.c->setWire(f.wstrb->id(), {(uint8_t) 0x0F});
-    f.c->setWire(f.awvalid->id(), {(uint8_t) 1});
-    f.c->setWire(f.wvalid->id(), {(uint8_t) 1});
-    f.c->setWire(f.bready->id(), {(uint8_t) 0}); // 先不给 ready
+    f.c->setWire(f.wstrb->id(), (uint8_t) 0x0F);
+    f.c->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.c->setWire(f.wvalid->id(), (uint8_t) 1);
+    f.c->setWire(f.bready->id(), (uint8_t) 0); // 先不给 ready
     bool sawBvalid = false;
     for (int k = 0; k < 40; ++k) {
         f.tick();
@@ -267,7 +267,7 @@ TEST(Coverage, AxiBvalidHoldsUntilReady) {
     }
     EXPECT_TRUE(sawBvalid);
     EXPECT_TRUE(f.bit(f.bvalid)) << "bready 为 0 时 bvalid 必须保持";
-    f.c->setWire(f.bready->id(), {(uint8_t) 1});
+    f.c->setWire(f.bready->id(), (uint8_t) 1);
     for (int k = 0; k < 10; ++k) f.tick();
     EXPECT_FALSE(f.bit(f.bvalid)) << "握手完成后 bvalid 应撤销";
 }
@@ -311,9 +311,9 @@ struct IcFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        for (auto *n : {st0, cy0, w0, st1, cy1, w1}) c->setWire(n->id(), {(uint8_t) 0});
-        c->setWire(s0->id(), {(uint8_t) 0x0F});
-        c->setWire(s1->id(), {(uint8_t) 0x0F});
+        for (auto *n : {st0, cy0, w0, st1, cy1, w1}) c->setWire(n->id(), (uint8_t) 0);
+        c->setWire(s0->id(), (uint8_t) 0x0F);
+        c->setWire(s1->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() { c->tick(); }
@@ -333,8 +333,8 @@ TEST(Coverage, InterconnectArbitratesBetweenMasters) {
     // 两个主设备同时读不同地址
     f.c->setWire(f.a0->id(), {(uint8_t) 0x10, 0, 0, 0});
     f.c->setWire(f.a1->id(), {(uint8_t) 0x20, 0, 0, 0});
-    f.c->setWire(f.st0->id(), {(uint8_t) 1}); f.c->setWire(f.cy0->id(), {(uint8_t) 1});
-    f.c->setWire(f.st1->id(), {(uint8_t) 1}); f.c->setWire(f.cy1->id(), {(uint8_t) 1});
+    f.c->setWire(f.st0->id(), (uint8_t) 1); f.c->setWire(f.cy0->id(), (uint8_t) 1);
+    f.c->setWire(f.st1->id(), (uint8_t) 1); f.c->setWire(f.cy1->id(), (uint8_t) 1);
     uint32_t got0 = 0, got1 = 0;
     for (int k = 0; k < 60; ++k) {
         f.tick();
@@ -352,7 +352,7 @@ TEST(Coverage, InterconnectSingleMasterUnaffected) {
     f.open();
     f.put(0x30, 0xCCCC3333);
     f.c->setWire(f.a0->id(), {(uint8_t) 0x30, 0, 0, 0});
-    f.c->setWire(f.st0->id(), {(uint8_t) 1}); f.c->setWire(f.cy0->id(), {(uint8_t) 1});
+    f.c->setWire(f.st0->id(), (uint8_t) 1); f.c->setWire(f.cy0->id(), (uint8_t) 1);
     uint32_t got = 0;
     for (int k = 0; k < 60; ++k) {
         f.tick();
@@ -400,19 +400,19 @@ struct CacheFx {
         auto e = c->compile();
         ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
         c->init();
-        for (auto *n : {clk, c_stb, c_cyc, c_we}) c->setWire(n->id(), {(uint8_t) 0});
-        c->setWire(c_sel->id(), {(uint8_t) 0x0F});
+        for (auto *n : {clk, c_stb, c_cyc, c_we}) c->setWire(n->id(), (uint8_t) 0);
+        c->setWire(c_sel->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
     void tick() {
-        c->setWire(clk->id(), {(uint8_t) 0}); c->tick();
-        c->setWire(clk->id(), {(uint8_t) 1}); c->tick();
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
     }
     uint32_t access(uint32_t a, bool we, uint32_t d) {
         c->setWire(c_adr->id(), {(uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF), 0, 0});
         c->setWire(c_dat_o->id(), {(uint8_t)(d & 0xFF), (uint8_t)((d >> 8) & 0xFF), (uint8_t)((d >> 16) & 0xFF), (uint8_t)((d >> 24) & 0xFF)});
-        c->setWire(c_we->id(), {(uint8_t)(we ? 1 : 0)});
-        c->setWire(c_stb->id(), {(uint8_t) 1}); c->setWire(c_cyc->id(), {(uint8_t) 1});
+        c->setWire(c_we->id(), (uint8_t)(we ? 1 : 0));
+        c->setWire(c_stb->id(), (uint8_t) 1); c->setWire(c_cyc->id(), (uint8_t) 1);
         uint32_t r = 0;
         for (int k = 0; k < 60; ++k) {
             tick();
@@ -422,7 +422,7 @@ struct CacheFx {
                 break;
             }
         }
-        c->setWire(c_stb->id(), {(uint8_t) 0}); c->setWire(c_cyc->id(), {(uint8_t) 0});
+        c->setWire(c_stb->id(), (uint8_t) 0); c->setWire(c_cyc->id(), (uint8_t) 0);
         for (int k = 0; k < 3; ++k) tick();
         return r;
     }

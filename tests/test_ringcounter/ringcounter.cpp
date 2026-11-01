@@ -32,9 +32,9 @@ struct Fx {
         if (err.code != ErrorCode::OK)
             throw std::runtime_error(err.message);
         c->init();
-        c->setWire(clk->id(), {0});
-        c->setWire(en->id(), {1});
-        c->setWire(rst->id(), {0});
+        c->setWire(clk->id(), 0);
+        c->setWire(en->id(), 1);
+        c->setWire(rst->id(), 0);
         // 让时序函数先把复位初值写出去，测试里读到的就不是未初始化的输出
         c->tick();
         c->tick();
@@ -49,11 +49,11 @@ struct Fx {
     }
 
     void edge() {
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
-        c->setWire(clk->id(), {1});
+        c->setWire(clk->id(), 1);
         c->tick();
-        c->setWire(clk->id(), {0});
+        c->setWire(clk->id(), 0);
         c->tick();
     }
 };
@@ -84,11 +84,11 @@ TEST(RingCounter, EnableGate) {
     Fx f(4, false);
     f.edge();
     const uint64_t held = f.getQ();
-    f.c->setWire(f.en->id(), {0});
+    f.c->setWire(f.en->id(), 0);
     f.edge();
     f.edge();
     EXPECT_EQ(f.getQ(), held);
-    f.c->setWire(f.en->id(), {1});
+    f.c->setWire(f.en->id(), 1);
     f.edge();
     EXPECT_NE(f.getQ(), held);
 }
@@ -97,10 +97,10 @@ TEST(RingCounter, ResetReturnsToStart) {
     Fx f(4, false);
     f.edge();
     f.edge();
-    f.c->setWire(f.rst->id(), {1});
+    f.c->setWire(f.rst->id(), 1);
     f.edge();
     EXPECT_EQ(f.getQ(), 1u);
-    f.c->setWire(f.rst->id(), {0});
+    f.c->setWire(f.rst->id(), 0);
     f.edge();
     EXPECT_EQ(f.getQ(), 2u);
 }
@@ -109,7 +109,7 @@ TEST(RingCounter, JohnsonResetToZero) {
     Fx f(4, true);
     f.edge();
     f.edge();
-    f.c->setWire(f.rst->id(), {1});
+    f.c->setWire(f.rst->id(), 1);
     f.edge();
     EXPECT_EQ(f.getQ(), 0u);
 }
@@ -119,7 +119,7 @@ TEST(RingCounter, NoEdgeNoAdvance) {
     f.edge();
     const uint64_t q = f.getQ();
     for (int i = 0; i < 5; i++) {
-        f.c->setWire(f.clk->id(), {0});
+        f.c->setWire(f.clk->id(), 0);
         f.c->tick();
     }
     EXPECT_EQ(f.getQ(), q);

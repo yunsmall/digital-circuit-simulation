@@ -121,7 +121,7 @@ struct WBROMFixture {
 
     // 半个时钟周期
     void halfTick(bool clk_val) {
-        circuit->setWire(clk->id(), {(uint8_t) (clk_val ? 1 : 0)});
+        circuit->setWire(clk->id(), (uint8_t) (clk_val ? 1 : 0));
         circuit->tick();
     }
 
@@ -338,29 +338,29 @@ TEST(WBROMTest, DataWidth8) {
     circuit->init();
 
     // 复位
-    circuit->setWire(clk->id(), {0});
+    circuit->setWire(clk->id(), 0);
     circuit->tick();
 
     auto doRead8 = [&](uint64_t addr) -> uint64_t {
-        circuit->setWire(wb_adr->id(), {(uint8_t)addr});
-        circuit->setWire(wb_cyc->id(), {1});
-        circuit->setWire(wb_stb->id(), {1});
+        circuit->setWire(wb_adr->id(), (uint8_t)addr);
+        circuit->setWire(wb_cyc->id(), 1);
+        circuit->setWire(wb_stb->id(), 1);
         uint64_t data = 0x100; // 哨兵值
         for (int i = 0; i < 20; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
             auto ack_vec = circuit->getWire(wb_ack->id());
             if (!ack_vec.empty() && ack_vec[0]) {
                 auto dat_vec = circuit->getWire(wb_dat_o->id());
                 data = dat_vec.empty() ? 0 : dat_vec[0];
-                circuit->setWire(wb_stb->id(), {0});
-                circuit->setWire(clk->id(), {0}); circuit->tick();
-                circuit->setWire(clk->id(), {1}); circuit->tick();
+                circuit->setWire(wb_stb->id(), 0);
+                circuit->setWire(clk->id(), 0); circuit->tick();
+                circuit->setWire(clk->id(), 1); circuit->tick();
                 break;
             }
         }
-        circuit->setWire(wb_cyc->id(), {0});
-        circuit->setWire(wb_stb->id(), {0});
+        circuit->setWire(wb_cyc->id(), 0);
+        circuit->setWire(wb_stb->id(), 0);
         return data & 0xFF;
     };
 
@@ -416,17 +416,17 @@ TEST(WBROMTest, DataWidth16) {
     auto err = circuit->compile();
     ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
     circuit->init();
-    circuit->setWire(clk->id(), {0});
+    circuit->setWire(clk->id(), 0);
     circuit->tick();
 
     auto read16 = [&](uint64_t addr) -> uint64_t {
-        circuit->setWire(wb_adr->id(), {(uint8_t)addr});
-        circuit->setWire(wb_cyc->id(), {1});
-        circuit->setWire(wb_stb->id(), {1});
+        circuit->setWire(wb_adr->id(), (uint8_t)addr);
+        circuit->setWire(wb_cyc->id(), 1);
+        circuit->setWire(wb_stb->id(), 1);
         uint64_t data = 0xFFFF; // 哨兵
         for (int i = 0; i < 20; i++) {
-            circuit->setWire(clk->id(), {0}); circuit->tick();
-            circuit->setWire(clk->id(), {1}); circuit->tick();
+            circuit->setWire(clk->id(), 0); circuit->tick();
+            circuit->setWire(clk->id(), 1); circuit->tick();
             auto ack_vec2 = circuit->getWire(wb_ack->id());
             if (!ack_vec2.empty() && ack_vec2[0]) {
                 auto dat_vec2 = circuit->getWire(wb_do->id());
@@ -434,14 +434,14 @@ TEST(WBROMTest, DataWidth16) {
                 for (size_t j = 0; j < dat_vec2.size() && j < 2; j++)
                     raw16 |= (uint64_t)dat_vec2[j] << (j * 8);
                 data = raw16;
-                circuit->setWire(wb_stb->id(), {0});
-                circuit->setWire(clk->id(), {0}); circuit->tick();
-                circuit->setWire(clk->id(), {1}); circuit->tick();
+                circuit->setWire(wb_stb->id(), 0);
+                circuit->setWire(clk->id(), 0); circuit->tick();
+                circuit->setWire(clk->id(), 1); circuit->tick();
                 break;
             }
         }
-        circuit->setWire(wb_cyc->id(), {0});
-        circuit->setWire(wb_stb->id(), {0});
+        circuit->setWire(wb_cyc->id(), 0);
+        circuit->setWire(wb_stb->id(), 0);
         return data & 0xFFFF;
     };
 
