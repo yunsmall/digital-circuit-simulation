@@ -68,10 +68,48 @@ FloatBinOp::FloatBinOp(const std::string &name, int precision, FloatBinOpKind op
     addInput("a", precision);
     addInput("b", precision);
     addOutput("out", precision);
+    // 异常标志：bit0 NV、bit1 DZ、bit5 结果为 NaN、bit6 +Inf、bit7 -Inf。
+    // OF/UF/NX 需要 fenv，JIT 里拿不到，不假装能给
+    addOutput("flags", 8);
 }
 
 std::string FloatBinOp::genFuncDef_comb() const {
-    return gen_float_func(this, _precision, float_binop_expr(_op));
+    auto [ct, bytes] = float_info(_precision);
+    int a_nid = inputs()[0]->netId();
+    int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
+    int b_nid = inputs()[1]->netId();
+    int b_nw = b_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
+    int flags_nid = outputs()[1]->netId();
+
+    const bool is_div = _op == FloatBinOpKind::DIV;
+    const char *ut = _precision == 32 ? "uint32_t" : "uint64_t";
+    const char *exp_mask = _precision == 32 ? "0x7F800000u" : "0x7FF0000000000000ULL";
+    const char *mant_mask = _precision == 32 ? "0x007FFFFFu" : "0x000FFFFFFFFFFFFFULL";
+
+    std::string c;
+    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    c += "    " + gen_read_wire(a_nid, _precision, a_nw, "_tmp_a") + "\n";
+    c += "    " + gen_read_wire(b_nid, _precision, b_nw, "_tmp_b") + "\n";
+    c += std::format("    {} _a = 0, _b = 0;\n", ct);
+    c += std::format("    dcs_memcpy(&_a, &_tmp_a, {});\n", bytes);
+    c += std::format("    dcs_memcpy(&_b, &_tmp_b, {});\n", bytes);
+    c += std::format("    {} _out = {};\n", ct, float_binop_expr(_op));
+    c += "    " + genOutputWrite(0, "_out", _precision) + "\n";
+    if (flags_nid >= 0) {
+        c += std::format("    {} _bits = 0; dcs_memcpy(&_bits, &_out, {});\n", ut, bytes);
+        c += "    uint8_t _flags = 0;\n";
+        // IEEE 754：有限非零 / ±0 是除零；0/0 是 invalid，两者结果都是 Inf/NaN，但标志不同
+        if (is_div) {
+            c += "    if (_b == 0) _flags |= (_a == 0) ? 0x01u : 0x02u;\n";
+        }
+        c += std::format("    if ((_bits & {}) == {}) {{\n", exp_mask, exp_mask);
+        c += std::format("        if (_bits & {}) _flags |= 0x20u;\n", mant_mask);
+        c += std::format("        else _flags |= ((_bits >> {}) & 1u) ? 0x80u : 0x40u;\n", _precision - 1);
+        c += "    }\n";
+        c += "    " + genOutputWrite(1, "_flags", 8) + "\n";
+    }
+    c += "}\n";
+    return c;
 }
 std::unique_ptr<Component> FloatBinOp::clone(const std::string &n) const {
     return std::make_unique<FloatBinOp>(n, _precision, _op);
@@ -310,25 +348,25 @@ std::unique_ptr<Component> IntToFloat::clone(const std::string &n) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"fadd", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点加法，out=a+b"},
+    {"fadd", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out", "flags"}, dsc::ComponentCategory::Float, "浮点加法，out=a+b；flags 见元件说明"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::ADD);
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"fsub", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点减法，out=a-b"},
+    {"fsub", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out", "flags"}, dsc::ComponentCategory::Float, "浮点减法，out=a-b；flags 见元件说明"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::SUB);
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"fmul", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点乘法，out=a*b"},
+    {"fmul", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out", "flags"}, dsc::ComponentCategory::Float, "浮点乘法，out=a*b；flags 见元件说明"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::MUL);
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"fdiv", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out"}, dsc::ComponentCategory::Float, "浮点除法，out=a/b"},
+    {"fdiv", {{"precision", "32", {"32", "64"}}}, {"a", "b"}, {"out", "flags"}, dsc::ComponentCategory::Float, "浮点除法，out=a/b；flags 见元件说明"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            return std::make_unique<dsc::FloatBinOp>(n, dsc::paramInt(p, "precision", 32), dsc::FloatBinOpKind::DIV);
                        });
