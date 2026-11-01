@@ -38,7 +38,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
           "$VCPKG_ROOT/bootstrap-vcpkg.sh"
-          "$VCPKG_ROOT/vcpkg" install nlohmann-json cxxopts gtest
+          "$VCPKG_ROOT/vcpkg" install nlohmann-json cxxopts gtest elfio
         shell: bash
 
       - name: Setup vcpkg (Windows)
@@ -46,7 +46,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "${{ env.VCPKG_ROOT }}"
           "${{ env.VCPKG_ROOT }}/bootstrap-vcpkg.bat"
-          "${{ env.VCPKG_ROOT }}/vcpkg" install nlohmann-json cxxopts gtest
+          "${{ env.VCPKG_ROOT }}/vcpkg" install nlohmann-json cxxopts gtest elfio
         shell: cmd
 
       # ============================================================
