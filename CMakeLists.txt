@@ -329,6 +329,8 @@ if(GTest_FOUND)
     add_dcs_test(test_fpu_flags  tests/test_fpu_flags/*.cpp)
     add_dcs_test(test_adcdac     tests/test_adcdac/*.cpp)
     add_dcs_test(test_ringcounter tests/test_ringcounter/*.cpp)
+    add_dcs_test(test_async_fifo  tests/test_async_fifo/*.cpp)
+    add_dcs_test(test_truth_table tests/test_truth_table/*.cpp)
     add_dcs_test(test_wbmem      tests/test_wbmem/*.cpp)
     add_dcs_test(test_rvc        tests/test_rvc/*.cpp)
     # Verilator 集成测试：DLL 由 verilog_test/ 子项目生成，测试里用的是相对路径，

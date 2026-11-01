@@ -76,16 +76,21 @@ std::string UART::genInitCode() const {
 }
 
 std::string UART::genFuncDef_seq() const {
-    auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
+    // 悬空输入必须读到 0：直接写 _w[-1] 会越界，测试里偶尔会踩到不可读页
+    auto rd = [&](int pin, const char *var, int width) {
+        const Pin *p = inputs()[pin].get();
+        const int nw = p->net() ? p->net()->bit_width() : 0;
+        return gen_read_wire(p->netId(), width, nw, var);
+    };
     std::string c;
     c += std::format("// UART {}\n", name());
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
-    c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
-    c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";
-    c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
-    c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";
-    c += "    uint8_t _cyc = _w[" + nid(I_CYC) + "][0] & 1;\n";
-    c += "    uint8_t _rx = _w[" + nid(I_RX) + "][0] & 1;\n";
+    c += "    " + rd(I_ADR, "_adr", 32) + "\n";
+    c += "    " + rd(I_DAT, "_wdat", 32) + "\n";
+    c += "    " + rd(I_WE, "_we", 1) + "\n";
+    c += "    " + rd(I_STB, "_stb", 1) + "\n";
+    c += "    " + rd(I_CYC, "_cyc", 1) + "\n";
+    c += "    " + rd(I_RX, "_rx", 1) + "\n";
     c += "    uint32_t _dout = 0; uint8_t _ack = 0;\n";
     c += std::format(
             "    const bool _active = _stb && _cyc;\n"

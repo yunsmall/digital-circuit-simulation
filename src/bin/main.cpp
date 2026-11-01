@@ -12,6 +12,7 @@
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
+#include <dcs/TruthTable.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/dll_interface.h>
 #include <filesystem>
@@ -180,6 +181,49 @@ int jsonToC(const std::string &path) {
     return err.code == dsc::ErrorCode::OK ? 0 : 1;
 }
 
+// ---- truth-table ----
+int truthTable(const std::string &path, const std::string &inputs_csv, const std::string &output) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        std::cerr << std::format("错误: 无法打开 '{}'\n", path);
+        return 1;
+    }
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    std::string error;
+    auto circuit =
+            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+    if (!circuit) {
+        std::cerr << std::format("JSON 错误: {}\n", error);
+        return 1;
+    }
+    auto err = circuit->compile();
+    if (err.code != dsc::ErrorCode::OK) {
+        std::cerr << std::format("编译错误: {}\n", err.message);
+        return 1;
+    }
+
+    std::vector<std::string> ins;
+    std::stringstream ss(inputs_csv);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        const auto b = item.find_first_not_of(" \t");
+        const auto e = item.find_last_not_of(" \t");
+        if (b != std::string::npos)
+            ins.push_back(item.substr(b, e - b + 1));
+    }
+
+    dsc::TruthTable tt;
+    if (!dsc::computeTruthTable(*circuit, ins, output, tt, error)) {
+        std::cerr << std::format("错误: {}\n", error);
+        return 1;
+    }
+    std::cout << dsc::formatTruthTable(tt);
+    std::cout << "\n" << dsc::formatKarnaugh(tt);
+    circuit->deinit();
+    return 0;
+}
+
 // ---- simulate ----
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
               const std::string &vcd_path, const std::string &dump_mem) {
@@ -340,7 +384,10 @@ int main(int argc, char *argv[]) {
     opts.add_options("工具")("l,list-types", "列出所有已注册的元件类型")(
             "json", "配合 --list-types：输出机器可读的 JSON 描述")("j,json-to-c", "JSON 电路转为 C 代码输出",
                                                                     cxxopts::value<std::string>())(
-            "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>());
+            "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>())(
+            "truth-table", "导出组合电路的真值表和卡诺图（需 --inputs 和 --output）")(
+            "inputs", "真值表的输入网名，逗号分隔（第一个是最高位）", cxxopts::value<std::string>())(
+            "output", "真值表的输出网名", cxxopts::value<std::string>());
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
@@ -369,6 +416,8 @@ int main(int argc, char *argv[]) {
         std::cout << R"(示例:
   dcs circuit.json -t 20 -m         仿真 20 tick 并监控
   dcs --json-to-c circuit.json      输出等效 C 代码
+  dcs circuit.json --truth-table --inputs a,b --output y
+                                    导出真值表和卡诺图
   dcs --list-types                  列出元件类型
   dcs --dll-info adder8_dll.dll    查看 DLL 引脚信息
 )";
@@ -387,6 +436,14 @@ int main(int argc, char *argv[]) {
     }
     if (result.count("json-to-c")) {
         return jsonToC(result["json-to-c"].as<std::string>());
+    }
+    if (result.count("truth-table")) {
+        if (!result.count("circuit") || !result.count("inputs") || !result.count("output")) {
+            std::cerr << "错误: --truth-table 需要 circuit.json、--inputs 和 --output\n";
+            return 1;
+        }
+        return truthTable(result["circuit"].as<std::string>(), result["inputs"].as<std::string>(),
+                          result["output"].as<std::string>());
     }
     if (result.count("circuit")) {
         return simulate(result["circuit"].as<std::string>(), result["ticks"].as<uint64_t>(), result["delay"].as<int>(),

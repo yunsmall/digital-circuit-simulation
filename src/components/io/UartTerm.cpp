@@ -51,12 +51,14 @@ std::string UartTerm::genInitCode() const {
 }
 
 std::string UartTerm::genFuncDef_seq() const {
-    auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     const int half = _baud_div / 2;
     std::string c;
     c += std::format("// UartTerm {}\n", name());
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
-    c += "    uint8_t _rx = _w[" + nid(I_RX) + "][0] & 1;\n";
+    // 悬空输入读到 0，不能直接下标 -1
+    const auto *rx_pin = inputs()[I_RX].get();
+    const int rx_nw = rx_pin->net() ? rx_pin->net()->bit_width() : 0;
+    c += "    " + gen_read_wire(rx_pin->netId(), 1, rx_nw, "_rx") + "\n";
     c += std::format("    uint8_t _bv = 0; uint8_t _lb = *_term_last_{0};\n", _id);
     // 起始沿 -> 半位确认（挡掉窄脉冲噪声）-> 每位中点采样 -> 停止位校验。
     // 位宽以 tick 计，必须和对面 UART 的 baud_div 一致
