@@ -302,10 +302,25 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
         }
     }
 
-    // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出
-    for (uint64_t t = 0; t < ticks; t++) {
-        circuit->tick();
-        // 队列满就停在这里，等下一拍 UartFeed 发走一个字节再继续，不能在仿真线程里忙等
+    // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出。
+    // 按块把循环留在 JIT 里：每拍一次 C++ 间接调用 + tohost 检查对整机仿真来说
+    // 都是实打实的开销；块内没有需要逐拍观察的东西（--delay 逐拍观察时才退回单拍）。
+    // 喂数据的边界要精确落在 feed_after 上，所以块不跨过那个点
+    constexpr uint64_t kBatch = 65536;
+    for (uint64_t t = 0; t < ticks;) {
+        uint64_t chunk = ticks - t;
+        if (delay_ms > 0) {
+            circuit->tick();
+            chunk = 1;
+        } else {
+            if (chunk > kBatch)
+                chunk = kBatch;
+            // 队列满就停在这里，等下一拍 UartFeed 发走一个字节再继续，不能在仿真线程里忙等
+            if (feed_pos < feed_data.size() && t < feed_after && t + chunk > feed_after)
+                chunk = feed_after - t;
+            circuit->tickBatch(chunk);
+        }
+        t += chunk;
         if (feed_pos < feed_data.size() && t >= feed_after) {
             while (feed_pos < feed_data.size() && uart_feed->push((uint8_t) feed_data[feed_pos]))
                 feed_pos++;

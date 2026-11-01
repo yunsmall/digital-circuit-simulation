@@ -62,7 +62,8 @@ std::string PLIC::genStateDecl() const {
             "static uint32_t _plic_pending_{0};\n"
             "static uint32_t _plic_en_{0}[2], _plic_thr_{0}[2], _plic_insvc_{0}[2];\n"
             "static uint32_t _plic_latched_{0};\n"
-            "static uint8_t _plic_prev_stb_{0};\n",
+            "static uint8_t _plic_prev_stb_{0};\n"
+            "static uint32_t _plic_last_src_{0};\n",
             _id, 4 * (n + 1), OFF_PENDING + 4 * (n + 1), OFF_ENABLE + CONTEXTS * ENABLE_STRIDE,
             OFF_THRESHOLD + CONTEXTS * CTX_STRIDE, n + 1);
 }
@@ -76,7 +77,7 @@ std::string PLIC::genInitCode() const {
             "    _plic_en_{0}[0] = 0; _plic_en_{0}[1] = 0;\n"
             "    _plic_thr_{0}[0] = 0; _plic_thr_{0}[1] = 0;\n"
             "    _plic_insvc_{0}[0] = 0; _plic_insvc_{0}[1] = 0;\n"
-            "    _plic_latched_{0} = 0; _plic_prev_stb_{0} = 0;\n",
+            "    _plic_latched_{0} = 0; _plic_prev_stb_{0} = 0; _plic_last_src_{0} = 0;\n",
             _id, _num_sources + 1);
 }
 
@@ -87,22 +88,28 @@ std::string PLIC::genFuncDef_seq() const {
     std::string c;
     c += std::format("// PLIC {}\n", name());
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
-    c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
-    c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";
-    c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
+    // 空闲快速路径：中断源位图和总线握手都没变化时，本拍不可能产生新状态或新输出。
+    // 只读 3 根线就返回，省掉地址译码和每拍 16 次优先级比较
     c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";
     c += "    uint8_t _cyc = _w[" + nid(I_CYC) + "][0] & 1;\n";
     c += "    uint32_t _src = 0; dcs_memcpy(&_src, _w[" + nid(I_SRC) + "], " +
          std::to_string(byte_count(n)) + "); _src &= " + gen_mask(n) + ";\n";
+    c += "    const bool _active = _stb && _cyc;\n";
+    // 上一拍总线是否选中本设备：撤销那一拍要清 latched 并刷输出
+    c += std::format("    const bool _prev_act = _plic_prev_stb_{} != 0;\n", _id);
+    c += std::format("    _plic_prev_stb_{} = _active ? 1 : 0;\n", _id);
+    c += std::format("    if (!_active && !_prev_act && _src == _plic_last_src_{}) return;\n", _id);
+    c += std::format("    _plic_last_src_{} = _src;\n", _id);
+    c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
+    c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";
+    c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
     c += "    uint32_t _dout = 0; uint8_t _ack = 0;\n";
     // irq_src 的 bit0 对应源 1，而 pending/enable 用 bit(id) 表示源 id，统一左移一位。
     // 已经被某个 context claim 走的源不再重新挂起
     c += std::format(
             "    const uint32_t _arrived = (_src << 1) & ~(_plic_insvc_{0}[0] | _plic_insvc_{0}[1]);\n"
             "    _plic_pending_{0} |= _arrived;\n"
-            "    const bool _active = _stb && _cyc;\n"
-            "    const bool _rise = _active && !_plic_prev_stb_{0};\n"
-            "    _plic_prev_stb_{0} = _active;\n"
+            "    const bool _rise = _active && !_prev_act;\n"
             "    if (_active && !_rise) {{\n"
             "        _dout = _plic_latched_{0};\n" // 事务进行中保持上一次的应答数据
             "        _ack = 1;\n"

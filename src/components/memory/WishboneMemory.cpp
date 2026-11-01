@@ -91,15 +91,20 @@ std::string WishboneMemory::genFuncDef_seq() const {
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
     code += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
+    code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
+    code += std::format(R"(
+    // 空闲快速路径：没有在途事务、上一拍也没选中本设备时，存储器和输出都不会变。
+    // prev_stb 为 0 也意味着 prev_we 为 0（两者都只在事务有效时置位），可以一起跳过
+    const bool _active = _stb && _cyc;
+    if (!_active && !_wbm_s_{0}.prev_stb && !_wbm_s_{0}.ack_pending) return;
+)", id);
     code += "    " + gen_read_wire(inputs()[I_ADR]->netId(), 32, 32, "_adr") + "\n";
     code += "    " + gen_read_wire(inputs()[I_WDAT]->netId(), 32, 32, "_wdat") + "\n";
     code += "    " + gen_read_wire(inputs()[I_WE]->netId(), 1, 1, "_we") + "\n";
     code += "    " + gen_read_wire(inputs()[I_SEL]->netId(), 4, 4, "_sel") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
-    code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
     code += std::format(R"(
     // stb 上升沿：新事务；同一事务内 we 翻转：AMO 的写阶段
-    const bool _active = _stb && _cyc;
     const bool _rise = _active && !_wbm_s_{0}.prev_stb;
     const bool _werise = _active && _we && !_wbm_s_{0}.prev_we;
     _wbm_s_{0}.prev_stb = _active;

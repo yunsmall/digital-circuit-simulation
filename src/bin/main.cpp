@@ -275,8 +275,16 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         circuit->tickForever();
     }
 
-    // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出变成负数
-    for (uint64_t t = 0; t < ticks; t++) {
+    // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出变成负数。
+    // 不需要逐拍观察（没有 VCD/逐拍打印/限速）时成块交给 JIT，
+    // 省掉每拍一次 C++ 间接调用
+    for (uint64_t t = 0; t < ticks;) {
+        if (!vcd.is_open() && !monitor && delay_ms == 0) {
+            const uint64_t chunk = (ticks - t > 65536) ? 65536 : (ticks - t);
+            circuit->tickBatch(chunk);
+            t += chunk;
+            continue;
+        }
         circuit->tick();
         if (vcd.is_open()) {
             vcd << "#" << t << "\n";
@@ -318,6 +326,7 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         }
         if (delay_ms > 0 && t + 1 < ticks)
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms)); // 0 也要睡的话就是每 tick 一次系统调用
+        t++;
     }
 
     // 调试用：把存储器里的一段原样导出来。跑内核实测时，串口还没初始化

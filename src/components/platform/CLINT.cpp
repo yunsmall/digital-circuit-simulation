@@ -68,20 +68,26 @@ std::string CLINT::genFuncDef_seq() const {
     std::string c;
     c += std::format("// CLINT {}\n", name());
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
+    // 空闲快速路径：mtime 只在时钟上升沿推进，其余寄存器只受总线写影响。
+    // 两者都没有时本拍状态和输出都不会变，读 clk/stb/cyc 三根线即可返回
+    c += "    uint8_t _clk = _w[" + nid(I_CLK) + "][0] & 1;\n";
+    c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";
+    c += "    uint8_t _cyc = _w[" + nid(I_CYC) + "][0] & 1;\n";
+    c += std::format(
+            "    const uint8_t _rising = (!_clint_prev_clk_{0} && _clk) ? 1 : 0;\n"
+            "    _clint_prev_clk_{0} = _clk;\n"
+            "    const bool _active = _stb && _cyc;\n"
+            "    const bool _prev_act = _clint_prev_stb_{0} != 0;\n"
+            "    _clint_prev_stb_{0} = _active ? 1 : 0;\n"
+            "    if (!_rising && !_active && !_prev_act) return;\n"
+            "    if (_rising) _clint_mtime_{0}++;\n",
+            _id);
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_WDAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
     c += "    uint8_t _sel = _w[" + nid(I_SEL) + "][0];\n";
-    c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";
-    c += "    uint8_t _cyc = _w[" + nid(I_CYC) + "][0] & 1;\n";
-    c += "    uint8_t _clk = _w[" + nid(I_CLK) + "][0] & 1;\n";
     c += std::format(
-            "    const uint8_t _rising = (!_clint_prev_clk_{0} && _clk) ? 1 : 0;\n"
-            "    _clint_prev_clk_{0} = _clk;\n"
-            "    if (_rising) _clint_mtime_{0}++;\n"
-            "    const bool _active = _stb && _cyc;\n"
-            "    const bool _rise = _active && !_clint_prev_stb_{0};\n"
-            "    _clint_prev_stb_{0} = _active;\n"
+            "    const bool _rise = _active && !_prev_act;\n"
             "    uint32_t _dout = 0; uint8_t _ack = 0;\n"
             "    if (_active && !_we) {{\n"
             "        switch (_adr & 0xFFFC) {{\n"

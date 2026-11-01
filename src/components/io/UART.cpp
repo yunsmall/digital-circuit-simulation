@@ -85,18 +85,22 @@ std::string UART::genFuncDef_seq() const {
     std::string c;
     c += std::format("// UART {}\n", name());
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
-    c += "    " + rd(I_ADR, "_adr", 32) + "\n";
-    c += "    " + rd(I_DAT, "_wdat", 32) + "\n";
-    c += "    " + rd(I_WE, "_we", 1) + "\n";
     c += "    " + rd(I_STB, "_stb", 1) + "\n";
     c += "    " + rd(I_CYC, "_cyc", 1) + "\n";
     c += "    " + rd(I_RX, "_rx", 1) + "\n";
-    c += "    uint32_t _dout = 0; uint8_t _ack = 0;\n";
     c += std::format(
             "    const bool _active = _stb && _cyc;\n"
+            // 空闲快速路径：总线没选中、收发状态机都在空闲、接收线也没变化时，
+            // 本拍不会推进任何状态，读取地址/数据、寄存器译码和 4 根输出线全跳过
+            "    if (!_active && !_uart_prev_stb_{0} && !_uart_tx_busy_{0} && !_uart_rx_active_{0} && "
+            "_rx == _uart_prev_rx_{0}) return;\n"
             "    const bool _rise = _active && !_uart_prev_stb_{0};\n"
             "    _uart_prev_stb_{0} = _active;\n",
             _id);
+    c += "    " + rd(I_ADR, "_adr", 32) + "\n";
+    c += "    " + rd(I_DAT, "_wdat", 32) + "\n";
+    c += "    " + rd(I_WE, "_we", 1) + "\n";
+    c += "    uint32_t _dout = 0; uint8_t _ack = 0;\n";
     // 发送状态机
     c += std::format(
             "    if (_uart_tx_busy_{0}) {{\n"

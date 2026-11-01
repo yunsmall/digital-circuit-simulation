@@ -117,15 +117,26 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     c += std::format("// WishboneInterconnect: {} slaves, {} masters\n", N, M);
     c += std::format("DCS_INLINE void {}() {{\n", funcName_seq());
 
-    // 主设备输入全部解包成标量
+    // 空闲快速路径：先只读各主设备的 stb/cyc 十根线。没有请求、上一拍也没有
+    // 持锁时，互连不可能产生任何新动作（输出在上一拍已经写成全 0），
+    // 剩下的 36 根输入和仲裁、看门狗都可以跳过
+    for (int mi = 0; mi < M; mi++) {
+        c += "    " + gen_read_wire(inputs()[mi * 6 + 4]->netId(), 1, 1, std::format("_m{}_stb", mi)) + "\n";
+        c += "    " + gen_read_wire(inputs()[mi * 6 + 5]->netId(), 1, 1, std::format("_m{}_cyc", mi)) + "\n";
+    }
+    c += "    uint32_t _rq = 0;\n";
+    for (int mi = 0; mi < M; mi++)
+        c += std::format("    _rq |= (uint32_t)(_m{0}_stb & _m{0}_cyc) << {0};\n", mi);
+    c += std::format("    const uint8_t _wbic_was_busy = _wbic_busy_{};\n", _id);
+    c += "    if (!_rq && !_wbic_was_busy) return;\n";
+
+    // 有请求（或上一拍还持锁）才需要读地址、数据和从设备响应
     for (int mi = 0; mi < M; mi++) {
         int b = mi * 6;
         c += "    " + gen_read_wire(inputs()[b + 0]->netId(), 32, 32, std::format("_m{}_adr", mi)) + "\n";
         c += "    " + gen_read_wire(inputs()[b + 1]->netId(), 32, 32, std::format("_m{}_dat", mi)) + "\n";
         c += "    " + gen_read_wire(inputs()[b + 2]->netId(), 1, 1, std::format("_m{}_we", mi)) + "\n";
         c += "    " + gen_read_wire(inputs()[b + 3]->netId(), 4, 1, std::format("_m{}_sel", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[b + 4]->netId(), 1, 1, std::format("_m{}_stb", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[b + 5]->netId(), 1, 1, std::format("_m{}_cyc", mi)) + "\n";
     }
     for (int i = 0; i < N; i++) {
         c += "    " + gen_read_wire(inputs()[M * 6 + i * 2]->netId(), 32, 32, std::format("_s{}_dat", i)) + "\n";
@@ -141,13 +152,7 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     c += "    int _grant = -1;\n";
     c += "    uint32_t _adr = 0, _dat = 0; uint8_t _we = 0, _sel = 0, _stb = 0, _cyc = 0;\n";
     c += "    uint8_t _gap = 0;\n";
-    c += "    uint32_t _rq = 0;\n";
-    for (int mi = 0; mi < M; mi++)
-        c += std::format("    _rq |= (uint32_t)(_m{0}_stb & _m{0}_cyc) << {0};\n", mi);
-    // 本拍是否要刷新输出：空闲拍（无请求、上一拍也没持锁）时所有主/从侧信号
-    // 都是上一拍留下的 0，重写 2M+6N 个输出纯属浪费；撤销那一拍必须写，
-    // 否则 ack/stb 会永远保持高
-    c += std::format("    const uint8_t _wbic_was_busy = _wbic_busy_{};\n", _id);
+    // 请求掩码、_wbic_was_busy 和空闲判定已经在函数开头做完
     c += std::format("    if (_wbic_busy_{}) {{\n", _id);
     c += std::format("        const int _bg = _wbic_grant_{};\n", _id);
     c += "        if (_rq & (1u << _bg)) _grant = _bg;\n";

@@ -62,11 +62,6 @@ std::string genMmio(const DeviceSpec &s) {
     }
     return std::format(
             "    // ---- 从端口：virtio-mmio 寄存器 ----\n"
-            "    const uint8_t _active = _stb & _cyc;\n"
-            // 上一拍总线是否选中本设备：撤销那一拍也要刷输出，把 ack/dat_o 拉回去
-            "    const uint8_t _prev_act = _vio_prev_stb_{0};\n"
-            "    const uint8_t _rise = _active & (uint8_t) !_vio_prev_stb_{0};\n"
-            "    _vio_prev_stb_{0} = _active;\n"
             "    if (_active) {{\n"
             "        const uint32_t _off = _adr & 0xFFFu;\n"
             "        if (!_we) {{\n"
@@ -248,17 +243,22 @@ std::string genDone(const DeviceSpec &s) {
     return c;
 }
 
-std::string genQueue(const DeviceSpec &s, int q) {
+// 队列空闲时的宿主侧唤醒检查。必须每拍都跑（网卡的收包环、input 的事件环都是
+// 异步到达的），但它只碰两个宿主计数器和队列状态，不碰总线输入，所以放在
+// 空闲快速路径里面
+std::string genWake(const DeviceSpec &s, int q) {
     std::string c;
-    c += std::format("    // ---- 队列 {} ----\n", q);
     c += std::format("    if (_vio_q_{0}[{1}].phase == 0 && _vio_q_{0}[{1}].qready) {{\n", s.id, q);
     c += std::format("        _VioQ_{0} *_qv = &_vio_q_{0}[{1}];\n", s.id, q);
     c += "        (void) _qv;\n";
     c += s.queues[q].wake;
     c += "    }\n";
-    // 唤醒之后、处理之前检查：既覆盖"进入本拍时已经很忙"，也覆盖"本拍刚被唤醒"；
-    // 队列在本拍处理完回到 0 也不能算空闲，irq/used 已经变了
-    c += std::format("    _busy_opt |= (uint8_t)(_vio_q_{}[{}].phase != 0);\n", s.id, q);
+    return c;
+}
+
+std::string genQueue(const DeviceSpec &s, int q) {
+    std::string c;
+    c += std::format("    // ---- 队列 {} ----\n", q);
     c += std::format("    if (!_vio_mp_active_{0} && !_mp_gap_now && _vio_q_{0}[{1}].phase != 0) {{\n", s.id, q);
     c += std::format("        _VioQ_{0} *_qv = &_vio_q_{0}[{1}];\n", s.id, q);
     c += "        uint32_t _a = 0, _l = 0; uint8_t _wr = 0;\n";
@@ -299,11 +299,30 @@ std::string genSeq(const DeviceSpec &s) {
     std::string c;
     c += std::format("// {}\n", s.node_name);
     c += std::format("DCS_INLINE void {}() {{\n", s.func_name);
+    // 空闲快速路径：绝大多数拍设备既没有 MMIO 事务、也没有在途的队列/主端口，
+    // 这时只需要 stb/cyc 两根线和几个状态字就能判定。先做这个判定，剩下的
+    // 7 根输入线、寄存器译码、队列状态机和 9 根输出线全部跳过。
+    // 注意 _vio_prev_stb 必须照常更新，否则总线撤销那一拍看不到下降沿
+    c += std::format("    uint8_t _stb = _w[{}][0] & 1;\n", n[I_STB]);
+    c += std::format("    uint8_t _cyc = _w[{}][0] & 1;\n", n[I_CYC]);
+    c += "    const uint8_t _active = _stb & _cyc;\n";
+    c += std::format("    const uint8_t _prev_act = _vio_prev_stb_{};\n", s.id);
+    c += std::format("    const uint8_t _rise = _active & (uint8_t) !_vio_prev_stb_{};\n", s.id);
+    c += std::format("    _vio_prev_stb_{} = _active;\n", s.id);
+    c += std::format(
+            "    uint8_t _busy_opt = (uint8_t)(_active | _prev_act | _vio_mp_active_{0} | _vio_mp_gap_{0});\n", s.id);
+    // 队列空闲时还要看宿主侧有没有新事件（网卡收包、input 事件），
+    // 这些检查只碰宿主内存，和总线无关
+    for (int q = 0; q < (int) s.nq; q++)
+        c += genWake(s, q);
+    // 唤醒之后、处理之前检查：既覆盖"进入本拍时已经很忙"，也覆盖"本拍刚被唤醒"
+    for (int q = 0; q < (int) s.nq; q++)
+        c += std::format("    _busy_opt |= (uint8_t)(_vio_q_{}[{}].phase != 0);\n", s.id, q);
+    c += "    if (!_busy_opt) return;\n";
+
     c += std::format("    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[{}], 4);\n", n[I_ADR]);
     c += std::format("    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[{}], 4);\n", n[I_DAT]);
     c += std::format("    uint8_t _we = _w[{}][0] & 1;\n", n[I_WE]);
-    c += std::format("    uint8_t _stb = _w[{}][0] & 1;\n", n[I_STB]);
-    c += std::format("    uint8_t _cyc = _w[{}][0] & 1;\n", n[I_CYC]);
     // config 空间的寄存器里有字节粒度的字段（如 virtio-input 的 select/subsel），
     // 总线给出的是字节通道掩码，设备要按 _sel 把各通道拆开
     c += std::format("    uint8_t _sel = _w[{}][0] & 0x0F;\n", n[I_SEL]);
@@ -313,12 +332,6 @@ std::string genSeq(const DeviceSpec &s) {
     c += genMmio(s);
     c += genMaster(s);
     c += genDone(s);
-    // 空闲拍不写输出：设备的 9 根输出线会在线网里保持上一拍的值，只有本拍
-    // 真的处理了 MMIO/主端口/队列才需要刷新。去掉每个空闲拍 9 次存储后，
-    // 整机仿真里 4 台 virtio 设备占的每拍开销能省一大半
-    c += std::format(
-            "    uint8_t _busy_opt = (uint8_t)(_active | _prev_act | _vio_mp_active_{0} | _mp_gap_now | _mp_done);\n",
-            s.id);
     for (int q = 0; q < (int) s.nq; q++)
         c += genQueue(s, q);
     // 卡死检测：主端口一个 beat 正常只有几拍，队列阶段也不该长期停在非 0。
@@ -339,8 +352,9 @@ std::string genSeq(const DeviceSpec &s) {
             "    }} else _vio_pd_{0} = 0;\n",
             s.id);
     c += std::format("    const uint8_t _irq_out = _vio_int_{} != 0;\n", s.id);
+    // 走到这里说明本拍一定有动作（总线事务撤销、队列推进或宿主事件），
+    // 9 根输出线一律刷新：撤销那一拍必须把 ack/dat/stb 拉回去
     if (s.out_write) {
-        c += "    if (_busy_opt) {\n";
         c += s.out_write(O_DAT, "_dout", 32);
         c += s.out_write(O_ACK, "_ack", 1);
         c += s.out_write(O_IRQ, "_irq_out", 1);
@@ -350,7 +364,6 @@ std::string genSeq(const DeviceSpec &s) {
         c += s.out_write(O_M_SEL, "_m_sel", 4);
         c += s.out_write(O_M_STB, "_m_stb", 1);
         c += s.out_write(O_M_CYC, "_m_cyc", 1);
-        c += "    }\n";
     }
     c += "}\n";
     return c;
