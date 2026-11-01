@@ -31,8 +31,11 @@ std::string genStateDecl(const DeviceSpec &s) {
                    "static uint32_t _vio_mp_addr_{0}, _vio_mp_len_{0}, _vio_mp_beat_{0};\n"
                    "static uint8_t _vio_mp_buf_{0}[64];\n"
                    "static void *_vio_state_{0};\n"
-                   "extern void dcs_virtio_reset(void *);\n",
-                   s.id, s.dev_id, s.nq, QUEUE_MAX) +
+                   // 复位回调按设备类取唯一名字：JIT 的符号表是按名字覆盖的，
+                   // 几个 virtio 设备共用 dcs_virtio_reset 时，最后一次注册会把别的
+                   // 设备的 thunk 顶替掉，再拿对方的状态指针当自己的 State 解释（宿主崩溃）
+                   "extern void {4}(void *);\n",
+                   s.id, s.dev_id, s.nq, QUEUE_MAX, s.reset_symbol) +
            s.state_decl;
 }
 
@@ -115,7 +118,7 @@ std::string genMmio(const DeviceSpec &s) {
             "                if (_wdat == 0) {{\n"
             "                    _vio_int_{0} = 0;\n"
             "                    dcs_memset(_vio_q_{0}, 0, sizeof(_vio_q_{0}));\n"
-            "                    dcs_virtio_reset(_vio_state_{0});\n"
+            "                    {6}(_vio_state_{0});\n"
             "                }}\n"
             "                break;\n"
             // virtio-mmio 的 *Low/*High 各是 32 位寄存器，High 存地址的高 32 位。
@@ -135,7 +138,8 @@ std::string genMmio(const DeviceSpec &s) {
             "        _ack = 1;\n"
             "    }}\n",
             s.id, s.features, s.config_read,
-            s.nq >= 2 ? std::format("_vio_q_{}[1].qready", s.id) : std::string("0u"), kick_code, s.config_write);
+            s.nq >= 2 ? std::format("_vio_q_{}[1].qready", s.id) : std::string("0u"), kick_code, s.config_write,
+            s.reset_symbol);
 }
 
 std::string genMaster(const DeviceSpec &s) {
@@ -375,6 +379,7 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
     s.id = id;
     s.func_name = p.func_name;
     s.node_name = p.node_name;
+    s.reset_symbol = p.reset_symbol;
     s.dev_id = 2;
     s.nq = 1;
     s.features = p.features;

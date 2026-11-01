@@ -14,7 +14,9 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #else
+#include <arpa/inet.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -310,6 +312,57 @@ const SlirpCb &slirpCallbacks() {
     return cb;
 }
 
+// 主机端口转发（slirp 专有选项 backend_opts.hostfwd）：
+//   hostfwd = [tcp|udp:]宿主地址:宿主端口-客机地址:客机端口[;多条]
+// 宿主地址省略时监听 127.0.0.1，客机地址省略时是 10.0.2.15（和 qemu 的写法一致）
+bool parseHostPort(const std::string &s, in_addr &addr, int &port, const char *def_addr) {
+    const size_t colon = s.rfind(':');
+    if (colon == std::string::npos)
+        return false;
+    const std::string host = colon == 0 ? def_addr : s.substr(0, colon);
+    const std::string port_s = s.substr(colon + 1);
+    if (port_s.empty() || port_s.size() > 5)
+        return false;
+    port = std::atoi(port_s.c_str());
+    if (port <= 0 || port > 65535)
+        return false;
+    return inet_pton(AF_INET, host.c_str(), &addr) == 1;
+}
+
+void applyHostForwards(Slirp *slirp, const std::string &spec) {
+    size_t pos = 0;
+    while (pos < spec.size()) {
+        size_t semi = spec.find(';', pos);
+        std::string item = spec.substr(pos, semi == std::string::npos ? std::string::npos : semi - pos);
+        pos = semi == std::string::npos ? spec.size() : semi + 1;
+
+        bool udp = false;
+        if (item.rfind("udp:", 0) == 0) {
+            udp = true;
+            item = item.substr(4);
+        } else if (item.rfind("tcp:", 0) == 0) {
+            item = item.substr(4);
+        }
+        const size_t dash = item.find('-');
+        if (dash == std::string::npos) {
+            std::fprintf(stderr, "[slirp] hostfwd 格式应为 宿主地址:端口-客机地址:端口：%s\n", item.c_str());
+            continue;
+        }
+        in_addr host_addr{}, guest_addr{};
+        int host_port = 0, guest_port = 0;
+        if (!parseHostPort(item.substr(0, dash), host_addr, host_port, "127.0.0.1") ||
+            !parseHostPort(item.substr(dash + 1), guest_addr, guest_port, "10.0.2.15")) {
+            std::fprintf(stderr, "[slirp] hostfwd 解析失败：%s\n", item.c_str());
+            continue;
+        }
+        if (slirp_add_hostfwd(slirp, udp ? 1 : 0, host_addr, host_port, guest_addr, guest_port) != 0) {
+            std::fprintf(stderr, "[slirp] hostfwd 注册失败（端口被占用？）：%s\n", item.c_str());
+            continue;
+        }
+        std::fprintf(stderr, "[slirp] 端口转发 %s:%d -> 客机 %d\n", udp ? "udp" : "tcp", host_port, guest_port);
+    }
+}
+
 void *backendCreate(void *cfg) {
 #ifdef _WIN32
     WSADATA wsa;
@@ -346,6 +399,12 @@ void *backendCreate(void *cfg) {
         closeWakePair(be);
         delete be;
         return nullptr;
+    }
+    // 后端私有选项：主机端口转发（元件不解释这些键，见 dcs/net/BackendOpts.h）
+    if (be->net) {
+        const auto &opts = be->net->backendOpts();
+        if (auto it = opts.find("hostfwd"); it != opts.end())
+            applyHostForwards(be->slirp, it->second);
     }
     be->worker = std::thread(&SlirpBackend::run, be);
     return be;

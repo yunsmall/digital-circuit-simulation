@@ -14,6 +14,23 @@
 
 namespace dsc {
 
+namespace {
+
+// 参数值除了标量，还可以是嵌套对象（后端私有选项之类）。对象按键路径拍平成
+// "backend_opts.hostfwd" 这样的扁平键，参数表因此保持 string→string 不变，
+// 元件按前缀取自己那一段；数组和其它值仍然 dump 成字符串
+void flattenParams(const nlohmann::json &j, const std::string &prefix, std::unordered_map<std::string, std::string> &out) {
+    for (auto &[k, v]: j.items()) {
+        const std::string key = prefix.empty() ? k : prefix + "." + k;
+        if (v.is_object())
+            flattenParams(v, key, out);
+        else
+            out[key] = v.is_string() ? v.get<std::string>() : v.dump();
+    }
+}
+
+} // namespace
+
 std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::string &error,
                                            const std::string &base_dir) {
     using json = nlohmann::json;
@@ -71,12 +88,10 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
             return nullptr;
         }
 
-        // 收集参数
+        // 收集参数（嵌套对象拍平成 a.b 键）
         std::unordered_map<std::string, std::string> params;
-        if (jc.contains("params") && jc["params"].is_object()) {
-            for (auto &[k, v]: jc["params"].items())
-                params[k] = v.is_string() ? v.get<std::string>() : v.dump();
-        }
+        if (jc.contains("params") && jc["params"].is_object())
+            flattenParams(jc["params"], "", params);
         // DLL 路径相对于 JSON 文件所在目录
         // 带文件路径的元件，其路径相对于 JSON 所在目录解析；
         // 不这样做的话，换个工作目录加载就找不到文件了

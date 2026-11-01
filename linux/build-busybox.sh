@@ -31,7 +31,16 @@ SRC=${LINUX_SRC:-$HOME/code/linux/riscv64}
 SYSROOT=/tmp/musl-rv
 BB=$SRC/src/busybox-1.36.1
 TARGET="riscv64-linux-gnu"
+# Debian 交叉包的 GCC 安装目录。clang 的 --gcc-install-dir 直接从这里取
+# crtbegin*.o / libgcc.a / libgcc_eh.a（--gcc-toolchain 认的是另一种布局，
+# 对 Debian 的 gcc-cross 目录不生效）。装了下面这个包就有：
+#   sudo apt install libgcc-14-dev-riscv64-cross
+GCC_INSTALL=$(ls -d /usr/lib/gcc-cross/riscv64-linux-gnu/*/ 2>/dev/null | head -1)
+GCC_INSTALL=${GCC_INSTALL%/}
 CC="$CC_BIN --target=$TARGET -march=rv64gc -mabi=lp64d --sysroot=$SYSROOT -fuse-ld=lld"
+if [ -n "$GCC_INSTALL" ]; then
+    CC="$CC --gcc-install-dir=$GCC_INSTALL"
+fi
 
 # ---- 1. musl 静态库 ----
 if [ ! -f $SYSROOT/lib/libc.a ]; then
@@ -56,13 +65,26 @@ if [ ! -d $SYSROOT/usr/include/linux ]; then
     make ARCH=riscv headers_install INSTALL_HDR_PATH=$SYSROOT/usr > /dev/null
 fi
 
-# ---- 3. riscv64 libgcc.a（compiler-rt 缺失的软浮点符号）----
-if [ ! -s $SYSROOT/lib/libgcc.a ] || [ $(stat -c%s $SYSROOT/lib/libgcc.a) -lt 10000 ]; then
+# ---- 3. riscv64 libgcc 相关的启动文件（compiler-rt 缺失的部分）----
+# 装了交叉包时上面已经用 --gcc-install-dir 指过去了，这里什么都不用做。
+# 没装才退回"下载 .deb 解包再把 GCC 库目录搬进 sysroot"的老路子（需要网络）。
+if [ -z "$GCC_INSTALL" ] && { [ ! -s $SYSROOT/lib/libgcc.a ] || [ $(stat -c%s $SYSROOT/lib/libgcc.a) -lt 10000 ]; }; then
     cd /tmp && rm -rf rtdeb && mkdir rtdeb && cd rtdeb
     apt-get download libgcc-12-dev-riscv64-cross > /dev/null 2>&1
     dpkg -x *.deb x
-    cp -f x/usr/lib/gcc-cross/riscv64-linux-gnu/12/libgcc.a $SYSROOT/lib/libgcc.a
+    cp -f x/usr/lib/gcc-cross/riscv64-linux-gnu/12/libgcc.a \
+          x/usr/lib/gcc-cross/riscv64-linux-gnu/12/libgcc_eh.a \
+          x/usr/lib/gcc-cross/riscv64-linux-gnu/12/crtbegin.o \
+          x/usr/lib/gcc-cross/riscv64-linux-gnu/12/crtbeginT.o \
+          x/usr/lib/gcc-cross/riscv64-linux-gnu/12/crtend.o $SYSROOT/lib/ 2>/dev/null || true
 fi
+# musl 把数学库和 resolver 都并进了 libc.a，但 busybox 仍然会 -lm -lresolv。
+# 补两个空归档让链接通过，符号照样从 libc.a 解析
+for stub in libm.a libresolv.a; do
+    if [ ! -f $SYSROOT/lib/$stub ]; then
+        $AR_BIN rcs $SYSROOT/lib/$stub
+    fi
+done
 
 # ---- 4. 编 busybox ----
 cd $BB
@@ -73,7 +95,17 @@ sed -i 's/^CONFIG_TC=y$/# CONFIG_TC is not set/' .config   # 6.12 UAPI 已删除
 # SET_PTR_TO_GLOBALS 之后的读写都基于旧指针做（旧值为空），awk 等 applet
 # 一启动就写 0x4 崩掉。关掉这个优化，生成代码才是顺序正确的
 sed -i 's/^CONFIG_EXTRA_CFLAGS=.*/CONFIG_EXTRA_CFLAGS="-DBB_GLOBAL_CONST="/' .config
-make -j6 CC="$CC" AR=$AR_BIN RANLIB=$RANLIB_BIN STRIP=$STRIP_BIN HOSTCC=$CC_BIN > /dev/null
+# telnetd：宿主机通过 slirp 后端的主机端口转发连进来（元件侧的 backend_opts.hostfwd）。
+# defconfig 默认不开，它依赖 pty，init 里要挂 devpts
+sed -i 's/^# CONFIG_TELNETD is not set$/CONFIG_TELNETD=y/' .config
+sed -i 's/^# CONFIG_FEATURE_TELNETD_STANDALONE is not set$/CONFIG_FEATURE_TELNETD_STANDALONE=y/' .config
+# 编译日志留档：失败时只打最后几十行（busybox 的 Kbuild 会把错误埋在一堆 clang
+# 不认 GCC 参数的 warning 后面，全量刷屏反而看不见）
+if ! make -j6 CC="$CC" AR=$AR_BIN RANLIB=$RANLIB_BIN STRIP=$STRIP_BIN HOSTCC=$CC_BIN > /tmp/busybox-make.log 2>&1; then
+    tail -40 /tmp/busybox-make.log
+    echo "busybox 编译失败，完整日志见 /tmp/busybox-make.log" >&2
+    exit 1
+fi
 
 # ---- 5. initramfs ----
 ROOT=/tmp/rootfs-rv
@@ -93,6 +125,15 @@ cat > $ROOT/init <<'INIT'
 export PATH=/bin:/sbin
 echo ""
 echo "[dcs] busybox init, 输入命令开始玩"
+# 网络：slirp 固定分配 10.0.2.15/24，静态配好即可，不需要 dhcp 客户端
+/bin/busybox mkdir -p /dev/pts
+/bin/busybox mount -t devpts none /dev/pts
+if /bin/busybox ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null; then
+    # telnet 服务：宿主机经 slirp 的主机端口转发（backend_opts.hostfwd）连进来。
+    # telnetd 每次连接 fork 一个 sh，要 pty，所以上面必须挂 devpts
+    /bin/busybox telnetd -l /bin/sh -p 23
+    echo "[dcs] telnetd 已启动（eth0 10.0.2.15:23）"
+fi
 # 内核交给 PID 1 的 fd 不绑定控制终端（/proc/1/stat 的 tty_nr 是 -1），ash 只在
 # 进程有控制终端时才启用行编辑。脚本里的重定向拿不到控制终端，由这个小程序
 # 自己 setsid + TIOCSCTTY 后再 exec sh

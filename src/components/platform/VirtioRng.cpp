@@ -11,6 +11,9 @@ struct VirtioRng::State {
 };
 
 namespace {
+// 生成代码里调用的复位回调名。JIT 符号表按名字索引，必须和 register 时用的字符串一致
+constexpr const char *kResetSymbol = "dcs_virtio_rng_reset";
+
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioRng::State *>(ctx);
     if (s->ops.reset)
@@ -56,7 +59,7 @@ void VirtioRng::simDeinit() {
 }
 
 std::vector<Component::JitSymbol> VirtioRng::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+    return {{kResetSymbol, reinterpret_cast<void *>(&resetThunk)},
             {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
@@ -66,6 +69,7 @@ virtio_gen::DeviceSpec VirtioRng::makeSpec() const {
     s.id = std::to_string(_id);
     s.func_name = funcName_seq();
     s.node_name = std::format("VirtioRng {}", name());
+    s.reset_symbol = kResetSymbol;
     s.dev_id = 4;
     s.nq = 1;
     s.features = 0;

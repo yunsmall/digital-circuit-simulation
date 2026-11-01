@@ -7,7 +7,10 @@
 namespace dsc {
 
 namespace {
-// 设备没有外部后端，但 JIT 里 status 写 0 会调 reset，需要有个符号
+// 设备没有外部后端，但 JIT 里 status 写 0 会调 reset，需要有个符号。
+// 名字按设备类区分：JIT 符号表按名字索引，必须和 register 时用的字符串一致
+constexpr const char *kResetSymbol = "dcs_virtio_blk_mem_reset";
+
 void noopReset(void *) {}
 } // namespace
 
@@ -42,7 +45,7 @@ bool VirtioBlkMem::prepare(std::string & /*error*/) {
 }
 
 std::vector<Component::JitSymbol> VirtioBlkMem::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&noopReset)},
+    return {{kResetSymbol, reinterpret_cast<void *>(&noopReset)},
             {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
@@ -52,6 +55,7 @@ virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
     p.id = std::to_string(_id);
     p.func_name = funcName_seq();
     p.node_name = std::format("VirtioBlkMem {}", name());
+    p.reset_symbol = kResetSymbol;
     for (int i = 0; i < 9; i++)
         p.in_nets.push_back((int) inputs()[i]->netId());
     p.features = 0;

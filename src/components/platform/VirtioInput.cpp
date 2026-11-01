@@ -50,6 +50,9 @@ struct VirtioInput::State {
 };
 
 namespace {
+// 生成代码里调用的复位回调名。JIT 符号表按名字索引，必须和 register 时用的字符串一致
+constexpr const char *kResetSymbol = "dcs_virtio_input_reset";
+
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioInput::State *>(ctx);
     if (s->ops.reset)
@@ -96,7 +99,7 @@ void VirtioInput::simDeinit() {
 }
 
 std::vector<Component::JitSymbol> VirtioInput::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+    return {{kResetSymbol, reinterpret_cast<void *>(&resetThunk)},
             {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
@@ -125,6 +128,7 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     s.id = std::to_string(_id);
     s.func_name = funcName_seq();
     s.node_name = std::format("VirtioInput {}", name());
+    s.reset_symbol = kResetSymbol;
     s.dev_id = 18;
     // Linux 驱动固定开两条队列：0 = events（驱动补 buffer），1 = status（guest 回传 LED 等）。
     // 少给一条时驱动给队列 1 写 QUEUE_SEL 会被钳到队列 0，读回 QUEUE_READY 非 0，

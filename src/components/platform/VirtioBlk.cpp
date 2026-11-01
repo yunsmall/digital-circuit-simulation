@@ -41,6 +41,9 @@ uint32_t fileWrite(void *ctx, uint64_t off, const uint8_t *buf, uint32_t len) {
 }
 
 // JIT 侧回调：状态首成员是 BackendOps
+// 复位回调名按设备类区分：JIT 符号表按名字索引，必须和 register 时用的字符串一致
+constexpr const char *kResetSymbol = "dcs_virtio_blk_reset";
+
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioBlk::State *>(ctx);
     if (s->ops.reset)
@@ -121,7 +124,7 @@ void VirtioBlk::simDeinit() {
 std::vector<Component::JitSymbol> VirtioBlk::extraJitSymbols() const {
     return {
             {"dcs_virtio_io", reinterpret_cast<void *>(&VirtioBlk::ioAccess)},
-            {"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+            {kResetSymbol, reinterpret_cast<void *>(&resetThunk)},
             {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)},
     };
 }
@@ -141,6 +144,7 @@ virtio_gen::DeviceSpec VirtioBlk::makeSpec() const {
     p.id = std::to_string(_id);
     p.func_name = funcName_seq();
     p.node_name = std::format("VirtioBlk {}", name());
+    p.reset_symbol = kResetSymbol;
     for (int i = 0; i < 9; i++)
         p.in_nets.push_back((int) inputs()[i]->netId());
     p.features = _state->read_only ? 32u : 0u;

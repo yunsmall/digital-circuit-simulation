@@ -1,4 +1,5 @@
 #include "dcs/components/platform/VirtioNet.h"
+#include "dcs/net/BackendOpts.h"
 
 #include "dcs/ComponentFactory.h"
 
@@ -31,6 +32,9 @@ struct VirtioNet::State {
 };
 
 namespace {
+// 生成代码里调用的复位回调名。JIT 符号表按名字索引，必须和 register 时用的字符串一致
+constexpr const char *kResetSymbol = "dcs_virtio_net_reset";
+
 std::unordered_map<std::string, VirtioNet::BackendOps> &backendRegistry() {
     static std::unordered_map<std::string, VirtioNet::BackendOps> m;
     return m;
@@ -53,9 +57,15 @@ void VirtioNet::registerBackend(const std::string &name, const BackendOps &ops) 
     backendRegistry()[name] = ops;
 }
 
-VirtioNet::VirtioNet(const std::string &name, const std::string &backend) :
-    SequentialComponent(name, "virtio_net"), _state(std::make_unique<State>()), _backend(backend) {
+VirtioNet::VirtioNet(const std::string &name, const std::string &backend,
+                     std::map<std::string, std::string> backend_opts) :
+    SequentialComponent(name, "virtio_net"), _state(std::make_unique<State>()), _backend(backend),
+    _backend_opts(std::move(backend_opts)) {
     setParam("backend", backend);
+    // 后端私有选项按 backend_opts.<key> 记进参数表：JSON 导出/回读仍然是扁平键，
+    // 嵌套写法只是加载时的一种便利（见 dcs/net/BackendOpts.h）
+    for (auto &[k, v]: _backend_opts)
+        setParam(std::string(kBackendOptsPrefix) + k, v);
     addInput("clk", 1);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
@@ -112,7 +122,7 @@ void VirtioNet::simDeinit() {
 
 std::vector<Component::JitSymbol> VirtioNet::extraJitSymbols() const {
     return {
-            {"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+            {kResetSymbol, reinterpret_cast<void *>(&resetThunk)},
             {"dcs_vnet_kick", reinterpret_cast<void *>(&VirtioNet::kickThunk)},
             {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)},
     };
@@ -184,6 +194,7 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
     s.id = std::to_string(_id);
     s.func_name = funcName_seq();
     s.node_name = std::format("VirtioNet {}", name());
+    s.reset_symbol = kResetSymbol;
     s.dev_id = 1;
     s.nq = 2;
     s.features = 0;
@@ -318,19 +329,19 @@ std::string VirtioNet::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioNet::clone(const std::string &new_name) const {
-    return std::make_unique<VirtioNet>(new_name, _backend);
+    return std::make_unique<VirtioNet>(new_name, _backend, _backend_opts);
 }
 
 } // namespace dsc
 
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"virtio_net", {{"backend", "none", {"none", "slirp"}}},
+    {"virtio_net", {{"backend", "none", {"none", "slirp"}}, {"backend_opts", ""}},
      {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "m_dat_i", "m_ack_i"},
      {"wb_dat_o", "wb_ack_o", "irq", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Bus,
      "virtio-net：队列 0 收包、队列 1 发包；宿主用 pushRxPacket/popTxPacket 或 BackendOps 对接"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-        return std::make_unique<dsc::VirtioNet>(n, dsc::paramStr(p, "backend", "none"));
+        return std::make_unique<dsc::VirtioNet>(n, dsc::paramStr(p, "backend", "none"), dsc::takeBackendOpts(p));
     });
 } // namespace

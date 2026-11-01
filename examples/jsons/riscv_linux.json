@@ -445,7 +445,10 @@
       "type": "virtio_net",
       "name": "virtio_net",
       "params": {
-        "backend": "slirp"
+        "backend": "slirp",
+        "backend_opts": {
+          "hostfwd": "tcp:127.0.0.1:2223-10.0.2.15:23"
+        }
       },
       "connections": {
         "clk": "clk",
