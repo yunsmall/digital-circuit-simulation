@@ -9,6 +9,9 @@
 #              默认 ~/code/linux/riscv64
 #   CC / LD / OBJCOPY  工具链命令，默认自动探测
 set -e
+# 必须在任何 cd 之前算好，$0 是相对路径时后面再算就失效了
+DCSDIR=$(cd "$(dirname "$0")" && pwd)
+PROJ=$(cd "$DCSDIR/.." && pwd)
 
 # 有些发行版只装了带版本后缀的可执行文件，所以按"通用名优先、版本后缀兜底"探测
 pick_tool() {
@@ -25,8 +28,6 @@ CC=${CC:-$(pick_tool clang clang-23 clang-22 clang-21 clang-20 clang-19)}
 LD=${LD:-$(pick_tool ld.lld ld.lld-23 ld.lld-22 ld.lld-21 ld.lld-20 ld.lld-19)}
 OBJCOPY=${OBJCOPY:-$(pick_tool llvm-objcopy llvm-objcopy-23 llvm-objcopy-22 llvm-objcopy-21 llvm-objcopy-20)}
 
-DCSDIR=$(cd "$(dirname "$0")" && pwd)
-PROJ=$(cd "$DCSDIR/.." && pwd)
 LINUX_SRC=${LINUX_SRC:-$HOME/code/linux/riscv64}
 IMAGE=$LINUX_SRC/linux-6.12/arch/riscv/boot/Image
 

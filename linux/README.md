@@ -107,27 +107,50 @@ EOF
 | `build-busybox.sh` | 交叉编译 musl 静态 busybox 并打 initramfs |
 | `make-disk.sh` | 生成 virtio-blk 用的空磁盘镜像 |
 
-## 块设备（virtio-blk）
+## virtio 设备
 
-`riscv_linux.json` 里接了一个 `virtio_mmio` 块设备，MMIO 地址 `0x10001000`，
-中断接 PLIC 源 2，后端是宿主上的 `images/disk.img`。设备是标准的**总线主设备**：
-virtqueue 的 descriptor/avail/used 和数据缓冲全部通过 Wishbone 主端口访问
-（接在 `wishbone_ic` 的 `m1` 上），不直接碰存储器内部。
+`riscv_linux.json` 里接了四台 virtio-mmio 设备，全部是**总线主设备**：virtqueue 的
+descriptor/avail/used 和数据缓冲都通过 `wishbone_ic` 的主端口访问，不直接碰存储器内部。
+
+| 设备 | MMIO | PLIC 源 | 主端口 | 宿主侧对接 |
+|------|------|---------|--------|-----------|
+| `virtio_blk` | `0x10001000` | 2 | m1 | `images/disk.img`，也可换成 ROM 或内置存储 |
+| `virtio_net` | `0x10002000` | 3 | m2 | slirp 用户态网络（`--backend slirp`） |
+| `virtio_rng` | `0x10003000` | 4 | m3 | JIT 内生成随机数 |
+| `virtio_input` | `0x10004000` | 5 | m4 | 宿主 `pushInputEvent` 塞事件、`popStatusEvent` 取 LED 状态 |
 
 ```bash
 bash <本目录>/make-disk.sh                 # 16 MB 空镜像
 # 可选：在宿主上格式化
 mke2fs -t ext4 -F images/disk.img
 
-./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+./build_clang/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever --watch tmp/cmds.txt
 # guest 里
-ls -l /dev/vda
-mount /dev/vda /mnt
+ls -l /dev/vda /dev/hwrng
+ip link set eth0 up && udhcpc -i eth0
+ip addr add 10.0.2.15/24 dev eth0     # udhcpc 的默认脚本在精简 rootfs 里不一定配地址
+ip route add default via 10.0.2.2
+ping -c 3 10.0.2.2
+ping -c 3 8.8.8.8
 ```
+
+实测结果（2026-11-01）：`udhcpc` 拿到 10.0.2.15，ping 网关和 8.8.8.8 都是 0% 丢包；
+`/dev/vda` 可读、`/dev/hwrng` 每次读出新的随机字节；`virtio_input` 以
+`dcs-virtual-input` 注册为键盘（`/proc/bus/input/devices` 可见）。
+当前内核配置没有打开 `CONFIG_INPUT_EVDEV`，所以用户态拿不到 `/dev/input/event*`，
+宿主侧事件要通过 `VirtioInput::pushInputEvent()` 从程序里喂。
+
+`QueueNumMax` 报的是 256：Linux 的 virtio-net 在环空位不足 `2+MAX_SKB_FRAGS`
+（约 19）时会直接停掉 TX 队列，环给太小会表现为"发一个包之后就再也不发"。
 
 宿主的每次读写都直接落到镜像文件上，所以 guest 里写的数据在仿真退出后仍然保留。
 镜像也可以来自电路里的 ROM（把 `path` 留空），这时设备声明 `VIRTIO_BLK_F_RO`，
 写请求返回只读错误。
+
+调试时加 `--trace-cpu`：连续 400 万拍 PC 不变就打印 `PC/halted/ra/sp/a0`
+（配合内核源码树的 `System.map` 可以还原符号）。设备主端口或互连长时间不推进时，
+还会在 stderr 打 `[dcs] virtio#...` / `[dcs] wishbone 卡住 ...`；virtio 的常规寄存器
+追踪默认关闭，排查队列问题时设 `DCS_VIRTIO_TRACE=1` 再打开。
 
 ## 几个容易踩的坑
 
@@ -149,5 +172,4 @@ mount /dev/vda /mnt
 - 单 hart、单 context（内核只用 S 态 context 1）。
 - UART 是单字节收发寄存器，不实现 FIFO；因此 IIR 不报告 FIFO 使能位。
 - 没有 M 态固件（OpenSBI 的角色由 `boot.S` + CPU 内建的 SBI 调用处理）。
-- `virtio_mmio` 元件可以作为块设备接宿主镜像或电路里的 ROM，但示例电路还没接上；
-  队列必须落在 RAM，镜像可以来自只读 ROM（设备会声明 `VIRTIO_BLK_F_RO`）。
+- virtqueue 必须落在 RAM；块设备镜像可以来自只读 ROM（设备会声明 `VIRTIO_BLK_F_RO`）。

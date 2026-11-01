@@ -9,6 +9,8 @@
 #   3. 链接时缺的 __floatsitf/__multf3 等由 Debian 的 riscv64 libgcc.a 提供
 #      （只 dpkg -x 解压出这个 .a，不安装编译器）
 set -e
+# 必须在任何 cd 之前算好：后面会切到 busybox 源码目录，$0 是相对路径时再算就失效了
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # 有些发行版只提供带版本后缀的工具名，按"通用名优先、版本后缀兜底"探测
 pick_tool() {
     for c in "$@"; do
@@ -74,7 +76,6 @@ ROOT=/tmp/rootfs-rv
 rm -rf $ROOT && mkdir -p $ROOT/{bin,sbin,proc,sys,dev,etc,tmp}
 cp busybox $ROOT/bin/busybox && chmod +x $ROOT/bin/busybox
 # 建立控制终端的小程序：脚本里的重定向拿不到 ctty
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 $CC -static -O2 -o $ROOT/bin/shell-init "$SCRIPT_DIR/dcs-shell-init.c"
 cat > $ROOT/init <<'INIT'
 #!/bin/sh

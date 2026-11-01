@@ -3,6 +3,7 @@
 #include "dcs/ComponentFactory.h"
 
 #include <cstddef>
+#include <cstring>
 #include <format>
 
 namespace dsc {
@@ -15,6 +16,37 @@ struct VirtioInput::State {
     InputEvent events[EVT_RING] = {};
     uint32_t evt_head = 0; // 宿主写
     uint32_t evt_tail = 0; // 设备读
+    // guest 通过 status 队列回传的事件（LED 状态等），设备写、宿主读
+    InputEvent status[EVT_RING] = {};
+    uint32_t status_head = 0;
+    uint32_t status_tail = 0;
+
+    // config 空间的只读载荷。Linux 是逐字节读 u.string/u.bitmap 的，
+    // 生成代码按 (select, subsel) 挑一个数组再按字节搬
+    uint8_t cfg_name[128] = {};
+    uint8_t cfg_devids[8] = {};
+    uint8_t cfg_keybits[128] = {};
+    uint8_t cfg_ledbits[128] = {};
+
+    State() {
+        const char *n = "dcs-virtual-input";
+        std::memcpy(cfg_name, n, std::strlen(n));
+        // virtio_input_devids：bustype/vendor/product/version，全小端
+        cfg_devids[0] = 0x06; // BUS_VIRTUAL
+        cfg_devids[2] = 0x43; // 'D'
+        cfg_devids[3] = 0x44; // 'C'
+        cfg_devids[4] = 0x01;
+        cfg_devids[6] = 0x01;
+        // 键盘能力：ESC(1)、ENTER(28)、A..L(30..38)、SPACE(57)，位图首字节是 bit0..7
+        cfg_keybits[1] |= 0x02; // 1
+        cfg_keybits[3] |= 0x10; // 28
+        cfg_keybits[3] |= 0x40; // 30
+        cfg_keybits[3] |= 0x80; // 31
+        cfg_keybits[4] = 0x7F;  // 32..38
+        cfg_keybits[7] |= 0x02; // 57
+        // LED：NUML(0)、CAPSL(1)、SCROLLL(2)
+        cfg_ledbits[0] = 0x07;
+    }
 };
 
 namespace {
@@ -64,7 +96,8 @@ void VirtioInput::simDeinit() {
 }
 
 std::vector<Component::JitSymbol> VirtioInput::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)}};
+    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+            {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
 bool VirtioInput::pushInputEvent(const InputEvent &ev) {
@@ -77,6 +110,15 @@ bool VirtioInput::pushInputEvent(const InputEvent &ev) {
     return true;
 }
 
+bool VirtioInput::popStatusEvent(InputEvent &ev) {
+    auto &s = *_state;
+    if (s.status_head == s.status_tail)
+        return false;
+    ev = s.status[s.status_tail % State::EVT_RING];
+    s.status_tail++;
+    return true;
+}
+
 virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     using namespace virtio_gen;
     DeviceSpec s;
@@ -84,18 +126,70 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     s.func_name = funcName_seq();
     s.node_name = std::format("VirtioInput {}", name());
     s.dev_id = 18;
-    s.nq = 1;
+    // Linux 驱动固定开两条队列：0 = events（驱动补 buffer），1 = status（guest 回传 LED 等）。
+    // 少给一条时驱动给队列 1 写 QUEUE_SEL 会被钳到队列 0，读回 QUEUE_READY 非 0，
+    // probe 直接以 -ENOENT 失败
+    s.nq = 2;
     s.features = 0;
     for (int i = 0; i < 9; i++)
         s.in_nets.push_back((int) inputs()[i]->netId());
-    s.state_decl = "";
-    s.config_read = "";
-    s.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };
 
     const unsigned long long head_off = offsetof(State, evt_head);
     const unsigned long long tail_off = offsetof(State, evt_tail);
     const unsigned long long evt_off = offsetof(State, events);
+    const unsigned long long st_head_off = offsetof(State, status_head);
+    const unsigned long long st_tail_off = offsetof(State, status_tail);
+    const unsigned long long st_off = offsetof(State, status);
+    const unsigned long long name_off = offsetof(State, cfg_name);
+    const unsigned long long devids_off = offsetof(State, cfg_devids);
+    const unsigned long long keybits_off = offsetof(State, cfg_keybits);
+    const unsigned long long ledbits_off = offsetof(State, cfg_ledbits);
     const unsigned ring = State::EVT_RING;
+
+    s.state_decl = std::format("static uint32_t _vio_icfg_sel_{0}, _vio_icfg_sub_{0};\n", s.id, s.id);
+    s.init_code = std::format("    _vio_icfg_sel_{0} = 0; _vio_icfg_sub_{0} = 0;\n", s.id);
+    s.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };
+
+    // config 空间：0x100 是 select/subsel/size 三个字节，0x108 起是 128 字节载荷。
+    // 载荷按 (select, subsel) 从宿主侧数组里取，生成代码只做一次指针选择 + 4 字节拷贝
+    std::string payload_cases;
+    for (int k = 0; k < 32; k++)
+        payload_cases += std::format("            case 0x{:X}: ", 0x108 + k * 4);
+
+    s.config_read = std::format(
+            "            case 0x100: {{\n"
+            "                _dout = _vio_icfg_sel_{0} | (_vio_icfg_sub_{0} << 8);\n"
+            // size 字节在这里填：ID_NAME=17、ID_DEVIDS=8、EV_KEY 位图 8 字节、EV_LED 位图 4 字节
+            "                if (_vio_icfg_sel_{0} == 1) _dout |= 17u << 16;\n"
+            "                else if (_vio_icfg_sel_{0} == 3) _dout |= 8u << 16;\n"
+            "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 1) _dout |= 8u << 16;\n"
+            "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 0x11) _dout |= 4u << 16;\n"
+            "                break;\n"
+            "            }}\n"
+            "{1}"
+            "            {{\n"
+            "                const uint32_t _b = _off - 0x108u;\n"
+            "                const uint8_t *_p = 0;\n"
+            "                if (_vio_icfg_sel_{0} == 1) _p = (const uint8_t *)_vio_state_{0} + {2};\n"
+            "                else if (_vio_icfg_sel_{0} == 3) _p = (const uint8_t *)_vio_state_{0} + {3};\n"
+            "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 1)\n"
+            "                    _p = (const uint8_t *)_vio_state_{0} + {4};\n"
+            "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 0x11)\n"
+            "                    _p = (const uint8_t *)_vio_state_{0} + {5};\n"
+            "                _dout = 0;\n"
+            "                if (_p) dcs_memcpy(&_dout, _p + _b, 4);\n"
+            "                break;\n"
+            "            }}\n",
+            s.id, payload_cases, name_off, devids_off, keybits_off, ledbits_off);
+
+    // 写 select/subsel 都是单字节事务，落在同一个总线字的不同通道上，按 _sel 拆
+    s.config_write = std::format(
+            "            case 0x100: {{\n"
+            "                if (_sel & 1u) _vio_icfg_sel_{0} = _wdat & 0xFFu;\n"
+            "                if (_sel & 2u) _vio_icfg_sub_{0} = (_wdat >> 8) & 0xFFu;\n"
+            "                break;\n"
+            "            }}\n",
+            s.id);
 
     // 生成期展开 8 个事件槽：常量下标，没有循环
     std::string copy_events;
@@ -137,7 +231,33 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
             "                break;\n"
             "            }}\n",
             Q_DEV, s.id, tail_off, Q_USED);
+    // 驱动提交的是事件缓冲区，notify 只能唤醒队列让 wake 去查事件环，
+    // 不能直接把每个空 buffer 都当请求处理掉
+    q.notify_kick = false;
     s.queues.push_back(q);
+
+    // status 队列：guest 发来的 LED/状态事件是单描述符 out buffer，读 8 字节落到宿主环
+    QueueSpec st;
+    st.wake = "";
+    st.desc = std::format(
+            "                if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {0}; }}\n"
+            "                else _qv->phase = _qv->dlen < 8 ? {1} : {2};\n",
+            Q_DESC, Q_USED, Q_DEV + 2);
+    st.start = std::format("        case {0}: _a = _qv->daddr; _l = 8; _wr = 0; break;\n", Q_DEV + 2);
+    st.done = std::format(
+            "            case {0}: {{\n"
+            "                uint32_t _sh = *(uint32_t *)((char *)_vio_state_{1} + {2});\n"
+            "                uint32_t _stt = *(uint32_t *)((char *)_vio_state_{1} + {3});\n"
+            "                if (_sh - _stt < {4}) {{\n"
+            "                    dcs_memcpy((char *)_vio_state_{1} + {5} + (_sh % {4}) * 8, _vio_mp_buf_{1}, 8);\n"
+            "                    *(uint32_t *)((char *)_vio_state_{1} + {2}) = _sh + 1;\n"
+            "                }}\n"
+            "                _qv->written = 0;\n"
+            "                _qv->phase = {6};\n"
+            "                break;\n"
+            "            }}\n",
+            Q_DEV + 2, s.id, st_head_off, st_tail_off, ring, st_off, Q_USED);
+    s.queues.push_back(st);
     return s;
 }
 

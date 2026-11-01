@@ -22,6 +22,14 @@ TEST(VirtioTest, FeatureSelectors) {
     EXPECT_EQ(f.read(0x010), 1u) << "sel1 必须声明 VIRTIO_F_VERSION_1";
 }
 
+// QueueNumMax 太小会让 Linux 的 virtio-net 判定环永远不够用：
+// num_free < 2 + MAX_SKB_FRAGS 时驱动直接停掉 TX 队列，发包后不再 notify
+TEST(VirtioTest, QueueNumMaxIsUsable) {
+    VirtioFixture<VirtioBlk> f;
+    f.write(0x030, 0); // queue selector
+    EXPECT_GE(f.read(0x034), 64u);
+}
+
 TEST(VirtioTest, ReadFromBackendImage) {
     VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
     for (int i = 0; i < 512; i++)

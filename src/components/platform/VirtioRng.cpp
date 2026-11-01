@@ -56,7 +56,8 @@ void VirtioRng::simDeinit() {
 }
 
 std::vector<Component::JitSymbol> VirtioRng::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)}};
+    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+            {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
 virtio_gen::DeviceSpec VirtioRng::makeSpec() const {

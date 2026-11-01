@@ -48,6 +48,9 @@ public:
     // push 一个 evdev 事件；返回 false 表示环满
     bool pushInputEvent(const InputEvent &ev);
 
+    // 取走一条 guest 发来的状态事件（LED 之类）；没有时返回 false
+    bool popStatusEvent(InputEvent &ev);
+
 private:
     virtio_gen::DeviceSpec makeSpec() const;
 

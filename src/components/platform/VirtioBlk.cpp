@@ -122,6 +122,7 @@ std::vector<Component::JitSymbol> VirtioBlk::extraJitSymbols() const {
     return {
             {"dcs_virtio_io", reinterpret_cast<void *>(&VirtioBlk::ioAccess)},
             {"dcs_virtio_reset", reinterpret_cast<void *>(&resetThunk)},
+            {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)},
     };
 }
 

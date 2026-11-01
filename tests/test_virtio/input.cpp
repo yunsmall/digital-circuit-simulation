@@ -135,3 +135,121 @@ TEST(VirtioInput, RingWraparound) {
     }
     EXPECT_EQ(f.get16(s.used + 2), 10);
 }
+
+// config 空间：设备名放在 0x100 的字里，载荷从 0x108 起按字节给
+TEST(VirtioInput, ConfigName) {
+    VirtioFixture<VirtioInput> f;
+    // select=ID_NAME(1)、subsel=0；写 select/subsel 是单字节事务，测试里按整字写即可
+    f.write(0x100, 0x01);
+    const uint32_t hdr = f.read(0x100);
+    EXPECT_EQ(hdr & 0xFFu, 1u);          // select
+    EXPECT_EQ((hdr >> 16) & 0xFFu, 17u); // size = strlen("dcs-virtual-input")
+
+    const uint32_t w0 = f.read(0x108);
+    EXPECT_EQ(w0 & 0xFFu, 'd');
+    EXPECT_EQ((w0 >> 8) & 0xFFu, 'c');
+    EXPECT_EQ((w0 >> 16) & 0xFFu, 's');
+    EXPECT_EQ((w0 >> 24) & 0xFFu, '-');
+    // 超出 size 的部分读回 0
+    EXPECT_EQ(f.read(0x120), 0u);
+}
+
+// config 空间：ID_DEVIDS 给出 bustype/vendor/product/version
+TEST(VirtioInput, ConfigDevIds) {
+    VirtioFixture<VirtioInput> f;
+    f.write(0x100, 0x03);
+    EXPECT_EQ((f.read(0x100) >> 16) & 0xFFu, 8u);
+    // bustype=BUS_VIRTUAL(0x06)、vendor='D''C'（小端）
+    EXPECT_EQ(f.read(0x108), 0x44430006u);
+}
+
+// config 空间：EV_KEY 能力位图，Linux 靠它决定设备能发哪些按键
+TEST(VirtioInput, ConfigEvKeyBits) {
+    VirtioFixture<VirtioInput> f;
+    f.write(0x100, 0x0111); // select=EV_BITS(0x11)、subsel=EV_KEY(1)
+    EXPECT_EQ((f.read(0x100) >> 16) & 0xFFu, 8u);
+    const uint32_t bits = f.read(0x108);
+    // KEY_ESC(1) 在字节 1 的 bit1，KEY_ENTER(28)/KEY_A(30)/KEY_B(31) 在字节 3
+    EXPECT_EQ(bits & 0xFFFFu, 0x0200u);
+    EXPECT_EQ((bits >> 24) & 0xFFu, 0xD0u);
+}
+
+// config 空间：未知 select 不返回任何能力，驱动应把它当"没有这项"
+TEST(VirtioInput, ConfigUnknownSelect) {
+    VirtioFixture<VirtioInput> f;
+    f.write(0x100, 0x7F);
+    EXPECT_EQ((f.read(0x100) >> 16) & 0xFFu, 0u);
+    EXPECT_EQ(f.read(0x108), 0u);
+}
+
+// status 队列：guest 回传的 LED 事件要能被宿主取走
+TEST(VirtioInput, StatusQueue) {
+    VirtioFixture<VirtioInput> f;
+    VirtioInput::InputEvent ev{17, 0, 1}; // EV_LED, LED_NUML, 亮
+    std::memcpy(f.mem() + 0x400, &ev, sizeof(ev));
+    QueueAddrs s{0x100, 0x200, 0x300, 0x400};
+    f.putDesc(s.desc, 0, s.data, 8, 0, 0);
+    prepareQueue(f, s, 1);
+    f.configureQueue(s.desc, s.avail, s.used, 8, 1);
+    f.write(0x050, 1);
+
+    for (int i = 0; i < 600; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 1u);
+    EXPECT_EQ(f.usedLen(s.used, 0), 0u);
+
+    VirtioInput::InputEvent got{};
+    ASSERT_TRUE(f.dev->popStatusEvent(got));
+    EXPECT_EQ(got.type, 17);
+    EXPECT_EQ(got.code, 0);
+    EXPECT_EQ(got.value, 1);
+    EXPECT_FALSE(f.dev->popStatusEvent(got));
+}
+
+// status 队列：装不下一个事件的 buffer 以 len=0 完成，也不能产生假事件
+TEST(VirtioInput, StatusTinyBuffer) {
+    VirtioFixture<VirtioInput> f;
+    QueueAddrs s{0x100, 0x200, 0x300, 0x400};
+    f.putDesc(s.desc, 0, s.data, 4, 0, 0);
+    prepareQueue(f, s, 1);
+    f.configureQueue(s.desc, s.avail, s.used, 8, 1);
+    f.write(0x050, 1);
+
+    for (int i = 0; i < 600; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), 1u);
+    VirtioInput::InputEvent got{};
+    EXPECT_FALSE(f.dev->popStatusEvent(got));
+}
+
+// 两条队列互不干扰：事件队列照常分发，status 队列独立消费
+TEST(VirtioInput, BothQueues) {
+    VirtioFixture<VirtioInput> f;
+    VirtioInput::InputEvent st{17, 1, 0}; // EV_LED, LED_CAPSL, 灭
+    std::memcpy(f.mem() + 0x500, &st, sizeof(st));
+
+    QueueAddrs e{0x100, 0x200, 0x300, 0x400};
+    f.putDesc(e.desc, 0, e.data, 16, 2, 0);
+    prepareQueue(f, e, 1);
+    f.configureQueue(e.desc, e.avail, e.used, 8, 0);
+
+    QueueAddrs s{0x600, 0x700, 0x800, 0x500};
+    f.putDesc(s.desc, 0, s.data, 8, 0, 0);
+    prepareQueue(f, s, 1);
+    f.configureQueue(s.desc, s.avail, s.used, 8, 1);
+
+    ASSERT_TRUE(f.dev->pushInputEvent({1, 30, 1}));
+    f.write(0x050, 1);
+    for (int i = 0; i < 900; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(e.used + 2), 1u);
+    EXPECT_EQ(f.usedLen(e.used, 0), 8u);
+    EXPECT_EQ(f.get16(s.used + 2), 1u);
+
+    VirtioInput::InputEvent got{};
+    ASSERT_TRUE(f.dev->popStatusEvent(got));
+    EXPECT_EQ(got.code, 1);
+}

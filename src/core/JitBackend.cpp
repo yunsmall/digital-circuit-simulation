@@ -5,6 +5,7 @@
 // 不会给每 tick 的路径增加任何间接层。
 #include "dcs/JitBackend.h"
 
+#include <atomic>
 #include <cstring>
 #include <format>
 
@@ -163,6 +164,19 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         // LLVM 那边同名符号是 __builtin 的 inline 版本
         tcc_add_symbol(s, "dcs_memcpy", reinterpret_cast<void *>(s_memcpy));
         tcc_add_symbol(s, "dcs_memset", reinterpret_cast<void *>(s_memset));
+    }
+    // 队列头尾的原子读写：TCC 的 JIT 没有系统原子运行时，和 memset 一样由宿主提供
+    {
+        static auto s_atomic_load = [](const void *p) -> unsigned int {
+            std::atomic_ref<unsigned int> ref(*const_cast<unsigned int *>(static_cast<const unsigned int *>(p)));
+            return ref.load(std::memory_order_acquire);
+        };
+        static auto s_atomic_store = [](void *p, unsigned int v) {
+            std::atomic_ref<unsigned int> ref(*static_cast<unsigned int *>(p));
+            ref.store(v, std::memory_order_release);
+        };
+        tcc_add_symbol(s, "dcs_atomic_load_acq", reinterpret_cast<void *>(+s_atomic_load));
+        tcc_add_symbol(s, "dcs_atomic_store_rel", reinterpret_cast<void *>(+s_atomic_store));
     }
     for (auto &[name, ptr]: symbols)
         tcc_add_symbol(s, name.c_str(), ptr);

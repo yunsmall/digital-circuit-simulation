@@ -18,8 +18,10 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -124,7 +126,7 @@ bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
 
 int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks, int delay_ms, bool forever,
            const std::string &dump_mem, const std::string &feed_file, uint64_t feed_after,
-           const std::string &watch_file) {
+           const std::string &watch_file, bool trace_cpu) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -162,13 +164,17 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
     // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
     // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
     bool cpu_matched = false;
+    dsc::RiscVCPU<32> *cpu32 = nullptr;
+    dsc::RiscVCPU<64> *cpu64 = nullptr;
     for (auto &c: circuit->components()) {
         if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
+            cpu32 = c32;
             if (!img.is64) {
                 c32->setPc((uint32_t) img.entry);
                 cpu_matched = true;
             }
         } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+            cpu64 = c64;
             if (img.is64) {
                 c64->setPc(img.entry);
                 cpu_matched = true;
@@ -246,8 +252,32 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
         // 队列满时不能忙等：UartFeed 的消费者就是 tick 本身，阻塞在这里就没人推进仿真
         std::string pending;
         size_t pending_pos = 0;
+        // --trace-cpu：连续多批 PC 不变就报一次现场，用来区分"真死循环"和"wfi 等中断"
+        uint64_t trace_last_pc = ~0ull;
+        int trace_stuck = 0;
+        int trace_reports = 0;
         for (;;) {
             circuit->tickBatch(200000);
+            if (trace_cpu) {
+                const uint64_t pc = cpu64 ? (uint64_t) cpu64->pc() : (cpu32 ? (uint64_t) cpu32->pc() : 0);
+                const bool halted = cpu64 ? cpu64->halted() : (cpu32 ? cpu32->halted() : false);
+                if (pc == trace_last_pc) {
+                    // 内核 idle 会被周期定时器短暂唤醒，PC 变了又回来，所以只报前几次
+                    if (++trace_stuck == 20 && trace_reports < 5) {
+                        trace_reports++;
+                        const uint64_t ra = cpu64 ? (uint64_t) cpu64->reg(1) : (cpu32 ? (uint64_t) cpu32->reg(1) : 0);
+                        const uint64_t sp = cpu64 ? (uint64_t) cpu64->reg(2) : (cpu32 ? (uint64_t) cpu32->reg(2) : 0);
+                        const uint64_t a0 = cpu64 ? (uint64_t) cpu64->reg(10) : (cpu32 ? (uint64_t) cpu32->reg(10) : 0);
+                        std::fprintf(stderr, "[dcs] cpu 停在 PC=0x%llX halted=%d ra=0x%llX sp=0x%llX a0=0x%llX\n",
+                                     (unsigned long long) pc, halted ? 1 : 0, (unsigned long long) ra,
+                                     (unsigned long long) sp, (unsigned long long) a0);
+                        std::fflush(stderr);
+                    }
+                } else {
+                    trace_stuck = 0;
+                    trace_last_pc = pc;
+                }
+            }
             std::error_code ec;
             const auto sz = std::filesystem::file_size(watch_file, ec);
             if (!ec && sz > watch_pos) {
@@ -356,7 +386,8 @@ int main(int argc, char *argv[]) {
             "watch", "仿真运行期间监视该文件，追加的内容立刻送进串口（配合 --forever，不必重启仿真）",
             cxxopts::value<std::string>())(
             "dump-mem", "仿真结束后按 addr:len（十六进制，物理地址）导出存储器内容",
-            cxxopts::value<std::string>());
+            cxxopts::value<std::string>())(
+            "trace-cpu", "长时间 PC 不变时打印 CPU 现场（调试死循环 / 等中断用）");
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
@@ -406,5 +437,6 @@ int main(int argc, char *argv[]) {
                   result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{},
                   result.count("feed") ? result["feed"].as<std::string>() : std::string{},
                   result["feed-after"].as<uint64_t>(),
-                  result.count("watch") ? result["watch"].as<std::string>() : std::string{});
+                  result.count("watch") ? result["watch"].as<std::string>() : std::string{},
+                  result.count("trace-cpu") != 0);
 }

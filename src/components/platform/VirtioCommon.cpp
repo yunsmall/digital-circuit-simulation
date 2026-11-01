@@ -1,5 +1,8 @@
 #include "dcs/components/platform/VirtioCommon.h"
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <format>
 
 namespace dsc::virtio_gen {
@@ -21,6 +24,9 @@ std::string genStateDecl(const DeviceSpec &s) {
                    "static _VioQ_{0} _vio_q_{0}[{2}];\n"
                    "static uint32_t _vio_status_{0}, _vio_int_{0}, _vio_qsel_{0}, _vio_dsel_{0}, _vio_rsel_{0};\n"
                    "static uint8_t _vio_prev_stb_{0};\n"
+                   // 主端口/队列阶段卡死检测：连续这么多拍没进展就报一次，方便定位
+                   "static uint32_t _vio_wd_{0}, _vio_pd_{0};\n"
+                   "extern void dcs_virtio_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\n"
                    "static uint8_t _vio_mp_active_{0}, _vio_mp_write_{0}, _vio_mp_ackp_{0}, _vio_mp_gap_{0}, _vio_mp_q_{0};\n"
                    "static uint32_t _vio_mp_addr_{0}, _vio_mp_len_{0}, _vio_mp_beat_{0};\n"
                    "static uint8_t _vio_mp_buf_{0}[64];\n"
@@ -34,6 +40,7 @@ std::string genInitCode(const DeviceSpec &s, void *state) {
     return std::format(
                    "    _vio_status_{0} = 0; _vio_int_{0} = 0; _vio_qsel_{0} = 0; _vio_dsel_{0} = 0; _vio_rsel_{0} = 0;\n"
                    "    _vio_prev_stb_{0} = 0; _vio_mp_active_{0} = 0; _vio_mp_gap_{0} = 0; _vio_mp_q_{0} = 0;\n"
+                   "    _vio_wd_{0} = 0; _vio_pd_{0} = 0;\n"
                    "    dcs_memset(_vio_q_{0}, 0, sizeof(_vio_q_{0}));\n"
                    "    _vio_state_{0} = (void *)0x{1:X}ULL;\n",
                    s.id, (unsigned long long) reinterpret_cast<uintptr_t>(state)) +
@@ -43,6 +50,16 @@ std::string genInitCode(const DeviceSpec &s, void *state) {
 namespace {
 
 std::string genMmio(const DeviceSpec &s) {
+    // 只有需要"notify 即处理"的队列才在 kick 时启动；RX 队列交给每拍的 wake 检查，
+    // 否则驱动每次补 buffer 的 notify 都会让设备消费一个空描述符
+    std::string kick_code;
+    for (int q = 0; q < (int) s.nq; q++) {
+        if (!s.queues[q].notify_kick)
+            continue;
+        kick_code += std::format(
+                "                    if (_qi == {0}u) _vio_q_{1}[{0}].phase = _vio_q_{1}[{0}].qready ? 1 : 0;\n", q,
+                s.id);
+    }
     return std::format(
             "    // ---- 从端口：virtio-mmio 寄存器 ----\n"
             "    const uint8_t _active = _stb & _cyc;\n"
@@ -85,33 +102,43 @@ std::string genMmio(const DeviceSpec &s) {
             "                break;\n"
             "            }}\n"
             "            case 0x050: {{\n"
-            "                _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}];\n"
-            // 队列没 ready 时的 notify 必须忽略，否则会在驱动的描述符还没配好时动队列
-            "                _q->phase = _q->qready ? 1 : 0;\n"
+            // 队列没 ready 时的 notify 必须忽略，生成代码里每个队列单独判断 qready
+            "                const uint32_t _qi = _wdat;\n"
+            "                if (_qi < _VIO_{0}_NQ) {{\n"
+            "                    dcs_virtio_trace({0}u, 0x301u, _qi, _vio_q_{0}[_qi].qready, _vio_q_{0}[_qi].qnum, "
+            "_vio_q_{0}[_qi].avail, _vio_q_{0}[_qi].desc, 0);\n"
+            "{4}"
+            "                }}\n"
             "                break;\n"
             "            }}\n"
             "            case 0x064: _vio_int_{0} &= ~_wdat; break;\n"
             "            case 0x070:\n"
             "                _vio_status_{0} = _wdat;\n"
+            "                dcs_virtio_trace({0}u, 0x302u, _wdat, _vio_q_{0}[0].qready, _vio_q_{0}[0].qnum, 0, 0, 0);\n"
             "                if (_wdat == 0) {{\n"
             "                    _vio_int_{0} = 0;\n"
             "                    dcs_memset(_vio_q_{0}, 0, sizeof(_vio_q_{0}));\n"
             "                    dcs_virtio_reset(_vio_state_{0});\n"
             "                }}\n"
             "                break;\n"
-            "            case 0x080: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->desc = (_q->desc & 0xFFFF0000u) | (_wdat & 0xFFFFu); break; }}\n"
-            "            case 0x084: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->desc = (_q->desc & 0xFFFFu) | (_wdat << 16); break; }}\n"
-            "            case 0x090: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->avail = (_q->avail & 0xFFFF0000u) | (_wdat & 0xFFFFu); break; }}\n"
-            "            case 0x094: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->avail = (_q->avail & 0xFFFFu) | (_wdat << 16); break; }}\n"
-            "            case 0x0A0: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->used = (_q->used & 0xFFFF0000u) | (_wdat & 0xFFFFu); break; }}\n"
-            "            case 0x0A4: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->used = (_q->used & 0xFFFFu) | (_wdat << 16); break; }}\n"
+            // virtio-mmio 的 *Low/*High 各是 32 位寄存器，High 存地址的高 32 位。
+            // guest 物理地址都在 32 位以内，High 写 0 时直接忽略，不能拿它当高 16 位拼
+            "            case 0x080: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->desc = _wdat; break; }}\n"
+            "            case 0x084: break;\n"
+            "            case 0x090: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->avail = _wdat; break; }}\n"
+            "            case 0x094: break;\n"
+            "            case 0x0A0: {{ _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}]; _q->used = _wdat; break; }}\n"
+            "            case 0x0A4: break;\n"
             "            case 0x020: break;\n"
+            "{5}"
             "            default: break;\n"
             "            }}\n"
+            "            dcs_virtio_trace({0}u, 0x305u, _off, _wdat, _vio_qsel_{0}, _vio_q_{0}[0].qready, {3}, 0);\n"
             "        }}\n"
             "        _ack = 1;\n"
             "    }}\n",
-            s.id, s.features, s.config_read);
+            s.id, s.features, s.config_read,
+            s.nq >= 2 ? std::format("_vio_q_{}[1].qready", s.id) : std::string("0u"), kick_code, s.config_write);
 }
 
 std::string genMaster(const DeviceSpec &s) {
@@ -186,6 +213,10 @@ std::string genDone(const DeviceSpec &s) {
         c += std::format("                _qv->dflags = (uint16_t)((uint32_t)_vio_mp_buf_{0}[12] | ((uint32_t)_vio_mp_buf_{0}[13] << 8));\n", s.id);
         c += std::format("                _qv->dnext = (uint32_t)_vio_mp_buf_{0}[14] | ((uint32_t)_vio_mp_buf_{0}[15] << 8);\n", s.id);
         c += "                _qv->off = 0;\n";
+        c += std::format(
+                "                dcs_virtio_trace({0}u, 0x304u, {1}u, _qv->daddr, _qv->dlen, (uint32_t) _qv->dflags, "
+                "_qv->dnext, 0);\n",
+                s.id, q);
         c += s.queues[q].desc;
         c += "                break;\n";
         c += "            }\n";
@@ -196,6 +227,10 @@ std::string genDone(const DeviceSpec &s) {
         c += "            case 8: { // used.idx 写完，继续看 avail 里还有没有请求\n";
         c += "                _qv->used_idx++; _qv->last_avail++;\n";
         c += std::format("                _vio_int_{} |= 1u;\n", s.id);
+        c += std::format(
+                "                dcs_virtio_trace({0}u, 0x303u, _vio_mp_q_{0}, _qv->used_idx, _qv->last_avail, "
+                "_qv->head, _qv->written, 0);\n",
+                s.id);
         c += "                _qv->phase = 1;\n";
         c += "                break;\n";
         c += "            }\n";
@@ -264,6 +299,9 @@ std::string genSeq(const DeviceSpec &s) {
     c += std::format("    uint8_t _we = _w[{}][0] & 1;\n", n[I_WE]);
     c += std::format("    uint8_t _stb = _w[{}][0] & 1;\n", n[I_STB]);
     c += std::format("    uint8_t _cyc = _w[{}][0] & 1;\n", n[I_CYC]);
+    // config 空间的寄存器里有字节粒度的字段（如 virtio-input 的 select/subsel），
+    // 总线给出的是字节通道掩码，设备要按 _sel 把各通道拆开
+    c += std::format("    uint8_t _sel = _w[{}][0] & 0x0F;\n", n[I_SEL]);
     c += std::format("    uint32_t _m_dat = 0; dcs_memcpy(&_m_dat, _w[{}], 4);\n", n[I_M_DAT]);
     c += std::format("    uint8_t _m_ack = _w[{}][0] & 1;\n", n[I_M_ACK]);
     c += "    uint32_t _dout = 0; uint8_t _ack = 0;\n";
@@ -272,6 +310,23 @@ std::string genSeq(const DeviceSpec &s) {
     c += genDone(s);
     for (int q = 0; q < (int) s.nq; q++)
         c += genQueue(s, q);
+    // 卡死检测：主端口一个 beat 正常只有几拍，队列阶段也不该长期停在非 0。
+    // 各报一次就够定位，不会把日志刷爆
+    c += std::format(
+            "    if (_vio_mp_active_{0}) {{\n"
+            "        if (_vio_wd_{0} != 0xFFFFFFFFu) _vio_wd_{0}++;\n"
+            "        if (_vio_wd_{0} == 20000u)\n"
+            "            dcs_virtio_trace({0}u, 0x100u | _vio_q_{0}[0].phase, _vio_mp_addr_{0}, _vio_mp_beat_{0}, "
+            "_vio_mp_len_{0}, _vio_q_{0}[0].qready, _vio_mp_write_{0}, _vio_q_{0}[0].qnum);\n"
+            "    }} else _vio_wd_{0} = 0;\n"
+            "    if (!_vio_mp_active_{0} && _vio_q_{0}[0].phase != 0) {{\n"
+            "        if (_vio_pd_{0} != 0xFFFFFFFFu) _vio_pd_{0}++;\n"
+            "        if (_vio_pd_{0} == 20000u)\n"
+            "            dcs_virtio_trace({0}u, 0x200u | _vio_q_{0}[0].phase, _vio_q_{0}[0].last_avail, "
+            "_vio_q_{0}[0].used_idx, _vio_q_{0}[0].qnum, _vio_q_{0}[0].qready, _vio_q_{0}[0].desc, "
+            "_vio_q_{0}[0].avail);\n"
+            "    }} else _vio_pd_{0} = 0;\n",
+            s.id);
     c += std::format("    const uint8_t _irq_out = _vio_int_{} != 0;\n", s.id);
     if (s.out_write) {
         c += s.out_write(O_DAT, "_dout", 32);
@@ -371,3 +426,55 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
 }
 
 } // namespace dsc::virtio_gen
+
+// JIT 里检测到设备长时间不推进时调用。tag 高位区分是主端口卡住还是队列阶段卡住，
+// 参数含义由生成代码决定，这里只负责原样打出来
+extern "C" void dcs_virtio_trace(uint32_t id, uint32_t tag, uint32_t a, uint32_t b, uint32_t c, uint32_t d,
+                                 uint32_t e, uint32_t f) {
+    // 0x1xx/0x2xx 是卡死看门狗，只在异常时触发，默认就打印；
+    // 其余追踪点在每拍都会走到的路径上，默认关闭。DCS_VIRTIO_TRACE 支持
+    // "1"/"all" 或逗号分隔的 tag 列表（如 "301,303,304,306"）
+    struct Filter {
+        bool all = false;
+        uint32_t tags[16] = {};
+        int n = 0;
+        Filter() {
+            const char *s = std::getenv("DCS_VIRTIO_TRACE");
+            if (!s || !*s)
+                return;
+            if (s[0] == '1' && s[1] == 0) {
+                all = true;
+                return;
+            }
+            if (std::strcmp(s, "all") == 0) {
+                all = true;
+                return;
+            }
+            while (*s && n < 16) {
+                char *end = nullptr;
+                unsigned long v = std::strtoul(s, &end, 16);
+                if (end == s)
+                    break;
+                tags[n++] = (uint32_t) v;
+                s = end;
+                while (*s == ',' || *s == ' ')
+                    s++;
+            }
+        }
+        bool on(uint32_t tag) const {
+            if (tag < 0x300u)
+                return true;
+            if (all)
+                return true;
+            for (int i = 0; i < n; i++)
+                if (tags[i] == tag)
+                    return true;
+            return false;
+        }
+    };
+    static const Filter filter;
+    if (!filter.on(tag))
+        return;
+    std::fprintf(stderr, "[dcs] virtio#%u tag=0x%X a=%u b=%u c=%u d=%u e=%u f=%u\n", id, tag, a, b, c, d, e, f);
+    std::fflush(stderr);
+}

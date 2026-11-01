@@ -71,4 +71,16 @@ static inline void *dcs_memset(void *dst, int c, unsigned long long n) {
 }
 #endif
 
+// 队列头尾可能被宿主后端线程和 JIT 同时访问（网络收发的 SPSC 环）。
+// Clang 直接内联原子指令；TCC 的 JIT 是 -nostdlib，和 memset 一样由宿主注册函数
+#if defined(__TINYC__)
+extern unsigned int dcs_atomic_load_acq(const void *p);
+extern void dcs_atomic_store_rel(void *p, unsigned int v);
+#define dcs_load_acq(p) dcs_atomic_load_acq(p)
+#define dcs_store_rel(p, v) dcs_atomic_store_rel(p, v)
+#else
+#define dcs_load_acq(p) __atomic_load_n((unsigned int *) (p), __ATOMIC_ACQUIRE)
+#define dcs_store_rel(p, v) __atomic_store_n((unsigned int *) (p), (unsigned int) (v), __ATOMIC_RELEASE)
+#endif
+
 #endif // DCS_SHIM_UTIL_H

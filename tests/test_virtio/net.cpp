@@ -132,6 +132,34 @@ TEST(VirtioNet, IgnoresWhenNotReady) {
     EXPECT_EQ(f.get16(s.used + 2), 0u);
 }
 
+// 驱动预先提交多个空 buffer 时，没有包的 buffer 不能被消费：否则 rx_tail 会越过
+// rx_head，`h != t` 永远成立，设备开始无限投递空包
+TEST(VirtioNet, EmptyRxBuffersStayQueued) {
+    VirtioFixture<VirtioNet> f;
+    QueueAddrs s{0x100, 0x200, 0x300, 0x400};
+    for (int i = 0; i < 3; i++)
+        f.putDesc(s.desc, (uint16_t) i, s.data + i * 32, 64, 2, 0);
+    for (int i = 0; i < 3; i++)
+        f.put16(s.avail + 4 + 2 * i, (uint16_t) i);
+    prepareQueue(f, s, 3);
+    f.configureQueue(s.desc, s.avail, s.used, 8, 0);
+    f.write(0x070, 1);
+    f.write(0x050, 0);
+
+    uint8_t pkt[16] = {};
+    ASSERT_TRUE(f.dev->pushRxPacket(pkt, 16));
+    for (int i = 0; i < 600; i++)
+        f.tick();
+    EXPECT_EQ(f.get16(s.used + 2), 1u) << "三个 buffer 里只有一个真包，空 buffer 不能完成";
+
+    // 再来一个包，应该接着用下一个 buffer，而不是先吐一串空包
+    ASSERT_TRUE(f.dev->pushRxPacket(pkt, 16));
+    for (int i = 0; i < 600; i++)
+        f.tick();
+    EXPECT_EQ(f.get16(s.used + 2), 2u);
+    EXPECT_EQ(f.usedLen(s.used, 1), 28u);
+}
+
 // RX 宿主环满时 push 返回 false；设备消费后又能继续
 TEST(VirtioNet, RxRingFull) {
     VirtioFixture<VirtioNet> f;

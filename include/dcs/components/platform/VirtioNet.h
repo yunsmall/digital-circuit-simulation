@@ -16,20 +16,35 @@ public:
     struct State; // 定义在 .cpp
 
     struct BackendOps {
-        void *ctx = nullptr;
-        void (*init)(void *ctx) = nullptr;
-        void (*deinit)(void *ctx) = nullptr;
-        void (*reset)(void *ctx) = nullptr;
-        // 取一个待接收的帧（返回长度，0 表示没有）/ 发出一个帧
+        // 申请后端上下文。可以在这里起后台线程和宿主交互，
+        // 仿真开始（Circuit::init → simInit）时调用
+        void *(*create)(void *cfg) = nullptr;
+        // 释放上下文，必须停掉 create 里起的线程；仿真销毁时调用
+        void (*destroy)(void *ctx) = nullptr;
+        // 数据面：取一帧给 guest / 送一帧给外部
         uint32_t (*recv_pkt)(void *ctx, uint8_t *buf, uint32_t max_len) = nullptr;
         void (*send_pkt)(void *ctx, const uint8_t *buf, uint32_t len) = nullptr;
+        // guest 把 status 写 0
+        void (*reset)(void *ctx) = nullptr;
+        // JIT 往 TX 环推入一个包后调用，唤醒阻塞中的后端线程。
+        // 每个包一次，不是每拍
+        void (*kick)(void *ctx) = nullptr;
     };
 
-    explicit VirtioNet(const std::string &name);
+    // 后端注册表：第三方在自己的 .cpp 里用 DCS_REGISTER_VIRTIO_NET_BACKEND 自注册，
+    // 元件的 backend 参数只存名字，JSON 往返后能自动恢复
+    static void registerBackend(const std::string &name, const BackendOps &ops);
+
+    explicit VirtioNet(const std::string &name, const std::string &backend = "none");
     ~VirtioNet() override;
 
+    bool prepare(std::string &error) override;
     void simInit() override;
     void simDeinit() override;
+
+    // 后端名字随元件参数一起序列化，宿主加载 JSON 后照名字接上实现
+    const std::string &backendName() const { return _backend; }
+
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }
@@ -53,6 +68,21 @@ private:
     virtio_gen::DeviceSpec makeSpec() const;
 
     std::unique_ptr<State> _state;
+    std::string _backend;
+    BackendOps _ops;
+
+    // JIT 侧入口：从 State 里取后端上下文转发 kick
+    static void kickThunk(void *state);
 };
+
+// 后端自注册：放在后端实现文件的全局作用域。
+// 名字是字符串字面量，所以变量名用 __COUNTER__ 生成，不能拿 name 直接拼
+#define DCS_VNET_CAT2(a, b) a##b
+#define DCS_VNET_CAT(a, b) DCS_VNET_CAT2(a, b)
+#define DCS_REGISTER_VIRTIO_NET_BACKEND(name, ops_expr)                                              \
+    namespace {                                                                                      \
+    [[maybe_unused]] const bool DCS_VNET_CAT(_dcs_vnet_backend_, __COUNTER__) =                      \
+            (::dsc::VirtioNet::registerBackend(name, ops_expr), true);                               \
+    }
 
 } // namespace dsc

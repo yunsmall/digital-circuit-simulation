@@ -6,12 +6,16 @@
 #include "dcs/components/platform/WishboneInterconnect.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <format>
 #include <sstream>
 #include <stdexcept>
 
 namespace dsc {
+
+// 互连卡死检测的宿主回调；实现在本文件末尾
+extern "C" void dcs_wb_trace(uint32_t adr, uint32_t grant, uint32_t si, uint32_t stb, uint32_t cyc, uint32_t busy);
 
 WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::string &segments, int num_masters) :
     Component(name, "wishbone_ic") {
@@ -83,7 +87,8 @@ bool WishboneInterconnect::prepare(std::string & /*error*/) {
 }
 
 std::vector<Component::JitSymbol> WishboneInterconnect::extraJitSymbols() const {
-    return {}; // 路由逻辑全部在生成代码里展开，不再有 C++ 回调
+    // 路由逻辑全部在生成代码里展开，这里只暴露卡死检测的回调
+    return {{"dcs_wb_trace", reinterpret_cast<void *>(&dcs_wb_trace)}};
 }
 
 // ============================================================
@@ -91,12 +96,18 @@ std::vector<Component::JitSymbol> WishboneInterconnect::extraJitSymbols() const 
 // ============================================================
 
 std::string WishboneInterconnect::genStateDecl() const {
-    return std::format("static int _wbic_grant_{};\n", _id);
+    return std::format(
+            "static int _wbic_grant_{0}, _wbic_next_{0}, _wbic_last_{0};\n"
+            "static uint8_t _wbic_busy_{0};\n"
+            "static uint32_t _wbic_wd_{0};\n"
+            "extern void dcs_wb_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\n",
+            _id);
 }
 
 std::string WishboneInterconnect::genInitCode() const {
-    // 轮询仲裁的起点；上一轮遗留的授权会让首个事务被误判成"换主"
-    return std::format("    _wbic_grant_{} = 0;\n", _id);
+    // 轮询从 0 开始；last = -1 表示还没有事务，首个事务不需要撤拍
+    return std::format(
+            "    _wbic_grant_{0} = 0; _wbic_next_{0} = 0; _wbic_last_{0} = -1; _wbic_busy_{0} = 0; _wbic_wd_{0} = 0;\n", _id);
 }
 
 std::string WishboneInterconnect::genFuncDef_seq() const {
@@ -121,24 +132,46 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         c += "    " + gen_read_wire(inputs()[M * 6 + i * 2 + 1]->netId(), 1, 1, std::format("_s{}_ack", i)) + "\n";
     }
 
-    // 事务级轮询：从上次授权的主设备开始扫描。展开成 M 个候选，避免数组和循环
-    c += std::format("    int _g = _wbic_grant_{};\n", _id);
-    c += std::format("    if (_g < 0 || _g >= {}) _g = 0;\n", M);
+    // 多主设备仲裁：拿到总线的就锁住，直到它撤销 stb 才放行；空闲时从上次授权的
+    // 下一个主设备开始扫描。不能用固定优先——CPU 每个周期都有访存请求，固定优先会
+    // 让设备的主端口永远排不上队，等主端口回读的请求就永远完不成。
+    //
+    // 请求汇总成一个位掩码，扫描只做位测试。TCC 不做常量折叠和分支合并，
+    // 让每个候选各带一整套"比较 + 搬六个信号"会把生成代码的分支数和体积都翻 M 倍。
     c += "    int _grant = -1;\n";
     c += "    uint32_t _adr = 0, _dat = 0; uint8_t _we = 0, _sel = 0, _stb = 0, _cyc = 0;\n";
+    c += "    uint8_t _gap = 0;\n";
+    c += "    uint32_t _rq = 0;\n";
+    for (int mi = 0; mi < M; mi++)
+        c += std::format("    _rq |= (uint32_t)(_m{0}_stb & _m{0}_cyc) << {0};\n", mi);
+    c += std::format("    if (_wbic_busy_{}) {{\n", _id);
+    c += std::format("        const int _bg = _wbic_grant_{};\n", _id);
+    c += "        if (_rq & (1u << _bg)) _grant = _bg;\n";
+    c += std::format("        else _wbic_busy_{} = 0;\n", _id);
+    c += "    }\n";
+    c += "    if (_grant < 0) {\n";
+    c += std::format("        int _g = _wbic_next_{};\n", _id);
+    c += std::format("        if (_g < 0 || _g >= {}) _g = 0;\n", M);
     for (int k = 0; k < M; k++) {
-        c += std::format("    if (_grant < 0) {{ int _i = _g + {}; if (_i >= {}) _i -= {};\n", k, M, M);
-        for (int mi = 0; mi < M; mi++) {
-            c += std::format(
-                    "        if (_i == {} && _m{}_stb && _m{}_cyc) {{ _grant = {}; _adr = _m{}_adr; _dat = _m{}_dat; "
-                    "_we = _m{}_we; _sel = _m{}_sel; _stb = _m{}_stb; _cyc = _m{}_cyc; }}\n",
-                    mi, mi, mi, mi, mi, mi, mi, mi, mi, mi);
-        }
-        c += "    }\n";
+        c += std::format(
+                "        if (_grant < 0) {{ int _i = _g + {0}; if (_i >= {1}) _i -= {1}; "
+                "if (_rq & (1u << _i)) _grant = _i; }}\n",
+                k, M);
     }
-    c += std::format("    const int _prev = _wbic_grant_{};\n", _id);
-    c += "    const uint8_t _gap = (_prev >= 0 && _grant >= 0 && _grant != _prev) ? 1 : 0;\n";
-    c += std::format("    if (_grant >= 0) _wbic_grant_{} = _grant;\n", _id);
+    c += "        if (_grant >= 0) {\n";
+    // 换主时从设备看到的 stb 可能还是上一拍那一根 1，不撤一拍它就不会产生新的上升沿
+    c += std::format("            _gap = (_wbic_last_{0} >= 0 && _wbic_last_{0} != _grant) ? 1 : 0;\n", _id);
+    c += std::format("            _wbic_grant_{0} = _grant; _wbic_last_{0} = _grant; _wbic_busy_{0} = 1;\n", _id);
+    c += std::format("            _wbic_next_{0} = (_grant + 1 == {1}) ? 0 : _grant + 1;\n", _id, M);
+    c += "        }\n";
+    c += "    }\n";
+    // 选中后才搬总线信号，M 个 if 里只执行一个，不像扫描那样每个候选都带一整组赋值
+    for (int mi = 0; mi < M; mi++) {
+        c += std::format(
+                "    if (_grant == {0}) {{ _adr = _m{0}_adr; _dat = _m{0}_dat; _we = _m{0}_we; _sel = _m{0}_sel; "
+                "_stb = _m{0}_stb; _cyc = _m{0}_cyc; }}\n",
+                mi);
+    }
 
     // 地址解码：段信息编译期已知，直接生成常量比较链
     c += "    int _si = 0;\n";
@@ -178,6 +211,14 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         c += "    " + genOutputWrite(base + 4, std::format("_so{}_stb", i), 1) + "\n";
         c += "    " + genOutputWrite(base + 5, std::format("_so{}_cyc", i), 1) + "\n";
     }
+    // 主设备拿了总线却一直不撤销：说明被选中的从设备没回 ack，把地址和持有者打出来
+    c += std::format(
+            "    if (_wbic_busy_{0}) {{\n"
+            "        if (_wbic_wd_{0} != 0xFFFFFFFFu) _wbic_wd_{0}++;\n"
+            "        if (_wbic_wd_{0} == 20000u)\n"
+            "            dcs_wb_trace(_adr, (uint32_t) _grant, (uint32_t) _si, (uint32_t) _stb, (uint32_t) _cyc, 1u);\n"
+            "    }} else _wbic_wd_{0} = 0;\n",
+            _id);
     c += "}\n";
     return c;
 }
@@ -194,6 +235,13 @@ std::unique_ptr<Component> WishboneInterconnect::clone(const std::string &new_na
 }
 
 } // namespace dsc
+
+// JIT 的互连卡死检测回调：一个主设备持锁太久，把卡住的地址和持有者打出来
+extern "C" void dcs_wb_trace(uint32_t adr, uint32_t grant, uint32_t si, uint32_t stb, uint32_t cyc, uint32_t busy) {
+    std::fprintf(stderr, "[dcs] wishbone 卡住 adr=0x%X master=%d slave=%u stb=%u cyc=%u busy=%u\n", adr, (int) grant, si,
+                 stb, cyc, busy);
+    std::fflush(stderr);
+}
 
 // ---- 工厂注册 ----
 namespace {

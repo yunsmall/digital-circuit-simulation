@@ -91,5 +91,29 @@
             interrupts = <2>;
             interrupt-parent = <&plic>;
         };
+
+        /* virtio-mmio 网卡：对应 IC 的 s5 段（0x10002000）和 PLIC 源 3 */
+        virtio_mmio@10002000 {
+            compatible = "virtio,mmio";
+            reg = <0x0 0x10002000 0x0 0x1000>;
+            interrupts = <3>;
+            interrupt-parent = <&plic>;
+        };
+
+        /* 硬件随机数：对应 IC 的 s6 段和 PLIC 源 4 */
+        virtio_mmio@10003000 {
+            compatible = "virtio,mmio";
+            reg = <0x0 0x10003000 0x0 0x1000>;
+            interrupts = <4>;
+            interrupt-parent = <&plic>;
+        };
+
+        /* 输入设备：对应 IC 的 s7 段和 PLIC 源 5 */
+        virtio_mmio@10004000 {
+            compatible = "virtio,mmio";
+            reg = <0x0 0x10004000 0x0 0x1000>;
+            interrupts = <5>;
+            interrupt-parent = <&plic>;
+        };
     };
 };

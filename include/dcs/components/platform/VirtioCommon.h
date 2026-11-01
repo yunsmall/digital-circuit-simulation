@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+// 设备卡死检测的宿主回调；实现在 VirtioCommon.cpp，各 virtio 元件把它注册进 JIT
+extern "C" void dcs_virtio_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+
 namespace dsc::virtio_gen {
 
 // 从端口 / 主端口引脚顺序，和设备元件的 addInput/addOutput 顺序一致
@@ -26,7 +29,9 @@ inline constexpr int Q_USED = 7;
 inline constexpr int Q_USED_IDX = 8;
 inline constexpr int Q_DEV = 10;
 
-inline constexpr uint32_t QUEUE_MAX = 8;
+// QueueNumMax。Linux 的 virtio-net 在 num_free < 2 + MAX_SKB_FRAGS（约 19）时
+// 会直接停掉 TX 队列，环太小会导致"发包即卡死、再无 notify"，所以必须给足
+inline constexpr uint32_t QUEUE_MAX = 256;
 
 struct QueueSpec {
     // phase==0 且有活干时把 _qv->phase 设成 Q_AVAIL_IDX；可用 _qv
@@ -37,6 +42,9 @@ struct QueueSpec {
     std::string start;
     // 设备特有阶段的完成代码：推进 _qv->phase
     std::string done;
+    // notify 写这个队列时是否直接启动。RX/事件这类"驱动只是补 buffer"的队列
+    // 必须设 false，否则每次 refill 的 notify 都会被当成本地请求去消费空描述符
+    bool notify_kick = true;
 };
 
 struct DeviceSpec {
@@ -50,6 +58,8 @@ struct DeviceSpec {
     std::string state_decl;   // 设备私有 static 变量（含换行）
     std::string init_code;    // 设备私有初始化（含缩进和换行）
     std::string config_read;  // 0x100 起的读分支，形如 "case 0x100: ...; break;\n"
+    // 0x100 起的写分支（可选）；代码里可用 _sel 判断写入的字节通道
+    std::string config_write;
     std::vector<QueueSpec> queues;
     // 输出写语句生成器（封装 Component::genOutputWrite）
     std::function<std::string(int out_idx, const std::string &expr, uint32_t width)> out_write;

@@ -11,6 +11,9 @@ option(DCS_BUILD_BENCHMARK "构建性能基准 dcs_bench" ON)
 # ---- 后端选择 ----
 # cmake -B build -DDCS_USE_TCC=ON
 option(DCS_USE_TCC "Use TinyCC backend instead of LLVM/Clang" OFF)
+# guest 通过 virtio-net 访问宿主和互联网：用 libslirp 做用户态 NAT，
+# 宿主零配置、不需要驱动；默认关闭，避免给不需要网络的构建引入依赖
+option(DCS_BUILD_NET "启用 libslirp 用户态网络后端" OFF)
 
 if(DCS_USE_TCC)
     # TinyCC 后端
@@ -230,6 +233,13 @@ if(DCS_BUILD_EXECUTABLE)
     if(DCS_USE_TCC)
         target_compile_definitions(dcs_soc PRIVATE DCS_USE_TCC)
     endif()
+    if(DCS_BUILD_NET)
+        # libslirp 在 vcpkg 里只提供 pkg-config 模块（vcpkg print-usage libslirp）
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SLIRP REQUIRED IMPORTED_TARGET slirp)
+        target_sources(dcs_soc PRIVATE src/net/SlirpBackend.cpp)
+        target_link_libraries(dcs_soc PRIVATE PkgConfig::SLIRP)
+    endif()
 endif()
 
 # ---- 性能基准（不注册进 ctest，手动运行）----
@@ -306,6 +316,19 @@ if(GTest_FOUND)
     add_dcs_test(test_edgecases  tests/test_edgecases/*.cpp)
     add_dcs_test(test_coverage   tests/test_coverage/*.cpp)
     add_dcs_test(test_wbrom      tests/test_wbrom/*.cpp)
+    add_dcs_test(test_wishbone_ic tests/test_wishbone_ic/*.cpp)
+    add_dcs_test(test_alu        tests/test_alu/*.cpp)
+    add_dcs_test(test_bcd2seg    tests/test_bcd2seg/*.cpp)
+    add_dcs_test(test_display    tests/test_display/*.cpp)
+    add_dcs_test(test_sync2ff    tests/test_sync2ff/*.cpp)
+    add_dcs_test(test_debounce   tests/test_debounce/*.cpp)
+    add_dcs_test(test_assert     tests/test_assert/*.cpp)
+    add_dcs_test(test_parity     tests/test_parity/*.cpp)
+    add_dcs_test(test_regfile    tests/test_regfile/*.cpp)
+    add_dcs_test(test_wallclock  tests/test_wallclock/*.cpp)
+    add_dcs_test(test_fpu_flags  tests/test_fpu_flags/*.cpp)
+    add_dcs_test(test_adcdac     tests/test_adcdac/*.cpp)
+    add_dcs_test(test_ringcounter tests/test_ringcounter/*.cpp)
     add_dcs_test(test_wbmem      tests/test_wbmem/*.cpp)
     add_dcs_test(test_rvc        tests/test_rvc/*.cpp)
     # Verilator 集成测试：DLL 由 verilog_test/ 子项目生成，测试里用的是相对路径，

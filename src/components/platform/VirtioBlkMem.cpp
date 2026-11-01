@@ -42,7 +42,8 @@ bool VirtioBlkMem::prepare(std::string & /*error*/) {
 }
 
 std::vector<Component::JitSymbol> VirtioBlkMem::extraJitSymbols() const {
-    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&noopReset)}};
+    return {{"dcs_virtio_reset", reinterpret_cast<void *>(&noopReset)},
+            {"dcs_virtio_trace", reinterpret_cast<void *>(&dcs_virtio_trace)}};
 }
 
 virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
