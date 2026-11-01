@@ -2,6 +2,8 @@
 // 路由逻辑全部展开进 JIT 生成的 C 代码：没有跨模块调用、没有结构体指针追逐，
 // 地址段在编译期折叠成常量比较。这样 LLVM 后端能优化到接近手写，
 // TinyCC 直译出来的也只是一串标量比较。
+#include "dcs/Circuit.h"
+#include "dcs/CodeGen.h"
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/platform/WishboneInterconnect.h"
 
@@ -9,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -39,6 +42,16 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
     }
     if (_segments.empty())
         throw std::invalid_argument("至少需要一个地址段");
+    // 地址段必须互不重叠：解码生成的是一条 else-if 比较链，重叠的段只会命中靠前的那个
+    for (size_t i = 0; i < _segments.size(); i++)
+        for (size_t j = i + 1; j < _segments.size(); j++) {
+            const uint64_t ai = _segments[i].base, ae = ai + _segments[i].size;
+            const uint64_t bi = _segments[j].base, be = bi + _segments[j].size;
+            if (ai < be && bi < ae)
+                throw std::invalid_argument(
+                        std::format("地址段重叠: 0x{:X}+0x{:X} 与 0x{:X}+0x{:X}", ai, _segments[i].size, bi,
+                                    _segments[j].size));
+        }
 
     int N = (int) _segments.size();
     _masters = num_masters < 1 ? 1 : num_masters;
@@ -103,17 +116,20 @@ std::string WishboneInterconnect::genStateDecl() const {
             // 组合阶段回读主设备应答时要知道本拍选中的从设备和换主空拍
             "static int _wbic_si_{0};\n"
             "static uint8_t _wbic_gap_{0};\n"
-            // 上一拍是否写过非零的主设备侧输出：空闲拍靠它跳过重写
-            "static uint8_t _wbic_any_{0};\n"
+            // 上一拍真正驱动过的那一根从设备侧总线 / 主设备侧应答（-1 = 全 0）。
+            // 只有被选中的从设备（主设备）有输出，换选时把旧的清回 0
+            "static int _wbic_wsi_{0}, _wbic_mlast_{0};\n"
+            // 当前持有者的 stb 线指针：授权时算好，组合阶段每拍只解一次引用
+            "static uint8_t *_wbic_msp_{0};\n"
             "extern void dcs_wb_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\n",
             _id);
 }
 
 std::string WishboneInterconnect::genInitCode() const {
-    // 轮询从 0 开始；last = -1 表示还没有事务，首个事务不需要撤拍
+    // 轮询从 0 开始；grant/last 为 -1 表示还没有事务，首个事务不需要撤拍
     return std::format(
-            "    _wbic_grant_{0} = 0; _wbic_next_{0} = 0; _wbic_last_{0} = -1; _wbic_busy_{0} = 0; _wbic_wd_{0} = 0;\n"
-            "    _wbic_si_{0} = 0; _wbic_gap_{0} = 0; _wbic_any_{0} = 0;\n",
+            "    _wbic_grant_{0} = -1; _wbic_next_{0} = 0; _wbic_last_{0} = -1; _wbic_busy_{0} = 0; _wbic_wd_{0} = 0;\n"
+            "    _wbic_si_{0} = 0; _wbic_gap_{0} = 0; _wbic_wsi_{0} = -1; _wbic_mlast_{0} = -1; _wbic_msp_{0} = 0;\n",
             _id);
 }
 
@@ -124,31 +140,81 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     c += std::format("// WishboneInterconnect: {} slaves, {} masters\n", N, M);
     c += std::format("static void {}() {{\n", funcName_seq());
 
-    // 空闲快速路径：先只读各主设备的 stb/cyc 十根线。没有请求、上一拍也没有
-    // 持锁时，互连不可能产生任何新动作（输出在上一拍已经写成全 0），
-    // 剩下的 36 根输入和仲裁、看门狗都可以跳过
-    for (int mi = 0; mi < M; mi++) {
-        c += "    " + gen_read_wire(inputs()[mi * 6 + 4]->netId(), 1, 1, std::format("_m{}_stb", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[mi * 6 + 5]->netId(), 1, 1, std::format("_m{}_cyc", mi)) + "\n";
-    }
-    c += "    uint32_t _rq = 0;\n";
-    for (int mi = 0; mi < M; mi++)
-        c += std::format("    _rq |= (uint32_t)(_m{0}_stb & _m{0}_cyc) << {0};\n", mi);
-    c += std::format("    const uint8_t _wbic_was_busy = _wbic_busy_{};\n", _id);
-    c += "    if (!_rq && !_wbic_was_busy) return;\n";
-
-    // 有请求（或上一拍还持锁）才需要读地址、数据和从设备响应
-    for (int mi = 0; mi < M; mi++) {
-        int b = mi * 6;
-        c += "    " + gen_read_wire(inputs()[b + 0]->netId(), 32, 32, std::format("_m{}_adr", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[b + 1]->netId(), 32, 32, std::format("_m{}_dat", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[b + 2]->netId(), 1, 1, std::format("_m{}_we", mi)) + "\n";
-        c += "    " + gen_read_wire(inputs()[b + 3]->netId(), 4, 1, std::format("_m{}_sel", mi)) + "\n";
-    }
+    // 从设备侧总线的输出线按选中下标直接寻址。每拍重写 6×N 根线曾是本元件的
+    // 全部开销所在（perf 实测互连吃掉整机四成），现在只驱动被选中的那一个，
+    // 换选时把上一根的 6 根线清零即可
+    c += std::format("    static uint8_t _wbic_sink_{0}[16];\n", _id);
+    c += std::format("    static uint8_t *const _wbic_sn_{}[{}][6] = {{\n", _id, N);
     for (int i = 0; i < N; i++) {
-        c += "    " + gen_read_wire(inputs()[M * 6 + i * 2]->netId(), 32, 32, std::format("_s{}_dat", i)) + "\n";
-        c += "    " + gen_read_wire(inputs()[M * 6 + i * 2 + 1]->netId(), 1, 1, std::format("_s{}_ack", i)) + "\n";
+        c += "        {";
+        for (int k = 0; k < 6; k++) {
+            const int nid = outputs()[M * 2 + i * 6 + k]->netId();
+            c += std::format("{}{}", k ? ", " : "",
+                             nid >= 0 ? std::format("_w[{}]", nid) : "_wbic_sink_" + std::to_string(_id));
+        }
+        c += std::format("}}{}\n", i + 1 < N ? "," : "");
     }
+    c += "    };\n";
+    // 主设备 stb 线指针表：授权时取一次存进状态，组合阶段就不用每拍查表再解引用
+    c += std::format("    static uint8_t *const _wbic_mstab_{}[{}] = {{", _id, M);
+    for (int mi = 0; mi < M; mi++) {
+        const int nid = inputs()[mi * 6 + 4]->netId();
+        c += std::format("{}{}", mi ? ", " : "",
+                         nid >= 0 ? std::format("_w[{}]", nid) : "_wbic_sink_" + std::to_string(_id));
+    }
+    c += "};\n";
+
+    // 三段式：持锁 → 只读持有者两根线；空闲 → 扫描全部请求线；拿不到就返回
+    auto rd = [&](const std::string &var, int pin_idx, int pin_w, const char *ind) {
+        const int nid = inputs()[pin_idx]->netId();
+        if (nid < 0) {
+            c += std::format("{}{} = 0;\n", ind, var);
+            return;
+        }
+        c += std::format("{}dcs_memcpy(&{}, _w[{}], {});\n", ind, var, nid, byte_count(pin_w));
+        if (pin_w < 64)
+            c += std::format("{}{} &= {};\n", ind, var, gen_mask(pin_w));
+    };
+    c += "    int _grant = -1;\n";
+    c += std::format("    const uint8_t _wbic_was_busy = _wbic_busy_{};\n", _id);
+    c += "    uint32_t _adr = 0, _dat = 0; uint8_t _we = 0, _sel = 0, _stb = 0, _cyc = 0;\n";
+    // 持锁中只关心持有者还举不举 stb：其它主设备这一拍不可能拿到总线，
+    // 它们的请求线等撤锁那一拍再读
+    c += std::format("    if (_wbic_was_busy) {{\n"
+                     "        switch (_wbic_grant_{}) {{\n",
+                     _id);
+    for (int mi = 0; mi < M; mi++) {
+        c += std::format("        case {}:\n", mi);
+        rd("_stb", mi * 6 + 4, 1, "            ");
+        rd("_cyc", mi * 6 + 5, 1, "            ");
+        c += "            break;\n";
+    }
+    c += "        default: break;\n        }\n";
+    c += std::format("        if (_stb & _cyc) _grant = _wbic_grant_{};\n", _id);
+    // 撤锁时把 grant 也清成 -1：组合阶段靠它一眼判断"现在没有主设备在等应答"，
+    // 否则空闲拍还要去追一次主设备的 stb 指针才能知道没人等
+    c += std::format("        else {{ _wbic_busy_{0} = 0; _wbic_grant_{0} = -1; }}\n", _id);
+    c += "    }\n";
+
+    // 空闲/撤锁：这时才把所有主设备的请求线读一遍。
+    // 绝大多数拍没有任何主设备在请求，所以先每口只读 stb 一根窄线拼成请求位图，
+    // 谁的 stb 拉起来了才去读它那根 cyc 确认（Wishbone 规定没有 stb 就不算事务）。
+    // 空闲拍因此只花 M 次字节读，而不是原来的 2M 次
+    c += "    uint8_t _gap = 0;\n";
+    c += "    if (_grant < 0) {\n";
+    c += "    uint32_t _rq = 0;\n";
+    for (int mi = 0; mi < M; mi++) {
+        const int stb_nid = inputs()[mi * 6 + 4]->netId();
+        const int cyc_nid = inputs()[mi * 6 + 5]->netId();
+        if (stb_nid < 0)
+            continue; // 悬空的主设备口永远不请求
+        c += std::format("    const uint8_t _s{0} = _w[{1}][0] & 1;\n", mi, stb_nid);
+        c += std::format("    _rq |= (uint32_t) _s{0} << {0};\n", mi);
+        if (cyc_nid >= 0)
+            c += std::format("    if (_s{0} && !(_w[{1}][0] & 1)) _rq &= ~(1u << {0});\n", mi, cyc_nid);
+    }
+    // 没有请求、上一拍也没有持锁时，互连不可能产生任何新动作
+    c += "    if (!_rq && !_wbic_was_busy) return;\n";
 
     // 多主设备仲裁：拿到总线的就锁住，直到它撤销 stb 才放行；空闲时从上次授权的
     // 下一个主设备开始扫描。不能用固定优先——CPU 每个周期都有访存请求，固定优先会
@@ -156,16 +222,6 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     //
     // 请求汇总成一个位掩码，扫描只做位测试。TCC 不做常量折叠和分支合并，
     // 让每个候选各带一整套"比较 + 搬六个信号"会把生成代码的分支数和体积都翻 M 倍。
-    c += "    int _grant = -1;\n";
-    c += "    uint32_t _adr = 0, _dat = 0; uint8_t _we = 0, _sel = 0, _stb = 0, _cyc = 0;\n";
-    c += "    uint8_t _gap = 0;\n";
-    // 请求掩码、_wbic_was_busy 和空闲判定已经在函数开头做完
-    c += std::format("    if (_wbic_busy_{}) {{\n", _id);
-    c += std::format("        const int _bg = _wbic_grant_{};\n", _id);
-    c += "        if (_rq & (1u << _bg)) _grant = _bg;\n";
-    c += std::format("        else _wbic_busy_{} = 0;\n", _id);
-    c += "    }\n";
-    c += "    if (_grant < 0) {\n";
     c += std::format("        int _g = _wbic_next_{};\n", _id);
     c += std::format("        if (_g < 0 || _g >= {}) _g = 0;\n", M);
     for (int k = 0; k < M; k++) {
@@ -178,52 +234,74 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     // 换主时从设备看到的 stb 可能还是上一拍那一根 1，不撤一拍它就不会产生新的上升沿
     c += std::format("            _gap = (_wbic_last_{0} >= 0 && _wbic_last_{0} != _grant) ? 1 : 0;\n", _id);
     c += std::format("            _wbic_grant_{0} = _grant; _wbic_last_{0} = _grant; _wbic_busy_{0} = 1;\n", _id);
+    c += std::format("            _wbic_msp_{0} = _wbic_mstab_{0}[_grant];\n", _id);
     c += std::format("            _wbic_next_{0} = (_grant + 1 == {1}) ? 0 : _grant + 1;\n", _id, M);
     c += "        }\n";
     c += "    }\n";
-    // 选中后才搬总线信号，M 个 if 里只执行一个，不像扫描那样每个候选都带一整组赋值
-    for (int mi = 0; mi < M; mi++) {
-        c += std::format(
-                "    if (_grant == {0}) {{ _adr = _m{0}_adr; _dat = _m{0}_dat; _we = _m{0}_we; _sel = _m{0}_sel; "
-                "_stb = _m{0}_stb; _cyc = _m{0}_cyc; }}\n",
-                mi);
-    }
 
-    // 地址解码：段信息编译期已知，直接生成常量比较链
-    c += "    int _si = 0;\n";
-    for (int i = 1; i < N; i++) {
+    // 只搬拿到总线的那一个主设备的信号（新授权和保留授权都走这里）：其余主设备
+    // 这一拍没有使用权，它们的地址/数据线读进来也用不上
+    c += "    if (_grant >= 0) {\n";
+    c += "        switch (_grant) {\n";
+    for (int mi = 0; mi < M; mi++) {
+        c += std::format("        case {}:\n", mi);
+        rd("_adr", mi * 6 + 0, 32, "            ");
+        rd("_dat", mi * 6 + 1, 32, "            ");
+        rd("_we", mi * 6 + 2, 1, "            ");
+        rd("_sel", mi * 6 + 3, 4, "            ");
+        rd("_stb", mi * 6 + 4, 1, "            ");
+        rd("_cyc", mi * 6 + 5, 1, "            ");
+        c += "            break;\n";
+    }
+    c += "        }\n";
+    c += "    }\n";
+
+    // 地址解码：段信息编译期已知，直接生成常量比较链。按段序号排成 else-if，
+    // 第一个段（RAM，绝大多数访存都落在这里）只比一次，不用把后面 7 段全比一遍
+    c += "    int _si;\n";
+    for (int i = 0; i < N; i++) {
         const uint64_t lo = _segments[i].base;
         const uint64_t hi = (uint64_t) _segments[i].base + _segments[i].size;
-        c += std::format("    if (_adr >= 0x{:X}ULL && _adr < 0x{:X}ULL) _si = {};\n", lo, hi, i);
+        c += std::format("    {}if (_adr >= 0x{:X}ULL && _adr < 0x{:X}ULL) _si = {};\n", i ? "else " : "", lo, hi,
+                         i);
     }
+    c += "    else _si = 0;\n"; // 没有段命中时落到第一个从设备，与原先的默认行为一致
     // 组合阶段回读应答时用这份状态
     c += std::format("    _wbic_si_{} = _si; _wbic_gap_{} = _gap;\n", _id, _id);
 
-    // 主设备侧输出
-    c += "    const uint8_t _wbic_out = (uint8_t)(_wbic_was_busy | (_grant >= 0) | (_rq != 0));\n";
-    c += "    if (_wbic_out) {\n";
-    // 主设备侧应答/读数据不在这里写：它们由组合阶段从被选中从设备的应答直接多路选择
-    // 过来（见 genFuncDef_comb），比放进时序阶段少一拍
-
-    // 从设备侧输出：只有被选中的从设备收到总线信号
-    for (int i = 0; i < N; i++) {
-        const int base = M * 2 + i * 6;
-        c += std::format(
-                "    uint32_t _so{0}_adr = 0, _so{0}_dat = 0; uint8_t _so{0}_we = 0, _so{0}_sel = 0, "
-                "_so{0}_stb = 0, _so{0}_cyc = 0;\n",
-                i);
-        c += std::format(
-                "    if (_si == {0} && _grant >= 0) {{ _so{0}_adr = _adr; _so{0}_dat = _dat; _so{0}_we = _we; "
-                "_so{0}_sel = _sel; _so{0}_stb = _stb && !_gap; _so{0}_cyc = _cyc && !_gap; }}\n",
-                i);
-        c += "    " + genOutputWrite(base + 0, std::format("_so{}_adr", i), 32) + "\n";
-        c += "    " + genOutputWrite(base + 1, std::format("_so{}_dat", i), 32) + "\n";
-        c += "    " + genOutputWrite(base + 2, std::format("_so{}_we", i), 1) + "\n";
-        c += "    " + genOutputWrite(base + 3, std::format("_so{}_sel", i), 4) + "\n";
-        c += "    " + genOutputWrite(base + 4, std::format("_so{}_stb", i), 1) + "\n";
-        c += "    " + genOutputWrite(base + 5, std::format("_so{}_cyc", i), 1) + "\n";
+    // 从设备侧输出：本拍拿到的总线只送给被选中的从设备，其余从设备保持 0
+    c += "    const uint8_t _ss = (uint8_t)(_stb && !_gap), _sc = (uint8_t)(_cyc && !_gap);\n";
+    c += "    if (_grant >= 0) {\n";
+    c += std::format("        uint8_t *const *_sn = _wbic_sn_{}[_si];\n", _id);
+    for (int k = 0; k < 6; k++) {
+        static const char *vals[6] = {"_adr", "_dat", "_we", "_sel", "_ss", "_sc"};
+        const int w = outputs()[M * 2 + k]->bit_width();
+        const int b = byte_count(w);
+        // 按引脚宽度写，别改成 8 字节整写：下游按字节读同一根线，宽存储等不到存储转发
+        c += std::format("        dcs_memcpy(_sn[{}], &{}, {});\n", k, vals[k], b);
+        if (b < 8)
+            c += std::format("        dcs_memset(_sn[{}] + {}, 0, {});\n", k, b, 8 - b);
     }
-    c += "    }\n";
+    // 换到别的从设备：上一根必须清零，否则它会一直看到上次的 stb。
+    // 每条线只清自己写过的字节数——从设备按引脚宽度读线网，多清没用
+    auto clear_body = [&](const char *ind) {
+        std::string s;
+        for (int k = 0; k < 6; k++)
+            s += std::format("{}dcs_memset(_old[{}], 0, {});\n", ind, k,
+                             byte_count(outputs()[M * 2 + k]->bit_width()));
+        return s;
+    };
+    c += std::format("        if (_wbic_wsi_{0} != _si) {{\n"
+                     "            if (_wbic_wsi_{0} >= 0) {{\n"
+                     "                uint8_t *const *_old = _wbic_sn_{0}[_wbic_wsi_{0}];\n",
+                     _id);
+    c += clear_body("                ");
+    c += std::format("            }}\n            _wbic_wsi_{} = _si;\n        }}\n", _id);
+    c += std::format("    }} else if (_wbic_wsi_{0} >= 0) {{\n"
+                     "        uint8_t *const *_old = _wbic_sn_{0}[_wbic_wsi_{0}];\n",
+                     _id);
+    c += clear_body("        ");
+    c += std::format("        _wbic_wsi_{} = -1;\n    }}\n", _id);
     // 主设备拿了总线却一直不撤销：说明被选中的从设备没回 ack，把地址和持有者打出来
     c += std::format(
             "    if (_wbic_busy_{0}) {{\n"
@@ -242,49 +320,91 @@ std::string WishboneInterconnect::genFuncDef_comb() const {
     std::string c;
     c += std::format("// WishboneInterconnect comb: {} 个从设备的应答多路选择\n", N);
     c += std::format("static void {}() {{\n", funcName_comb());
-    // 只读被选中从设备的应答和读数据：生成期展开成 switch，不做 2N 次无条件读
-    c += "    uint32_t _sd = 0; uint8_t _sa = 0;\n";
-    c += std::format("    switch (_wbic_si_{}) {{\n", _id);
+    // 主设备侧的 stb/dat/ack 线按持有者下标直接寻址，理由同 seq：
+    // 应答只会送给当前持锁的那一个主设备
+    c += std::format("    static uint8_t _wbic_sink_{0}[16];\n", _id);
+    c += std::format("    static uint8_t *const _wbic_mn_{}[{}][3] = {{\n", _id, M);
+    for (int mi = 0; mi < M; mi++) {
+        const int stb_nid = inputs()[mi * 6 + 4]->netId();
+        const int dat_nid = outputs()[mi * 2]->netId();
+        const int ack_nid = outputs()[mi * 2 + 1]->netId();
+        auto addr = [&](int nid) {
+            return nid >= 0 ? std::format("_w[{}]", nid) : "_wbic_sink_" + std::to_string(_id);
+        };
+        c += std::format("        {{{}, {}, {}}}{}\n", addr(stb_nid), addr(dat_nid), addr(ack_nid),
+                         mi + 1 < M ? "," : "");
+    }
+    c += "    };\n";
+    // 主设备这一拍还在等应答（stb 保持）才去读从设备的应答和读数据；空闲拍只碰
+    // 两个状态字就退出去。stb 一撤立刻把 ack 归零，免得下一笔事务把上一笔的
+    // 残留 ack 当成自己的
+    c += std::format(
+            "    const int _g = _wbic_grant_{};\n"
+            "    if (_g >= 0 && !_wbic_gap_{} && (_wbic_msp_{}[0] & 1)) {{\n"
+            "        uint8_t *const *_mo = _wbic_mn_{}[_g];\n"
+            "        uint32_t _sd = 0; uint8_t _sa = 0;\n",
+            _id, _id, _id, _id);
+    c += std::format("        switch (_wbic_si_{}) {{\n", _id);
     for (int i = 0; i < N; i++) {
         const int dat_nid = inputs()[M * 6 + i * 2]->netId();
         const int ack_nid = inputs()[M * 6 + i * 2 + 1]->netId();
-        c += std::format("    case {}:\n", i);
+        c += std::format("        case {}:\n", i);
         if (dat_nid >= 0)
-            c += std::format("        dcs_memcpy(&_sd, _w[{}], 4);\n", dat_nid);
+            c += std::format("            dcs_memcpy(&_sd, _w[{}], 4);\n", dat_nid);
         if (ack_nid >= 0)
-            c += std::format("        _sa = _w[{}][0] & 1;\n", ack_nid);
-        c += "        break;\n";
+            c += std::format("            _sa = _w[{}][0] & 1;\n", ack_nid);
+        c += "            break;\n";
     }
-    c += "    default: break;\n";
-    c += "    }\n";
-    // 主设备这一拍还在等应答（stb 保持）才把 ack/dat 给它；stb 一撤立刻归零，
-    // 免得下一笔事务把上一笔的残留 ack 当成自己的。
-    // 空闲拍不重写这 2M 根线：只有真有主设备在等应答、或者上一拍写过非零值时
-    // 才刷新（撤销那一拍必须写 0，否则 ack 会一直挂着）
-    c += std::format("    const int _g = _wbic_grant_{};\n    const uint8_t _gap = _wbic_gap_{};\n", _id, _id);
-    for (int mi = 0; mi < M; mi++) {
-        const int stb_nid = inputs()[mi * 6 + 4]->netId();
-        c += std::format("    uint8_t _ms{0} = ", mi);
-        if (stb_nid >= 0)
-            c += std::format("_w[{}][0] & 1", stb_nid);
-        else
-            c += "0";
-        c += ";\n";
-    }
-    c += std::format("    const uint8_t _outg = (uint8_t)((_g >= 0) | _wbic_any_{});\n", _id);
-    c += "    if (_outg) {\n";
-    c += std::format("    _wbic_any_{} = (uint8_t)(_g >= 0);\n", _id);
-    for (int mi = 0; mi < M; mi++) {
-        c += std::format(
-                "    const uint8_t _sel{0} = (uint8_t)(_g == {0} && !_gap && _ms{0});\n"
-                "    uint32_t _md{0} = _sel{0} ? _sd : 0; uint8_t _ma{0} = _sel{0} ? _sa : 0;\n",
-                mi);
-        c += "    " + genOutputWrite(mi * 2, std::format("_md{}", mi), 32) + "\n";
-        c += "    " + genOutputWrite(mi * 2 + 1, std::format("_ma{}", mi), 1) + "\n";
-    }
-    c += "    }\n";
+    c += "        default: break;\n";
+    c += "        }\n";
+    c += std::format(
+            "        dcs_memcpy(_mo[1], &_sd, 4);\n"
+            "        dcs_memset(_mo[1] + 4, 0, 4);\n"
+            "        dcs_memcpy(_mo[2], &_sa, 1);\n"
+            "        dcs_memset(_mo[2] + 1, 0, 7);\n"
+            "        if (_wbic_mlast_{} != _g) {{\n"
+            "            if (_wbic_mlast_{} >= 0) {{\n"
+            "                uint8_t *const *_old = _wbic_mn_{}[_wbic_mlast_{}];\n"
+            "                dcs_memset(_old[1], 0, 4);\n"
+            "                dcs_memset(_old[2], 0, 1);\n"
+            "            }}\n"
+            "            _wbic_mlast_{} = _g;\n"
+            "        }}\n"
+            "    }} else if (_wbic_mlast_{} >= 0) {{\n"
+            "        uint8_t *const *_old = _wbic_mn_{}[_wbic_mlast_{}];\n"
+            "        dcs_memset(_old[1], 0, 4);\n"
+            "        dcs_memset(_old[2], 0, 1);\n"
+            "        _wbic_mlast_{} = -1;\n"
+            "    }}\n",
+            _id, _id, _id, _id, _id, _id, _id, _id, _id, _id, _id);
     c += "}\n";
     return c;
+}
+
+
+std::string WishboneInterconnect::checkTopology(const Circuit &circuit) const {
+    // 段表里留了一段地址、后面却没接设备：主设备访问到这段会一直等 ack，
+    // 表现就是整机在原地空转，跑到一半才发现。接错线不算电路非法，只告警
+    std::set<int> consumed;
+    for (const auto &c: circuit.components()) {
+        if (c.get() == this)
+            continue;
+        for (const auto &p: c->inputs())
+            if (p->net())
+                consumed.insert(p->net()->id());
+    }
+    std::string msg;
+    for (int i = 0; i < numSlaves(); i++) {
+        // 从设备侧输出的顺序：adr, dat, we, sel, stb, cyc
+        const Net *stb = outputs()[(size_t) (_masters * 2 + i * 6 + 4)]->net();
+        if (!stb || consumed.contains(stb->id()))
+            continue;
+        if (!msg.empty())
+            msg += "；";
+        msg += std::format("从设备端口 s{}（0x{:X} 起 0x{:X} 字节）没有接到任何设备，访问这段地址会永远等不到 ack", i,
+                           _segments[i].base, _segments[i].size);
+    }
+    return msg;
 }
 
 std::unique_ptr<Component> WishboneInterconnect::clone(const std::string &new_name) const {

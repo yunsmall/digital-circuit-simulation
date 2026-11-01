@@ -126,6 +126,13 @@ public:
         return false;
     }
 
+    // 接线结构检查：返回空串表示通过，否则是给用户看的错误说明。
+    // 默认什么都不查；需要"端口没接设备就是死路"这类判断的元件（比如互连）自己重写。
+    // 在 Circuit::check() 里、展开复合元件之后调用，此时连接关系已经定型
+    [[nodiscard]] virtual std::string checkTopology(const Circuit & /*circuit*/) const {
+        return "";
+    }
+
     // 电路内唯一 ID（由 Circuit::addComponent 分配）
     [[nodiscard]] int id() const {
         return _id;

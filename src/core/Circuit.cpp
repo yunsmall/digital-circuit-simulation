@@ -6,14 +6,18 @@
 #include "dcs/util/ExePath.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <iostream>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 // JIT 头文件搜索路径（静态成员）
 std::string dsc::Circuit::_jit_include_dir;
@@ -350,6 +354,14 @@ CircuitError Circuit::check() {
         }
     }
 
+    // 元件自己的接线检查：比如互连的某个从设备端口后面根本没接设备，访问那段地址
+    // 只会让主设备永远等 ack。这属于接错线，不是电路非法，所以只告警、不拦编译
+    for (auto &comp: _components) {
+        std::string msg = comp->checkTopology(*this);
+        if (!msg.empty())
+            std::cerr << std::format("[dcs] 警告: 元件 '{}': {}\n", comp->name(), msg);
+    }
+
     int N = (int) _nets.size();
     std::vector<std::vector<int>> adj(N);
     for (auto &comp: _components) {
@@ -493,6 +505,11 @@ CircuitError Circuit::compile() {
 
     std::string c_code = generateC();
 
+    // 调试用：把生成的 C 落到文件里，方便对照反汇编排查性能问题
+    if (const char *dump = std::getenv("DCS_DUMP_C")) {
+        std::ofstream(dump) << c_code;
+    }
+
     // shim 路径：优先使用 setJitIncludeDir() 设置的路径，否则按构建目录布局自动检测
     auto shim_path = []() -> std::string {
         namespace fs = std::filesystem;
@@ -514,6 +531,17 @@ CircuitError Circuit::compile() {
         for (auto &[name, ptr]: comp->extraJitSymbols())
             symbols.emplace_back(name, ptr);
 
+    // JIT 的符号表按名字建索引，同名只会保留最后注册的那一个。两个元件把同一个名字
+    // 注册成不同地址时，生成代码会调到另一家的回调、还拿对方的状态指针来解释，
+    // 表现是宿主进程莫名崩溃。同址重复是正常的（多个元件导出同一个全局函数）
+    std::unordered_map<std::string, void *> symbol_owner;
+    for (auto &[name, ptr]: symbols) {
+        auto [it, inserted] = symbol_owner.emplace(name, ptr);
+        if (!inserted && it->second != ptr)
+            return {ErrorCode::JIT_SYMBOL_FAILED, -1, {},
+                    std::format("JIT 符号名冲突: '{}' 被注册成不同地址", name)};
+    }
+
     auto res = _backend.compile(c_code, shim_path, this, symbols);
     if (res.code != ErrorCode::OK)
         return {res.code, -1, {}, res.message};
@@ -532,6 +560,7 @@ CircuitError Circuit::compile() {
     _compiled = true;
     return {ErrorCode::OK};
 }
+
 
 // ============================================================
 // 仿真运行

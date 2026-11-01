@@ -371,10 +371,17 @@ private:
         bool amo_hi_write;    // 当前这笔写是 .D 的高半
         uint8_t bus_fp; // 访存结果写浮点寄存器（FLW）而不是整数寄存器
         // 最近 64 条已执行指令的 PC（环形）。内核查不出问题时，
-        // 把这段打出来就能看出它到底在哪些函数之间打转
+        // 把这段打出来就能看出它到底在哪些函数之间打转。
+        // 只在 PC 变化时记：连续相同的 PC 看不出任何东西，还白白每拍写内存
         static constexpr int PC_TRACE = 64;
         uint32_t pc_trace[PC_TRACE];
         uint64_t pc_trace_idx;
+        uint64_t pc_trace_last;
+        // 这一拍要摆到总线上的三组值。C++ 侧只写这三个字段，由 JIT 存根按固定偏移
+        // 取出来用立即数地址写线网：省掉每根输出线一次指针解引用，也让存根能就着
+        // 寄存器比较"和上一拍一样就整组跳过"
+        uint32_t out_adr, out_wdat;
+        uint8_t out_flags; // bit0 we，bit1..4 sel，bit5 stb，bit6 cyc，bit7 halted
 
         bool wfi_halted; // 已执行 WFI，等待中断唤醒
         // SBI 关机（SHUTDOWN/SRST）后必须永久停机：内核关机后若被中断唤醒会
@@ -423,7 +430,7 @@ private:
     CpuState _state;
     bool _prepared = false;
 
-    static void cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs)
+    static void cpuTick(void *state_ptr, const uint8_t *const *inputs)
             DCS_NO_STACK_PROTECTOR;
     static void cpuReset(void *state_ptr);
     static DCS_FORCE_INLINE void execute(CpuState &s, uint32_t inst,

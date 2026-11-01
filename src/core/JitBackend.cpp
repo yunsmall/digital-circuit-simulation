@@ -231,11 +231,15 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     invoc.getLangOpts().CPlusPlus = false;
     invoc.getLangOpts().Bool = true;
     invoc.getLangOpts().Freestanding = true; // 不依赖标准库
-    // 只开后端 codegen 优化，IR 层的精简 pass 由 runJitPasses 按 DCS_JIT_PASS_SET
-    // 选择。生成代码里的元件函数没有任何强制内联属性，交给 LLVM 成本模型决定
-    // 内联哪些：小的包装会展开，大的元件保持独立函数，不会把 circuit_tick 撑大
+    // 前端会按 O2 跑完整的 IR 优化流水线（含内联），生成的元件函数绝大多数被卷进
+    // circuit_tick；runJitPasses 再按 DCS_JIT_PASS_SET 补一轮。
+    // 用 DisableLLVMPasses 关掉前端优化能让元件函数保持独立，但整机慢十倍，别这么干
     invoc.getCodeGenOpts().OptimizationLevel = 2;
     invoc.getCodeGenOpts().RelocationModel = llvm::Reloc::PIC_;
+    // 调试用：带行号信息生成 IR，配合 DCS_JIT_IR_DUMP 能把 perf 采到的地址
+    // 还原成生成代码里的元件
+    if (std::getenv("DCS_JIT_DEBUG"))
+        invoc.getCodeGenOpts().setDebugInfo(llvm::codegenoptions::FullDebugInfo);
 
     if (!shim_path.empty()) {
         auto &hdr = invoc.getHeaderSearchOpts();
@@ -253,6 +257,15 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     }
     auto module = action->takeModule();
     runJitPasses(*module);
+
+    // 调试用：把 JIT 实际拿去编译的 IR 落到文件里。JIT 出来的机器码没有符号表，
+    // 拿这份 IR 用同样的参数离线再编一遍就能对上函数边界，perf 采样才好归因
+    if (const char *ir_path = std::getenv("DCS_JIT_IR_DUMP")) {
+        std::error_code ec;
+        llvm::raw_fd_ostream out(ir_path, ec);
+        if (!ec)
+            module->print(out, nullptr);
+    }
 
     auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
     if (!jtmb) {

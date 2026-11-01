@@ -11,6 +11,16 @@
 
 namespace dsc {
 
+// 指令派发 lambda 的强制内联属性。它每个执行拍都要走一遍，且整段都在操作 cpuTick
+// 的局部变量，只有内联进 cpuTick 才是零开销的；一旦被编成独立函数，参数和活跃变量
+// 只能走栈帧/寄存器保存，白花时间（历史实测的性能对比就是按内联版做的）。
+// 只对 Clang 打开：MSVC 的 inliner 自己会判断，GCC 不支持 lambda 声明符上的这个属性
+#if defined(__clang__)
+#define DCS_LAMBDA_INLINE __attribute__((always_inline))
+#else
+#define DCS_LAMBDA_INLINE
+#endif
+
 // satp 的 mode 域位置随 XLEN 变：RV32 在 bit31、Rv64 在 bit63:60。
 // 分页是否开启要看整个 mode 域，不能只测一个位——RV64 下 bit31 落在 ASID 里
 template<int XLEN> requires SupportedXlen<XLEN>
@@ -40,13 +50,18 @@ constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, 
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
-    addInput("clk", 1); addInput("rst", 1); addInput("wb_dat_i", 32);
-    addInput("wb_ack_i", 1); addInput("irq", 1);
+    addInput("clk", 1); addInput("rst", 1);
+    addInput("wb_dat_i", 32);
+    addInput("wb_ack_i", 1);
+    addInput("irq", 1);
     addInput("mti", 1); addInput("msi", 1);
     addInput("seip", 1); // S 级外部中断，通常接 PLIC 的 S-mode context
-    addOutput("wb_adr_o", 32, false, true); addOutput("wb_dat_o", 32, false, true);
-    addOutput("wb_we_o", 1, false, true); addOutput("wb_sel_o", 4, false, true);
-    addOutput("wb_stb_o", 1, false, true); addOutput("wb_cyc_o", 1, false, true);
+    addOutput("wb_adr_o", 32, false, true);
+    addOutput("wb_dat_o", 32, false, true);
+    addOutput("wb_we_o", 1, false, true);
+    addOutput("wb_sel_o", 4, false, true);
+    addOutput("wb_stb_o", 1, false, true);
+    addOutput("wb_cyc_o", 1, false, true);
     addOutput("halted", 1, false, true);
     std::memset(&_state, 0, sizeof(_state));
     _state.phase = Phase::FETCH;
@@ -73,15 +88,17 @@ std::vector<Component::JitSymbol> RiscVCPU<XLEN>::extraJitSymbols() const {
 
 template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genStateDecl() const {
-    return std::format("static void *_cpu_state_{0} = (void *)0x{1:X}ULL;\n",
+    // _cpu_po_*：JIT 存根里"上次写出去的总线值"，和状态里的 out_* 比较后决定要不要重写线网
+    return std::format("static void *_cpu_state_{0} = (void *)0x{1:X}ULL;\n"
+                       "static uint32_t _cpu_po_a_{0}, _cpu_po_d_{0}; static uint8_t _cpu_po_f_{0}, _cpu_po_v_{0};\n",
                        _id, reinterpret_cast<uintptr_t>(&_state));
 }
 template<int XLEN> requires SupportedXlen<XLEN>
-std::string RiscVCPU<XLEN>::genInitCode() const  { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0});\n", _id, (XLEN == 32) ? "_32" : "_64"); }
+std::string RiscVCPU<XLEN>::genInitCode() const  { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0}); _cpu_po_v_{0} = 0;\n", _id, (XLEN == 32) ? "_32" : "_64"); }
 template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genDeinitCode() const { return ""; }
 template<int XLEN> requires SupportedXlen<XLEN>
-std::string RiscVCPU<XLEN>::genResetCode() const { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0});\n", _id, (XLEN == 32) ? "_32" : "_64"); }
+std::string RiscVCPU<XLEN>::genResetCode() const { return std::format("    _dcs_cpu_reset{1}(_cpu_state_{0}); _cpu_po_v_{0} = 0;\n", _id, (XLEN == 32) ? "_32" : "_64"); }
 
 template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
@@ -89,14 +106,38 @@ std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     std::string code;
     code += std::format("// RISC-V CPU: {}\n", name());
     const std::string sfx = (XLEN == 32) ? "_32" : "_64";
-    code += "extern void _dcs_cpu_tick" + sfx + "(void *, const uint8_t *const *, uint8_t *const *);\n";
+    code += "extern void _dcs_cpu_tick" + sfx + "(void *, const uint8_t *const *);\n";
     code += "extern void _dcs_cpu_reset" + sfx + "(void *);\n\n";
     code += std::format("static void {}() {{\n", funcName_seq());
     code += genInputPtrArray("_in");
-    // 输出直接写线网：packOut 每拍写满全部输出（写 4 字节或 1 字节），
-    // 槽位高位靠 init/reset 的清零保持为 0，省掉原来经 _obuf 的一轮中转拷贝
-    code += genOutputWirePtrArray("_op");
-    code += std::format("    _dcs_cpu_tick{1}(_cpu_state_{0}, _in, _op);\n", id, sfx);
+    // 总线输出不经过 C++ 回调：cpuTick 只把 adr/dat/标志位写进状态，这里按生成期
+    // 算好的偏移取出来，用立即数地址写线网。省掉每根输出线一次指针解引用，
+    // 而且值没变时可以整组跳过——等总线的相位里绝大多数拍都是不变的
+    code += std::format("    _dcs_cpu_tick{1}(_cpu_state_{0}, _in);\n", id, sfx);
+    auto nid = [&](int out_idx) {
+        const int n = outputs()[out_idx]->netId();
+        return n >= 0 ? std::format("_w[{}]", n) : std::format("_cpu_osink_{}", id);
+    };
+    code += std::format("    static uint8_t _cpu_osink_{}[16];\n", id);
+    code += std::format("    const uint32_t _ca = *(const uint32_t *) ((const char *) _cpu_state_{0} + {1});\n",
+                        id, offsetof(CpuState, out_adr));
+    code += std::format("    const uint32_t _cd = *(const uint32_t *) ((const char *) _cpu_state_{0} + {1});\n",
+                        id, offsetof(CpuState, out_wdat));
+    code += std::format("    const uint8_t _cf = *(const uint8_t *) ((const char *) _cpu_state_{0} + {1});\n",
+                        id, offsetof(CpuState, out_flags));
+    code += std::format(
+            "    if (!_cpu_po_v_{0} || _ca != _cpu_po_a_{0} || _cd != _cpu_po_d_{0} || _cf != _cpu_po_f_{0}) {{\n"
+            "        _cpu_po_v_{0} = 1; _cpu_po_a_{0} = _ca; _cpu_po_d_{0} = _cd; _cpu_po_f_{0} = _cf;\n",
+            id);
+    code += std::format("        dcs_memcpy({}, &_ca, 4);\n        dcs_memset({} + 4, 0, 4);\n", nid(O_ADR), nid(O_ADR));
+    code += std::format("        dcs_memcpy({}, &_cd, 4);\n        dcs_memset({} + 4, 0, 4);\n", nid(O_WDAT),
+                        nid(O_WDAT));
+    code += std::format("        {}[0] = (uint8_t) (_cf & 1u);\n", nid(O_WE));
+    code += std::format("        {}[0] = (uint8_t) ((_cf >> 1) & 0x0Fu);\n", nid(O_SEL));
+    code += std::format("        {}[0] = (uint8_t) ((_cf >> 5) & 1u);\n", nid(O_STB));
+    code += std::format("        {}[0] = (uint8_t) ((_cf >> 6) & 1u);\n", nid(O_CYC));
+    code += std::format("        {}[0] = (uint8_t) ((_cf >> 7) & 1u);\n", nid(O_HALT));
+    code += "    }\n";
     code += "}\n";
     return code;
 }
@@ -120,25 +161,25 @@ struct CpuIn {
         seip=(in[I_SEIP][0]&1)!=0;
     }
 };
-// 每 tick 都要调用，且参数与写目标是固定的：必须内联。
-// 不内联时它单独占掉约 12% 的仿真时间（调用约定 + 8 个参数传递）
-inline void packOut(uint8_t *const *out, uint32_t adr, uint32_t wdat, bool we, uint8_t sel,
-                    bool stb, bool cyc, bool halted) {
-    std::memcpy(out[O_ADR],&adr,4); std::memcpy(out[O_WDAT],&wdat,4);
-    out[O_WE][0]=we?1:0; out[O_SEL][0]=sel;
-    out[O_STB][0]=stb?1:0; out[O_CYC][0]=cyc?1:0;
-    out[O_HALT][0]=halted?1:0;
+// 每 tick 都要调用。写的是状态里的三个字段，线网由 JIT 存根按固定偏移取出来写，
+// 这里不再逐根解引用输出线指针
+inline void packOut(uint32_t &o_adr, uint32_t &o_wdat, uint8_t &o_flags, uint32_t adr, uint32_t wdat, bool we,
+                    uint8_t sel, bool stb, bool cyc, bool halted) {
+    o_adr = adr;
+    o_wdat = wdat;
+    o_flags = (uint8_t) ((uint32_t) we | ((uint32_t) sel << 1) | ((uint32_t) stb << 5) | ((uint32_t) cyc << 6) |
+                         ((uint32_t) halted << 7));
 }
 }
 
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
-void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint8_t *const *outputs) {
+void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
     auto &s = *static_cast<CpuState*>(state_ptr);
     // rst / clk 直接读线网：下降沿不需要构造整个输入结构，也就省掉那 6 次读
     if ((inputs[I_RST][0] & 1) != 0) [[unlikely]] {
         cpuReset(state_ptr);
-        packOut(outputs,0,0,false,0,false,false,false);
+        packOut(s.out_adr,s.out_wdat,s.out_flags,0,0,false,0,false,false,false);
         return;
     }
     const bool clk_now = (inputs[I_CLK][0] & 1) != 0;
@@ -177,20 +218,34 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
         case Phase::AMO_WRITE: adr=s.bus_adr; wdat=s.bus_wdat; we=true; sel=0x0F; stb=cyc=true; break;
         default: break;
         }
-        packOut(outputs,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
+        packOut(s.out_adr,s.out_wdat,s.out_flags,adr,wdat,we,sel,stb,cyc,s.wfi_halted);
         return;
     }
 
     CpuIn in(inputs);
-    s.pc_trace[s.pc_trace_idx & (CpuState::PC_TRACE - 1)] = (uint32_t) s.pc;
-    s.pc_trace_idx++;
+    // PC 变了才记一条：连续重复的 PC 对"卡住不动"的诊断没有任何帮助，
+    // 而按拍记录等于每拍都往环形缓冲写一次内存
+    if (s.pc != s.pc_trace_last) {
+        s.pc_trace_last = s.pc;
+        s.pc_trace[s.pc_trace_idx & (CpuState::PC_TRACE - 1)] = (uint32_t) s.pc;
+        s.pc_trace_idx++;
+    }
     s.cycles++; // cycle 按时钟上升沿计数，与真实硬件的 mcycle 一致
     // 外部中断线在上升沿反映到 mip，否则停机期间收不到中断。逐位 set/clear 会变成
     // 四轮 load-modify-store，而这几根线绝大多数拍都是低电平，合并成一次读改写
     const uint32_t ext_irq = (in.irq ? RV::IRQ_MEI : 0u) | (in.mti ? RV::IRQ_MTI : 0u)
                            | (in.msi ? RV::IRQ_MSI : 0u) | (in.seip ? RV::IRQ_SEI : 0u);
     constexpr uint32_t EXT_MASK = RV::IRQ_MEI | RV::IRQ_MTI | RV::IRQ_MSI | RV::IRQ_SEI;
-    s.mip = (s.mip & ~EXT_MASK) | ext_irq;
+    // 等 ack 的拍：按 Wishbone 规约，主设备在 ack 到来前保持 stb/cyc 有效、不改任何
+    // 总线信号，这一段里唯一会变的就是 mcycle（上面已经加过了）。ack 没来、外部中断
+    // 线没变、定时器 STIP 也没在跟踪时，本拍不可能产生任何其他状态变化，
+    // 直接返回——省掉中断合并、相位 switch 和 packOut
+    if (s.phase == Phase::WAIT_MEM && s.acc_stage <= 1 && !in.ack && !ext_irq && !(s.mip & EXT_MASK) &&
+        !(s.mideleg & RV::IRQ_STI) && !s.wfi_halted)
+        return;
+    // 没有外部中断、mip 里这几位的旧值也是 0 时，这次读改写什么都不改，直接跳过
+    if (ext_irq || (s.mip & EXT_MASK))
+        s.mip = (s.mip & ~EXT_MASK) | ext_irq;
     // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
     // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起。
     // 除了 CLINT 的 MTI，SBI set_timer 到期的那个时刻也要并进 STIP——
@@ -210,8 +265,14 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     XLen wb_adr=0; uint32_t wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0;
 
     // 取指命中缓存时本拍就能执行，不必再等一个 EXECUTE 相位：取指和译码结果
-    // 都已经有了，多等一拍纯粹是让流水各走一步，白耗一个时钟周期
-    auto do_execute = [&]() {
+    // 都已经有了，多等一拍纯粹是让流水各走一步，白耗一个时钟周期。
+    //
+    // 必须保持强制内联（DCS_LAMBDA_INLINE），别改成普通 lambda 或拆成独立函数：
+    // 这条路径每个执行拍都走一次，而它引用的全是 cpuTick 的局部状态（s、wb_*、
+    // in、各种中间量）。单独成函数时参数传不进去，只能靠栈帧/寄存器保存恢复，
+    // 实测把 lambda 内联进 cpuTick 的那一版更快——它引用局部变量的方式就是为
+    // 内联设计的。编译器自己未必会内联（函数体足够大），所以要显式挂属性
+    auto do_execute = [&]() DCS_LAMBDA_INLINE {
         XLen trap_cause = 0;
         // 中断在指令边界采样
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
@@ -757,7 +818,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs, uint
     case Phase::HALTED: break;
     }
     s.regs[0]=0;
-    packOut(outputs, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);
+    packOut(s.out_adr, s.out_wdat, s.out_flags, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);
 }
 
 template<int XLEN> requires SupportedXlen<XLEN>

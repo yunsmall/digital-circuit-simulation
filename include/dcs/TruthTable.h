@@ -3,6 +3,7 @@
 // 只处理单 bit 输入、单 bit 输出的组合电路。输入网必须是外部输入（没被输出引脚
 // 驱动），否则写进去的值会在 tick 时被电路自己覆盖。
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 

@@ -56,6 +56,7 @@ public:
     std::string genResetCode() const override { return ""; }
     std::string genDeinitCode() const override { return ""; }
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
+    [[nodiscard]] std::string checkTopology(const Circuit &circuit) const override;
 
 private:
     std::vector<Segment> _segments;

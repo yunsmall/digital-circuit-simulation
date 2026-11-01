@@ -293,6 +293,7 @@ if(GTest_FOUND)
     add_dcs_test(test_mpram       tests/test_mpram/*.cpp)
     add_dcs_test(test_fifo        tests/test_fifo/*.cpp)
     add_dcs_test(test_riscv       tests/test_riscv/*.cpp)
+    add_dcs_test(test_soc         tests/test_soc/*.cpp)
     add_dcs_test(test_riscv64     tests/test_riscv64/*.cpp)
     set_tests_properties(test_riscv64 PROPERTIES ENVIRONMENT
         "DCS_RISCV64_ELF_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/riscv-official/out64")

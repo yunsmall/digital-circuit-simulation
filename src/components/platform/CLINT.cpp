@@ -117,8 +117,10 @@ std::string CLINT::genFuncDef_seq() const {
             "            uint64_t _lo = _clint_mtimecmp_{0} & 0xFFFFFFFFULL;\n", _id);
     for (int b = 0; b < 4; b++) {
         const uint64_t mask = ~(0xFFULL << (8 * b));
-        c += std::format("            if (_sel & {}) _lo = (_lo & 0x{:016X}ULL) | ((_wdat & 0x{:08X}u) << {});\n",
-                         1 << b, mask, (0xFFu << (8 * b)), 8 * b);
+        const uint32_t lane = 0xFFu << (8 * b);
+        // 取出的是"已经就位"的那个字节，不能再左移一次
+        c += std::format("            if (_sel & {}) _lo = (_lo & 0x{:016X}ULL) | (uint64_t)(_wdat & 0x{:08X}u);\n",
+                         1 << b, mask, lane);
     }
     c += std::format(
             "            _clint_mtimecmp_{0} = (_clint_mtimecmp_{0} & 0xFFFFFFFF00000000ULL) | (_lo & 0xFFFFFFFFULL);\n"
@@ -128,8 +130,9 @@ std::string CLINT::genFuncDef_seq() const {
             "            uint64_t _hi = _clint_mtimecmp_{0} & 0xFFFFFFFF00000000ULL;\n", _id);
     for (int b = 0; b < 4; b++) {
         const uint64_t mask = ~(0xFFULL << (32 + 8 * b));
-        c += std::format("            if (_sel & {}) _hi = (_hi & 0x{:016X}ULL) | ((uint64_t)(_wdat & 0x{:08X}u) << {});\n",
-                         1 << b, mask, (0xFFu << (8 * b)), 32 + 8 * b);
+        const uint32_t lane = 0xFFu << (8 * b);
+        c += std::format("            if (_sel & {}) _hi = (_hi & 0x{:016X}ULL) | ((uint64_t)(_wdat & 0x{:08X}u) << 32);\n",
+                         1 << b, mask, lane);
     }
     c += std::format(
             "            _clint_mtimecmp_{0} = _hi | (_clint_mtimecmp_{0} & 0xFFFFFFFFULL);\n"
