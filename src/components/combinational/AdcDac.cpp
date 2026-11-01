@@ -61,6 +61,7 @@ std::string Adc::genFuncDef_comb() const {
     c += "    " + gen_read_wire(in_nid, 32, in_nw, "_inbits") + "\n";
     c += std::format("    const double _full = {};\n", full_scale(_bit_width));
     c += std::format("    const double _vref = {};\n", _vref);
+    c += std::format("    const uint64_t _max = {}ULL;\n", (1ull << _bit_width) - 1);
     c += "    float _analog = 0; dcs_memcpy(&_analog, &_inbits, 4);\n";
     c += "    uint64_t _out = 0;\n";
     // vref 为 0 时没有可定义的量化关系，直接给 0，避免除零产生 inf 再转整数是 UB
@@ -68,8 +69,11 @@ std::string Adc::genFuncDef_comb() const {
     c += "        double _q = (double) _analog / _vref * _full;\n";
     c += "        if (_q < 0.0) _q = 0.0; // 负电压和超量程都饱和，不让整数转换越界\n";
     c += "        else if (_q > _full) _q = _full;\n";
-    c += "        _out = (uint64_t) (_q + 0.5);\n";
-    c += "        if (_out > (uint64_t) _full) _out = (uint64_t) _full;\n";
+    // 先转有符号再转无符号：值域上界是 2^32-1，远在 int64 之内。TCC 的内存编译
+    // 没有链接 libtcc1.a，double→uint64 会留下 __fixunsdfdi 未解析；有符号转换
+    // 是 x86 的原生指令，不产生库调用
+    c += "        _out = (uint64_t) (int64_t) (_q + 0.5);\n";
+    c += "        if (_out > _max) _out = _max;\n";
     c += "    }\n";
     c += "    " + genOutputWrite(0, "_out", _bit_width) + "\n";
     c += "}\n";

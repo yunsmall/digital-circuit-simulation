@@ -24,6 +24,9 @@ dcs 用 `--elf` 直接加载，不需要外部 bootloader：
 ```bash
 sudo apt-get install -y clang lld llvm device-tree-compiler cpio gzip
 # 若发行版只有带版本后缀的包（如 clang-22/clang-23），装了即可，脚本会自己找到
+# 编 busybox 还要这两个：musl 的静态库从源码编，riscv64 的 crt/libgcc 来自交叉包，
+# clang 通过 --gcc-install-dir 直接使用它（不需要整条 GCC 交叉工具链）
+sudo apt-get install -y libgcc-14-dev-riscv64-cross
 ```
 
 ## 快速开始
@@ -69,6 +72,10 @@ cd <项目根>
 （不需要 GCC 交叉工具链，也不需要 sudo）：
 
 ```bash
+# 脚本从 $LINUX_SRC/src/musl-1.2.5.tar.gz 编 musl 静态库，第一次跑之前放好
+mkdir -p "$LINUX_SRC/src" && cd "$LINUX_SRC/src"
+curl -LO https://musl.libc.org/releases/musl-1.2.5.tar.gz
+
 bash <本目录>/build-busybox.sh        # 产物 /tmp/initrd-busybox.cpio.gz
 bash <本目录>/build-boot.sh /tmp/initrd-busybox.cpio.gz
 ./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
@@ -115,7 +122,7 @@ descriptor/avail/used 和数据缓冲都通过 `wishbone_ic` 的主端口访问�
 | 设备 | MMIO | PLIC 源 | 主端口 | 宿主侧对接 |
 |------|------|---------|--------|-----------|
 | `virtio_blk` | `0x10001000` | 2 | m1 | `images/disk.img`，也可换成 ROM 或内置存储 |
-| `virtio_net` | `0x10002000` | 3 | m2 | slirp 用户态网络（`--backend slirp`） |
+| `virtio_net` | `0x10002000` | 3 | m2 | slirp 用户态网络（JSON 里 `"backend": "slirp"`） |
 | `virtio_rng` | `0x10003000` | 4 | m3 | JIT 内生成随机数 |
 | `virtio_input` | `0x10004000` | 5 | m4 | 宿主 `pushInputEvent` 塞事件、`popStatusEvent` 取 LED 状态 |
 
@@ -133,6 +140,38 @@ ip route add default via 10.0.2.2
 ping -c 3 10.0.2.2
 ping -c 3 8.8.8.8
 ```
+
+### 宿主机连进 guest（端口转发 + telnetd）
+
+slirp 后端支持 qemu 风格的主机端口转发，写在 `virtio_net` 的 `backend_opts`
+（嵌套对象，加载时拍平成 `backend_opts.hostfwd` 参数键）里：
+
+```json
+"params": {
+  "backend": "slirp",
+  "backend_opts": { "hostfwd": "tcp:127.0.0.1:2223-10.0.2.15:23" }
+}
+```
+
+`hostfwd` 的格式是 `[tcp|udp:]宿主地址:端口-客机地址:端口`，多条用 `;` 分隔，地址
+省略时默认 127.0.0.1 / 10.0.2.15。busybox 的 init 在 `ifconfig eth0` 成功后启动
+`telnetd -p 23`（依赖 devpts），宿主机直接连：
+
+```bash
+telnet 127.0.0.1 2223
+```
+
+就能拿到 guest 的 shell。这是 slirp 后端专有的参数，换别的后端不会有。
+
+编 slirp 后端默认是关的（CI 也不编它）：
+
+```bash
+vcpkg install libslirp
+cmake -B build -DDCS_BUILD_NET=ON ...   # 其余参数同项目根目录 README
+```
+
+元件本身不解释 `backend_opts` 里的键，后端按前缀取自己那段（见
+`include/dcs/net/BackendOpts.h`）。
 
 实测结果（2026-11-01）：`udhcpc` 拿到 10.0.2.15，ping 网关和 8.8.8.8 都是 0% 丢包；
 `/dev/vda` 可读、`/dev/hwrng` 每次读出新的随机字节；`virtio_input` 以

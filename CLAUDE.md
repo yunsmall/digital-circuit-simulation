@@ -38,6 +38,27 @@ cmake --build build_tcc --parallel --config RelWithDebInfo
 | TinyCC | ~370 ms | 编译极快，生成代码的优化程度一般 |
 | LLVM | ~1780 ms | Clang 前端慢，但生成代码运行更快 |
 
+## slirp 网络后端（可选）
+
+guest 里的 virtio-net 要访问宿主/互联网时用 libslirp，默认不编（CI 矩阵也不编它）：
+
+```bash
+vcpkg install libslirp
+cmake -B build -DDCS_BUILD_NET=ON ...   # 其余参数同上
+```
+
+电路里用 `"backend": "slirp"` 选择后端。后端专有参数写在嵌套对象里，加载时拍平成
+`backend_opts.<key>` 扁平参数键，元件按前缀摘出自己那段（见 `include/dcs/net/BackendOpts.h`）：
+
+```json
+"params": {
+  "backend": "slirp",
+  "backend_opts": { "hostfwd": "tcp:127.0.0.1:2223-10.0.2.15:23" }
+}
+```
+
+元件不解释后端的键，换后端不改元件。宿主机连 guest 的完整流程见 `linux/README.md`。
+
 测试程序每个只跑几千拍，编译开销占大头，所以 TCC 快得多；长时间仿真（几十万拍以上）反过来是 LLVM 占优。
 改前端实现时两个后端都要构建一遍——TCC 侧的 `tcc.h` 是内部头，发行包只带公开的 `libtcc.h`。
 
@@ -133,6 +154,37 @@ bash benchmarks/build.sh          # 交叉编译基准 ELF（clang，rv64gc）
 
 驱动时钟优先用 `circuit->tickCycles(clk_net_id, n)`（循环在 JIT 内），
 比每拍 `setWire` + `tick` 快；`clkgen` 元件约慢 7%，只在需要分频/多时钟域时用。
+
+### 用 perf 把时间归因到元件
+
+JIT 出来的机器码不在任何落盘文件里，perf 只能看到裸地址；libLLVM 自带的 jitdump
+插件又依赖执行器里的 `llvm_orc_registerJITLoaderPerf*` 运行时符号，没链接它会静默
+失败。可行的办法是让 JIT 把 IR 导出来，用同样的后端参数离线再编一遍，函数布局和
+JIT 逐字节一致，再拿 `addr2line -i` 还原内联帧：
+
+```bash
+# 1. 生成带行号的 IR（DCS_JIT_DEBUG 打开调试信息，DCS_JIT_IR_DUMP 写文件）
+DCS_JIT_DEBUG=1 DCS_JIT_IR_DUMP=/tmp/jit.ll dcs_soc circuit.json --elf boot.elf -t 500000000
+
+# 2. 离线编成目标文件（参数必须和 JitBackend 里一致：-O2、PIC、CPU=x86-64）
+llc -O2 -filetype=obj -relocation-model=pic -mcpu=x86-64 /tmp/jit.ll -o /tmp/jit.o
+# 校验：nm 里 circuit_tick_cycle 的偏移要和运行时一致（两者之差就是代码基址）
+
+# 3. perf 采样，再对 circuit_tick 范围内的地址跑 llvm-addr2line -f -i
+perf record -F 999 -o perf.data -- dcs_soc ...
+```
+
+`DCS_DUMP_C=<路径>` 则把生成的 C 直接落盘，配合行号看热点最直观。
+
+几个已经踩过的坑，别再试：
+
+- clang 前端按 O2 跑完整流水线，元件函数基本都被内联进 `circuit_tick`，
+  `DCS_JIT_PASS_SET` 只是在前端结果上再补一轮；用 `DisableLLVMPasses` 关掉前端能让
+  元件函数独立，但整机慢十倍。
+- 把"写 b 字节 + 补零到 8 字节"合成一次 8 字节整写，慢 13%：下游按自己的引脚宽度
+  读同一根线，宽存储会让字节读等不到存储转发。
+- 只补零到线网宽度（1 位线网就不用补）也慢 3%。
+- `stb=0 就不读 cyc` 这类条件读慢 9%：把两个本来能并行的 load 串成了依赖链。
 
 ## 作为子目录集成到其他 CMake 项目
 
@@ -297,6 +349,12 @@ JIT 代码只做引脚搬运（读 `_w[]` → 打包 → 调 C++ 函数 → 解�
 选择标准：**元件的主要逻辑一律塞进 JIT，哪怕状态机很复杂**。回调只留给"必须碰宿主"或"JIT 里根本写不出来"的操作——
 文件 I/O、stdin、DLL 调用、CPU 指令执行。判断标准是"这段逻辑每拍都要跑吗、能不能用 C 写出来"，
 而不是"写起来方不方便"。
+
+**`extraJitSymbols()` 的符号名是全局按名字索引的**：多个元件注册同名符号时只有最后注册的
+地址生效。同名同址（多个元件导出同一个全局函数）没问题；同名不同址会被 `Circuit::compile()`
+直接拒绝，因为生成代码会调到另一家的回调、还按自己的布局解释对方的状态指针（virtio 设备
+共用 `dcs_virtio_reset` 就这么崩过）。需要每个设备类各自的回调时，用类级别的固定名字
+（如 `dcs_virtio_input_reset`），靠符号名区分实现，靠传进去的状态指针区分实例。
 
 ### JIT 代码的性能原则（TCC 后端同样要高效）
 

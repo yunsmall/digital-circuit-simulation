@@ -143,6 +143,7 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `switch` | 条件通路 | `bit_width` |
 | `merge` | N×1bit → N 位总线 | `num_bits`（2~64） |
 | `split` | N 位总线 → N×1bit | `num_bits`（2~64） |
+| `parity` | 奇偶校验位生成 | `bit_width`, `mode`（even/odd） |
 
 ### 浮点（IEEE 754）
 
@@ -152,6 +153,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `feq`, `fne`, `flt`, `fgt`, `fle`, `fge` | 浮点比较 | `precision`（32/64） |
 | `f2i`, `i2f` | 浮点/整数互转 | `precision`, `int_width`, `signed` |
 | `fconst` | 浮点常量 | `precision`, `value`（如 "3.14"） |
+| `adc` | 模数转换：float 电压量化到 N 位数字量，越界饱和 | `bit_width`（1~32）, `vref` |
+| `dac` | 数模转换：N 位数字量线性映射到 `[0, vref]`，输出是 float 位模式 | `bit_width`（1~32）, `vref` |
 
 ### 时序逻辑
 
@@ -168,6 +171,9 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `clkdiv` | 时钟分频 | `divisor` |
 | `edgedet_rise`, `edgedet_fall`, `edgedet_both` | 边沿检测 | — |
 | `delay` | N 级延时线 | `bit_width`, `depth`（1~256）, `use_clock`（0/1） |
+| `ringcounter` | 环形/约翰逊计数器 | `length`, `johnson`（0/1） |
+| `sync2ff` | 跨时钟域两级同步器 | `bit_width` |
+| `debounce` | 按键去抖：输入稳定 `stable_ticks` 个时钟沿后才更新 | `bit_width`, `stable_ticks` |
 
 ### 存储器
 
@@ -177,6 +183,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `rom` | ROM（hex / raw 字节 / 文件 mmap） | `addr_width`, `data_width`, `source_type`（hex/file）, `filepath`, `use_mmap` |
 | `mpram` | 多端口 RAM（1~4 读 + 1~2 写，含 rd_valid 流控） | `addr_width`, `data_width`, `num_read_ports`, `num_write_ports`, `read_latency` |
 | `fifo` | 同步 FIFO | `data_width`, `depth`（2 的幂）, `has_rst` |
+| `async_fifo` | 双时钟域异步 FIFO（格雷码指针 + 两级同步器） | `bit_width`, `depth` |
+| `regfile` | 多读口寄存器堆（组合读、时钟沿写） | `bit_width`, `depth`, `num_read_ports`, `num_write_ports` |
 
 ### RISC-V 平台元件
 
@@ -193,7 +201,17 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `dma` | 存储到存储的 DMA | — |
 | `axi_lite_bridge` | AXI-Lite ↔ Wishbone 桥 | — |
 | `wb_cache` | Wishbone 缓存 | `lines` |
-| `virtio_mmio` | virtio-mmio（modern v2）设备：从端口接 CPU，主端口经总线访问 virtqueue | `device`（blk/console）, `path`（blk 镜像文件，留空则用电路里的 ROM） |
+| `wb_dcache` | 写直通数据缓存，带总线监听 | `lines`, `base`, `size` |
+| `reg_bridge` | Wishbone 从设备 → 通用寄存器接口（addr/wdata/we/en） | — |
+| `gpio` | 32 位 GPIO，DIR/OUT/IN 三个寄存器 | — |
+| `pwm` | 单通道 PWM（PERIOD/DUTY/CTRL） | — |
+| `rtc` | goldfish 风格实时时钟（纳秒），带闹钟中断 | `ns_per_tick` |
+| `watchdog` | 看门狗定时器（CTRL/TIMEOUT/FEED/STATUS） | — |
+| `virtio_blk` | virtio-blk，镜像来自宿主文件或电路里的 ROM | `path` |
+| `virtio_blk_mem` | virtio-blk，介质是设备自带存储 | `size_kb` |
+| `virtio_net` | virtio-net，后端由 `backend` 选择（`none`/`slirp`） | `backend`, `backend_opts` |
+| `virtio_rng` | virtio-rng，随机数在 JIT 里生成 | — |
+| `virtio_input` | virtio-input（evdev），宿主用 `pushInputEvent` 喂事件 | — |
 
 CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond
 扩展，以及 Sdtrig 硬件断点（mcontrol 子集）。
@@ -206,6 +224,13 @@ CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Z
 | `fprint` | 打印浮点线网值 | `precision`（32/64） |
 | `dll` | 外部 DLL 元件 | `path` |
 | `composite` | 可复用子电路 | `definition`（蓝图名） |
+| `assert` | 仿真断言：时钟沿上 `cond=0` 时报一次 | `message`, `max_reports` |
+| `display` | 显示件（LED/数码管/文本），把值交给宿主 GUI | `bit_width`, `kind`（led/seg/text）, `digits` |
+| `bcd2seg` | BCD/十六进制到七段码译码（bit7 是小数点） | `hex_mode`（0/1）, `active_low`（0/1） |
+| `wallclock` | 日历时钟，虚拟累加或直接同步宿主时间 | `ns_per_tick`, `base_epoch`, `sync_host`（0/1） |
+| `uart_in` | 串口输入：宿主 stdin 按 8N1 发到 UART.rx | `baud_div` |
+| `uart_feed` | 串口输入：宿主程序 push 字节（不碰 stdin） | `baud_div` |
+| `uart_term` | 串口终端接收端：8N1 电平解成字节 | `baud_div` |
 
 ### JIT 优化级别
 
@@ -298,6 +323,10 @@ UART 的 `reg-shift`、CLINT 的 mtimecmp 复位值等）都在
   ]
 }
 ```
+
+参数值也可以是嵌套对象，宿主侧后端就是靠它携带专有选项：
+`"params": {"backend": "slirp", "backend_opts": {"hostfwd": "..."}}` 加载时拍平成
+`backend_opts.hostfwd` 参数键（参数表仍然是 string→string），后端按前缀取自己那段。
 
 ## 技术架构
 

@@ -143,6 +143,7 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `switch` | Conditional pass-through | `bit_width` |
 | `merge` | N × 1-bit → N-bit bus | `num_bits` (2–64) |
 | `split` | N-bit bus → N × 1-bit | `num_bits` (2–64) |
+| `parity` | Even/odd parity bit for the input word | `bit_width`, `mode` (even/odd) |
 
 ### Floating-Point (IEEE 754)
 
@@ -152,6 +153,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `feq`, `fne`, `flt`, `fgt`, `fle`, `fge` | Float comparison | `precision` (32/64) |
 | `f2i`, `i2f` | Float/integer conversion | `precision`, `int_width`, `signed` |
 | `fconst` | Float constant | `precision`, `value` (e.g., "3.14") |
+| `adc` | ADC: quantizes a float voltage to an N-bit code, saturating at both ends | `bit_width` (1–32), `vref` |
+| `dac` | DAC: maps an N-bit code linearly onto `[0, vref]`, output is a float bit pattern | `bit_width` (1–32), `vref` |
 
 ### Sequential Logic
 
@@ -168,6 +171,9 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `clkdiv` | Clock divider | `divisor` |
 | `edgedet_rise`, `edgedet_fall`, `edgedet_both` | Edge detector | — |
 | `delay` | N-stage delay line | `bit_width`, `depth` (1–256), `use_clock` (0/1) |
+| `ringcounter` | Ring / Johnson counter (one-hot ring, or all-zero Johnson) | `length`, `johnson` (0/1) |
+| `sync2ff` | Two-flop clock-domain synchronizer | `bit_width` |
+| `debounce` | Debouncer: output follows input after `stable_ticks` stable clock edges | `bit_width`, `stable_ticks` |
 
 ### Memory
 
@@ -177,6 +183,8 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `rom` | ROM (hex / raw bytes / file mmap) | `addr_width`, `data_width`, `source_type` (hex/file), `filepath`, `use_mmap` |
 | `mpram` | Multi-port RAM (1–4R + 1–2W, rd_valid flow control) | `addr_width`, `data_width`, `num_read_ports`, `num_write_ports`, `read_latency` |
 | `fifo` | Synchronous FIFO | `data_width`, `depth` (power of 2), `has_rst` |
+| `async_fifo` | Dual-clock FIFO (gray-code pointers, two-flop synchronizers) | `bit_width`, `depth` |
+| `regfile` | Multi-read-port register file (combinational read, edge write) | `bit_width`, `depth`, `num_read_ports`, `num_write_ports` |
 
 ### RISC-V Platform
 
@@ -193,6 +201,17 @@ target_link_libraries(my_app PRIVATE dcs_lib)
 | `dma` | Memory-to-memory DMA | — |
 | `axi_lite_bridge` | AXI-Lite ↔ Wishbone bridge | — |
 | `wb_cache` | Wishbone cache | `lines` |
+| `wb_dcache` | Write-through data cache with bus snooping | `lines`, `base`, `size` |
+| `reg_bridge` | Wishbone slave → plain register interface (addr/wdata/we/en) | — |
+| `gpio` | 32-bit GPIO with DIR/OUT/IN registers | — |
+| `pwm` | Single-channel PWM (PERIOD/DUTY/CTRL) | — |
+| `rtc` | Goldfish-style RTC in nanoseconds, with alarm IRQ | `ns_per_tick` |
+| `watchdog` | Watchdog timer (CTRL/TIMEOUT/FEED/STATUS) | — |
+| `virtio_blk` | virtio-blk whose image comes from a host file or a ROM | `path` |
+| `virtio_blk_mem` | virtio-blk over device-private storage | `size_kb` |
+| `virtio_net` | virtio-net, backend selected by `backend` (`none`/`slirp`) | `backend`, `backend_opts` |
+| `virtio_rng` | virtio-rng, random numbers generated inside the JIT | — |
+| `virtio_input` | virtio-input (evdev); host feeds events via `pushInputEvent` | — |
 
 The CPU implements M/S/U privilege levels, Sv32/Sv39 paging, Zicsr/Zifencei, the
 A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond extensions, and Sdtrig hardware breakpoints
@@ -206,6 +225,13 @@ A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond extensions, and Sdtrig hardware breakpoints
 | `fprint` | Print float wire value | `precision` (32/64) |
 | `dll` | External DLL component | `path` |
 | `composite` | Reusable sub-circuit | `definition` (blueprint name) |
+| `assert` | Simulation assertion: reports when `cond` is 0 on a clock edge | `message`, `max_reports` |
+| `display` | Display element (LED/7-seg/text) that hands values to the host GUI | `bit_width`, `kind` (led/seg/text), `digits` |
+| `bcd2seg` | BCD/hex to seven-segment decoder (bit7 is the decimal point) | `hex_mode` (0/1), `active_low` (0/1) |
+| `wallclock` | Calendar clock, virtual or synced to host time | `ns_per_tick`, `base_epoch`, `sync_host` (0/1) |
+| `uart_in` | Serial input driven by host stdin (8N1 into UART.rx) | `baud_div` |
+| `uart_feed` | Serial input fed by the host program (no stdio involved) | `baud_div` |
+| `uart_term` | Serial terminal receiver: 8N1 levels → bytes | `baud_div` |
 
 ### JIT optimization level
 
@@ -286,6 +312,11 @@ about 5–8× overall.
   ]
 }
 ```
+
+Parameter values may also be nested objects, which is how host-side backends carry their
+own options: `"params": {"backend": "slirp", "backend_opts": {"hostfwd": "..."}}` is
+flattened on load into the `backend_opts.hostfwd` parameter (the table stays string→string),
+and the backend picks out its own prefix.
 
 ## Architecture
 
