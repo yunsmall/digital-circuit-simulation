@@ -168,7 +168,10 @@ struct VirtioFixture {
         putDesc(desc, (uint16_t) (desc_idx + 1), data_off, data_len, flags1, (uint16_t) (desc_idx + 2));
         putDesc(desc, (uint16_t) (desc_idx + 2), status_off, 1, flags2, 0);
         std::memset(m + hdr_off, 0, 16);
-        std::memcpy(m + hdr_off, &type, 4);
+        // type 是 uint8_t 参数，不能直接 memcpy 4 字节：那会读栈上相邻的垃圾，
+        // 不同编译器下头字段就变成随机值（GCC 下设备会把它当成非法请求类型）
+        const uint32_t type32 = type;
+        std::memcpy(m + hdr_off, &type32, 4);
         std::memcpy(m + hdr_off + 8, &sector, 8);
         put16(avail + 0, 0);
         put16(avail + 2, 1);

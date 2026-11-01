@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -104,7 +105,8 @@ TEST(FpuFlags, OverflowProducesInfinity) {
 
 TEST(FpuFlags, NanInputPropagates) {
     Fx f(32, FloatBinOpKind::MUL);
-    const uint8_t fl = f.run(0.0f / 0.0f, 1.0f);
+    // 写 0.0f/0.0f 这种字面量表达式时 MSVC 直接报 C2124（除零），用 NaN 常量代替
+    const uint8_t fl = f.run(std::numeric_limits<float>::quiet_NaN(), 1.0f);
     EXPECT_EQ(fl & 0x20u, 0x20u);
 }
 
