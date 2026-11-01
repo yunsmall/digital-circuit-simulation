@@ -100,6 +100,11 @@ std::string WishboneInterconnect::genStateDecl() const {
             "static int _wbic_grant_{0}, _wbic_next_{0}, _wbic_last_{0};\n"
             "static uint8_t _wbic_busy_{0};\n"
             "static uint32_t _wbic_wd_{0};\n"
+            // 组合阶段回读主设备应答时要知道本拍选中的从设备和换主空拍
+            "static int _wbic_si_{0};\n"
+            "static uint8_t _wbic_gap_{0};\n"
+            // 上一拍是否写过非零的主设备侧输出：空闲拍靠它跳过重写
+            "static uint8_t _wbic_any_{0};\n"
             "extern void dcs_wb_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\n",
             _id);
 }
@@ -107,7 +112,9 @@ std::string WishboneInterconnect::genStateDecl() const {
 std::string WishboneInterconnect::genInitCode() const {
     // 轮询从 0 开始；last = -1 表示还没有事务，首个事务不需要撤拍
     return std::format(
-            "    _wbic_grant_{0} = 0; _wbic_next_{0} = 0; _wbic_last_{0} = -1; _wbic_busy_{0} = 0; _wbic_wd_{0} = 0;\n", _id);
+            "    _wbic_grant_{0} = 0; _wbic_next_{0} = 0; _wbic_last_{0} = -1; _wbic_busy_{0} = 0; _wbic_wd_{0} = 0;\n"
+            "    _wbic_si_{0} = 0; _wbic_gap_{0} = 0; _wbic_any_{0} = 0;\n",
+            _id);
 }
 
 std::string WishboneInterconnect::genFuncDef_seq() const {
@@ -189,20 +196,14 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
         const uint64_t hi = (uint64_t) _segments[i].base + _segments[i].size;
         c += std::format("    if (_adr >= 0x{:X}ULL && _adr < 0x{:X}ULL) _si = {};\n", lo, hi, i);
     }
+    // 组合阶段回读应答时用这份状态
+    c += std::format("    _wbic_si_{} = _si; _wbic_gap_{} = _gap;\n", _id, _id);
 
     // 主设备侧输出
     c += "    const uint8_t _wbic_out = (uint8_t)(_wbic_was_busy | (_grant >= 0) | (_rq != 0));\n";
     c += "    if (_wbic_out) {\n";
-    for (int mi = 0; mi < M; mi++) {
-        c += std::format("    uint32_t _mo{}_dat = 0; uint8_t _mo{}_ack = 0;\n", mi, mi);
-        c += std::format("    if (_grant == {} && !_gap) {{\n", mi);
-        for (int i = 0; i < N; i++)
-            c += std::format("        if (_si == {}) {{ _mo{}_dat = _s{}_dat; _mo{}_ack = _s{}_ack; }}\n",
-                             i, mi, i, mi, i);
-        c += "    }\n";
-        c += "    " + genOutputWrite(mi * 2, std::format("_mo{}_dat", mi), 32) + "\n";
-        c += "    " + genOutputWrite(mi * 2 + 1, std::format("_mo{}_ack", mi), 1) + "\n";
-    }
+    // 主设备侧应答/读数据不在这里写：它们由组合阶段从被选中从设备的应答直接多路选择
+    // 过来（见 genFuncDef_comb），比放进时序阶段少一拍
 
     // 从设备侧输出：只有被选中的从设备收到总线信号
     for (int i = 0; i < N; i++) {
@@ -231,6 +232,57 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
             "            dcs_wb_trace(_adr, (uint32_t) _grant, (uint32_t) _si, (uint32_t) _stb, (uint32_t) _cyc, 1u);\n"
             "    }} else _wbic_wd_{0} = 0;\n",
             _id);
+    c += "}\n";
+    return c;
+}
+
+std::string WishboneInterconnect::genFuncDef_comb() const {
+    const int M = _masters;
+    const int N = numSlaves();
+    std::string c;
+    c += std::format("// WishboneInterconnect comb: {} 个从设备的应答多路选择\n", N);
+    c += std::format("DCS_INLINE void {}() {{\n", funcName_comb());
+    // 只读被选中从设备的应答和读数据：生成期展开成 switch，不做 2N 次无条件读
+    c += "    uint32_t _sd = 0; uint8_t _sa = 0;\n";
+    c += std::format("    switch (_wbic_si_{}) {{\n", _id);
+    for (int i = 0; i < N; i++) {
+        const int dat_nid = inputs()[M * 6 + i * 2]->netId();
+        const int ack_nid = inputs()[M * 6 + i * 2 + 1]->netId();
+        c += std::format("    case {}:\n", i);
+        if (dat_nid >= 0)
+            c += std::format("        dcs_memcpy(&_sd, _w[{}], 4);\n", dat_nid);
+        if (ack_nid >= 0)
+            c += std::format("        _sa = _w[{}][0] & 1;\n", ack_nid);
+        c += "        break;\n";
+    }
+    c += "    default: break;\n";
+    c += "    }\n";
+    // 主设备这一拍还在等应答（stb 保持）才把 ack/dat 给它；stb 一撤立刻归零，
+    // 免得下一笔事务把上一笔的残留 ack 当成自己的。
+    // 空闲拍不重写这 2M 根线：只有真有主设备在等应答、或者上一拍写过非零值时
+    // 才刷新（撤销那一拍必须写 0，否则 ack 会一直挂着）
+    c += std::format("    const int _g = _wbic_grant_{};\n    const uint8_t _gap = _wbic_gap_{};\n", _id, _id);
+    for (int mi = 0; mi < M; mi++) {
+        const int stb_nid = inputs()[mi * 6 + 4]->netId();
+        c += std::format("    uint8_t _ms{0} = ", mi);
+        if (stb_nid >= 0)
+            c += std::format("_w[{}][0] & 1", stb_nid);
+        else
+            c += "0";
+        c += ";\n";
+    }
+    c += std::format("    const uint8_t _outg = (uint8_t)((_g >= 0) | _wbic_any_{});\n", _id);
+    c += "    if (_outg) {\n";
+    c += std::format("    _wbic_any_{} = (uint8_t)(_g >= 0);\n", _id);
+    for (int mi = 0; mi < M; mi++) {
+        c += std::format(
+                "    const uint8_t _sel{0} = (uint8_t)(_g == {0} && !_gap && _ms{0});\n"
+                "    uint32_t _md{0} = _sel{0} ? _sd : 0; uint8_t _ma{0} = _sel{0} ? _sa : 0;\n",
+                mi);
+        c += "    " + genOutputWrite(mi * 2, std::format("_md{}", mi), 32) + "\n";
+        c += "    " + genOutputWrite(mi * 2 + 1, std::format("_ma{}", mi), 1) + "\n";
+    }
+    c += "    }\n";
     c += "}\n";
     return c;
 }

@@ -10,6 +10,7 @@
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/platform/WishboneDcache.h>
 #include <dcs/components/io/UartFeed.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/util/ElfLoader.h>
@@ -335,6 +336,18 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
         }
         if (delay_ms > 0 && t + 1 < ticks)
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    // 有数据缓存时按需打印命中率：调缓存参数（行数）时靠它判断值不值得加
+    if (std::getenv("DCS_DCACHE_STATS")) {
+        for (auto &c: circuit->components())
+            if (auto *dc = dynamic_cast<dsc::WishboneDcache *>(c.get())) {
+                const uint64_t acc = dc->accesses();
+                std::fprintf(stderr, "[dcs] dcache: %llu 次访问，命中 %.1f%%（%llu/%llu）\n",
+                             (unsigned long long) acc,
+                             acc ? 100.0 * (double) dc->hits() / (double) acc : 0.0,
+                             (unsigned long long) dc->hits(), (unsigned long long) dc->misses());
+            }
     }
 
     // 仿真结束后打印 CPU 的 PC。总线地址只在取指缺失/访存时更新，

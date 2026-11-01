@@ -353,6 +353,20 @@ comb 输出同 tick 可见，seq 输出有 1 tick `_c_out_`→`_w[]` 延迟。
 
 例如 ROM 的 `read_latency=2`，适配器需要 `wait = 2 + 2 = 4` tick 从 stb 到 ack。
 
+### 数据缓存与总线延迟（2026-11 实测结论）
+
+`wb_dcache` 是独立的写直通 + snoop 数据缓存元件（16 B 行、按字有效、命中读在组合
+阶段应答），可以串在 CPU 和互连之间。**在 riscv_linux.json 上实测没有收益**：
+500M 拍级 A/B 落进噪声，启动反而慢约 5%。原因是 CPU 单次 load 固定 4 个周期，
+延迟来自 CPU 自己的流水线，总线 ack 的那 1~2 拍早就藏在里面；缓存命中省不掉这
+4 拍，未命中反而多一次组件级往返。以后想用它，先确认从设备是长延迟的（例如
+ROM 的 `read_latency`），不要默认插进 CPU 通路。
+
+互连（`wishbone_ic`）的主设备侧应答/读数据走**组合阶段**：从设备本拍写下的
+ack/dat 下一拍就组合多路选择给主设备，从设备侧请求仍在时序阶段发出。这样经互连
+访问和直连从设备的周期数相同（`tests/test_wishbone_ic/perf_latency.cpp` 守着这条
+不变量）；空闲拍不重写主设备侧输出（`_wbic_any` 门控）。
+
 ## 元件 JSON 序列化 / 反序列化注意事项
 
 序列化流程：`toJson()` → `jc["type"] = c->typeName()` + `jc["params"] = c->exportParams()` → `fromJson()` → `factory.create(type, name, params)`

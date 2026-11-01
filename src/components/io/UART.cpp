@@ -63,7 +63,7 @@ std::string UART::genStateDecl() const {
 }
 
 std::string UART::genInitCode() const {
-    return std::format(
+    std::string c = std::format(
             "    _uart_baud_{0} = {1};\n"
             "    _uart_tx_busy_{0} = 0; _uart_tx_bit_{0} = 0; _uart_tx_cnt_{0} = 0; _uart_tx_shift_{0} = 0;\n"
             "    _uart_rx_active_{0} = 0; _uart_rx_confirm_{0} = 0; _uart_rx_bit_{0} = 0; _uart_prev_rx_{0} = 1;\n"
@@ -73,6 +73,12 @@ std::string UART::genInitCode() const {
             "    _uart_ier_{0} = 0; _uart_lcr_{0} = 0x03; _uart_mcr_{0} = 0; _uart_fcr_{0} = 0; _uart_scr_{0} = 0;\n"
             "    _uart_dll_{0} = 0; _uart_dlm_{0} = 0; _uart_latched_{0} = 0;\n",
             _id, _baud_div);
+    // 串口空闲时 TX 是高电平。空闲快速路径会跳过输出刷新，复位后的第一拍必须
+    // 已经把线拉高，否则会一直是低（低电平是起始位）
+    const int tx_nid = outputs()[O_TX]->netId();
+    if (tx_nid >= 0)
+        c += std::format("    _w[{0}][0] = 1; dcs_memset(_w[{0}] + 1, 0, 15);\n", tx_nid);
+    return c;
 }
 
 std::string UART::genFuncDef_seq() const {

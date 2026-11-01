@@ -40,7 +40,9 @@ public:
     int numMasters() const { return _masters; }
 
     // ---- Component 接口 ----
-    bool hasCombinational() const override { return false; }
+    // 从设备侧（请求）走时序阶段，主设备侧（应答/读数据）走组合阶段：
+    // 应答是被选中从设备 ack 的组合多路选择，放进时序阶段会白白多出一拍延迟
+    bool hasCombinational() const override { return true; }
     bool hasSequential() const override { return true; }
 
     bool prepare(std::string &error) override;
@@ -48,6 +50,7 @@ public:
 
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;
+    std::string genFuncDef_comb() const override;
     std::string genFuncDef_seq() const override;
     std::string genInitCode() const override;
     std::string genResetCode() const override { return ""; }
