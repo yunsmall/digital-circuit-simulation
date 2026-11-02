@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../schemas/circuit.schema.json",
+  "$schema": "../../schemas/circuit.schema.json",
   "$meta": {
     "kind": "circuit",
     "format": 1,
