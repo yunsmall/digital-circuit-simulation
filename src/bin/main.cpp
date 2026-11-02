@@ -9,10 +9,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/CircuitLibrary.h>
 #include <dcs/ComponentFactory.h>
+#include <dcs/Context.h>
+#include <dcs/CircuitCheck.h>
+#include <dcs/SchemaGen.h>
+#include <dcs/util/PathList.h>
 #include <dcs/TruthTable.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/dll_interface.h>
@@ -155,7 +160,7 @@ int dllInfo(const std::string &path) {
 }
 
 // ---- json-to-c ----
-int jsonToC(const std::string &path) {
+int jsonToC(const std::string &path, dsc::Context &ctx) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -166,7 +171,7 @@ int jsonToC(const std::string &path) {
     std::string error;
     std::unique_ptr<dsc::Circuit> circuit;
     try {
-        circuit = dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+        circuit = dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
     } catch (const std::exception &e) {
         std::cerr << std::format("错误: {}\n", e.what());
         return 1;
@@ -183,7 +188,8 @@ int jsonToC(const std::string &path) {
 }
 
 // ---- truth-table ----
-int truthTable(const std::string &path, const std::string &inputs_csv, const std::string &output) {
+int truthTable(const std::string &path, const std::string &inputs_csv, const std::string &output,
+               dsc::Context &ctx) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -193,7 +199,7 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
     oss << ifs.rdbuf();
     std::string error;
     auto circuit =
-            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
     if (!circuit) {
         std::cerr << std::format("JSON 错误: {}\n", error);
         return 1;
@@ -227,7 +233,7 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
 
 // ---- simulate ----
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
-              const std::string &vcd_path, const std::string &dump_mem) {
+              const std::string &vcd_path, const std::string &dump_mem, dsc::Context &ctx) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -236,7 +242,8 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     std::ostringstream oss;
     oss << ifs.rdbuf();
     std::string error;
-    auto circuit = dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+    auto circuit =
+            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
     if (!circuit) {
         std::cerr << std::format("JSON 错误: {}\n", error);
         return 1;
@@ -375,6 +382,60 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     return 0;
 }
 
+// ---- 校验（--check）----
+int checkFile(const std::string &path, dsc::Context &ctx) {
+    std::string kind, error;
+    if (!dsc::readJsonKind(path, kind, error)) {
+        std::cerr << std::format("错误: {}\n", error);
+        return 1;
+    }
+    const bool is_blueprint = kind == "blueprint";
+    dsc::CheckReport report;
+    const bool ok = is_blueprint ? dsc::checkBlueprintFile(path, &ctx, report, error)
+                                 : dsc::checkCircuitFile(path, &ctx, report, error);
+    if (!ok) {
+        std::cerr << std::format("校验失败: {}\n", error);
+        return 1;
+    }
+    std::cout << std::format("{}: {} 线网, {} 元件（展开后）\n", is_blueprint ? "蓝图" : "电路", report.nets,
+                             report.components);
+    if (!report.definitions.empty()) {
+        std::cout << "蓝图定义:\n";
+        for (auto &d: report.definitions)
+            std::cout << "  " << d << "\n";
+    }
+    for (auto &w: report.warnings)
+        std::cout << std::format("警告: {}\n", w);
+    std::cout << "校验通过\n";
+    return 0;
+}
+
+// ---- 列出蓝图定义（--list-definitions）----
+int listDefinitions(const std::string &path, dsc::Context &ctx) {
+    std::string error;
+    if (!dsc::loadDefinitionsFromFile(path, &ctx, error)) {
+        std::cerr << std::format("错误: {}\n", error);
+        return 1;
+    }
+    std::vector<std::string> lines;
+    for (auto &[name, def]: ctx.library().definitions())
+        lines.push_back(def.source.empty() ? name : std::format("{}  <-  {}", name, def.source));
+    std::sort(lines.begin(), lines.end());
+    if (lines.empty()) {
+        std::cout << "（没有蓝图定义）\n";
+        return 0;
+    }
+    for (auto &l: lines)
+        std::cout << l << "\n";
+    return 0;
+}
+
+// ---- 元件 schema（--dump-schema）----
+int dumpSchema() {
+    std::cout << dsc::componentSchemaJson() << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -399,7 +460,10 @@ int main(int argc, char *argv[]) {
             "inputs", "真值表的输入网名，逗号分隔（第一个是最高位）", cxxopts::value<std::string>())(
             "output", "真值表的输出网名", cxxopts::value<std::string>())(
             "I,lib-path", "蓝图库查找路径（可重复）；definitions 里的相对路径先按引用文件所在目录找，再按这些目录顺序找",
-            cxxopts::value<std::vector<std::string>>());
+            cxxopts::value<std::vector<std::string>>())(
+            "check", "校验电路/蓝图 JSON：加载、展开、静态检查，不编译", cxxopts::value<std::string>())(
+            "list-definitions", "列出 JSON 里的蓝图定义及来源", cxxopts::value<std::string>())(
+            "dump-schema", "把元件类型 schema 输出到 stdout（重定向到文件即可）");
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
@@ -436,10 +500,22 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // 蓝图库查找路径要在任何 fromJson 之前登记（电路 JSON 的 definitions 会用到）
+    // 蓝图库查找路径要在任何 fromJson 之前登记（电路 JSON 的 definitions 会用到）。
+    // --lib-path 在前，环境变量 DCS_LIB_PATH（PATH 风格）在后
+    dsc::Context ctx;
     if (result.count("lib-path"))
         for (auto &p: result["lib-path"].as<std::vector<std::string>>())
-            dsc::CircuitLibrary::instance().addSearchPath(p);
+            ctx.library().addSearchPath(p);
+    if (const char *env = std::getenv("DCS_LIB_PATH"))
+        for (auto &p: dsc::splitPathList(env))
+            ctx.library().addSearchPath(p);
+
+    if (result.count("dump-schema"))
+        return dumpSchema();
+    if (result.count("check"))
+        return checkFile(result["check"].as<std::string>(), ctx);
+    if (result.count("list-definitions"))
+        return listDefinitions(result["list-definitions"].as<std::string>(), ctx);
 
     if (result.count("list-types")) {
         if (result.count("json"))
@@ -452,7 +528,7 @@ int main(int argc, char *argv[]) {
         return dllInfo(result["dll-info"].as<std::string>());
     }
     if (result.count("json-to-c")) {
-        return jsonToC(result["json-to-c"].as<std::string>());
+        return jsonToC(result["json-to-c"].as<std::string>(), ctx);
     }
     if (result.count("truth-table")) {
         if (!result.count("circuit") || !result.count("inputs") || !result.count("output")) {
@@ -460,13 +536,13 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         return truthTable(result["circuit"].as<std::string>(), result["inputs"].as<std::string>(),
-                          result["output"].as<std::string>());
+                          result["output"].as<std::string>(), ctx);
     }
     if (result.count("circuit")) {
         return simulate(result["circuit"].as<std::string>(), result["ticks"].as<uint64_t>(), result["delay"].as<int>(),
                         result.count("monitor") != 0, result.count("forever") != 0,
                         result.count("vcd") ? result["vcd"].as<std::string>() : std::string{},
-                        result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{});
+                        result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{}, ctx);
     }
 
     std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";

@@ -3,12 +3,13 @@
 #include <format>
 #include <nlohmann/json.hpp>
 #include "dcs/ComponentFactory.h"
+#include "dcs/Context.h"
 
 namespace dsc {
 
 CircuitLibrary &CircuitLibrary::instance() {
-    static CircuitLibrary lib;
-    return lib;
+    // 进程级默认上下文里的库；显式建 Context 的调用方直接用自己的那份
+    return Context::global().library();
 }
 
 void CircuitLibrary::add(CircuitDefinition def) {
@@ -84,7 +85,7 @@ std::string CircuitLibrary::exportJson() const {
     return root.dump();
 }
 
-void CircuitLibrary::importJson(const std::string &json_str, std::string &error) {
+void CircuitLibrary::importJson(const std::string &json_str, std::string &error, const std::string &source) {
     using json = nlohmann::json;
 
     json root;
@@ -101,6 +102,7 @@ void CircuitLibrary::importJson(const std::string &json_str, std::string &error)
     for (auto &[name, jd]: root.items()) {
         CircuitDefinition def;
         def.name = name;
+        def.source = source;
 
         // 线网
         if (jd.contains("nets") && jd["nets"].is_array())

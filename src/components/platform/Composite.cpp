@@ -3,6 +3,7 @@
 #include <format>
 #include "dcs/CircuitLibrary.h"
 #include "dcs/ComponentFactory.h"
+#include "dcs/Context.h"
 
 namespace dsc {
 
@@ -15,11 +16,16 @@ CompositeComponent::CompositeComponent(const std::string &name, const std::strin
 // prepare — 加载定义、创建引脚
 // ============================================================
 
+const CircuitLibrary &CompositeComponent::lib() const {
+    // 没经过 Circuit::addComponent（直接 new 出来）时用进程默认库
+    return _lib ? *_lib : CircuitLibrary::instance();
+}
+
 bool CompositeComponent::prepare(std::string &error) {
     if (_prepared)
         return true;
 
-    auto *def = CircuitLibrary::instance().find(_def_name);
+    auto *def = lib().find(_def_name);
     if (!def) {
         error = std::format("复合元件 '{}': 定义 '{}' 未在 CircuitLibrary 中注册", name(), _def_name);
         return false;
@@ -31,7 +37,7 @@ bool CompositeComponent::prepare(std::string &error) {
 }
 
 void CompositeComponent::loadPinsFromDef() {
-    auto *def = CircuitLibrary::instance().find(_def_name);
+    auto *def = lib().find(_def_name);
     if (!def)
         return;
 
@@ -57,7 +63,9 @@ std::unordered_map<std::string, std::string> CompositeComponent::exportParams() 
 }
 
 std::unique_ptr<Component> CompositeComponent::clone(const std::string &n) const {
-    return std::make_unique<CompositeComponent>(n, _def_name);
+    auto c = std::make_unique<CompositeComponent>(n, _def_name);
+    c->_lib = _lib; // 克隆体跟着原实例用同一个库
+    return c;
 }
 
 // ============================================================
@@ -65,7 +73,8 @@ std::unique_ptr<Component> CompositeComponent::clone(const std::string &n) const
 // ============================================================
 
 void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
-    auto *def = CircuitLibrary::instance().find(_def_name);
+    // 以父电路的上下文为准：同一个蓝图名在不同 Context 里可以是不同定义
+    auto *def = parent.context().library().find(_def_name);
     if (!def)
         return;
 

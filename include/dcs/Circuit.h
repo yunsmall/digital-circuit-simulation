@@ -11,6 +11,8 @@
 
 namespace dsc {
 
+class Context; // 见 dcs/Context.h：蓝图库 + JIT 头文件目录
+
 // ============================================================
 // 运行时错误
 // ============================================================
@@ -90,7 +92,10 @@ public:
     // 否则 Net 中会残留悬空指针、_bus_nets 中留有脏数据
 
     // --- 验证与编译 ---
-    CircuitError check(); // 环路检测，失败返回错误
+    CircuitError check(std::vector<std::string> *warnings = nullptr); // 环路检测，失败返回错误
+    // 校验：展开复合元件 + 环路/拓扑检查，不生成也不编译 JIT。
+    // warnings 非空时收集拓扑告警（悬空从端口等），否则照旧打到 stderr
+    CircuitError validate(std::vector<std::string> *warnings = nullptr);
     CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）
     bool isCompiled() const {
         return _compiled;
@@ -151,8 +156,10 @@ public:
 
     // --- JSON 序列化 ---
     std::string exportJson() const; // 导出电路为 JSON 字符串
+    // base_dir 用于解析 definitions 里的相对路径；context 为空时用进程默认上下文
     static std::unique_ptr<Circuit> fromJson(const std::string &json, std::string &error,
-                                             const std::string &base_dir = ""); // 从 JSON 重建电路
+                                             const std::string &base_dir = "",
+                                             Context *context = nullptr);
 
     // JSON 元数据：加载时从 $meta 读入、导出时原样写回（都可为空）
     void setMetadata(const std::string &author, const std::string &description) {
@@ -166,7 +173,16 @@ public:
         return _description;
     }
 
-    // --- JIT 头文件搜索路径 ---
+    // --- 上下文 ---
+    // Context 持有蓝图库（definitions）和 JIT 头文件目录。不显式设置时用进程默认
+    // 上下文；需要同时跑多套互不相关的电路时，各自建 Context 再 setContext
+    void setContext(Context &ctx) {
+        _context = &ctx;
+    }
+    Context &context();
+    [[nodiscard]] const Context &context() const;
+
+    // --- JIT 头文件搜索路径（等价于操作默认上下文）---
     // 设置后优先使用；为空时使用默认行为（exe 同目录下的 shim/）
     static void setJitIncludeDir(const std::string &dir);
     static const std::string &jitIncludeDir();
@@ -189,7 +205,8 @@ private:
     // compile() 里，tick 走的是后端解析出来的函数指针，热路径上没有额外间接层
     JitBackend _backend;
 
-    static std::string _jit_include_dir; // JIT 头文件搜索路径（空=自动检测）
+    // 显式上下文（可为空，空表示用 Context::global()）
+    Context *_context = nullptr;
 
     void (*_tick_fn)() = nullptr;
     void (*_tick_cycle_fn)(int) = nullptr;

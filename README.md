@@ -101,6 +101,19 @@ via Verilator's `--pins-inout-enables`, wired to the same net for bidirectional 
 
 # Inspect DLL component
 ./build/RelWithDebInfo/dcs --dll-info adder8_dll.dll
+
+# Validate a circuit or blueprint without compiling
+./build/RelWithDebInfo/dcs --check circuit.json
+./build/RelWithDebInfo/dcs --check library/adder.json
+
+# Show blueprint definitions and where they came from
+./build/RelWithDebInfo/dcs --list-definitions circuit.json
+
+# Generate an IDE-hint schema for every registered component type
+./build/RelWithDebInfo/dcs --dump-schema > schemas/component.schema.json
+
+# Extra blueprint search paths (repeatable), plus DCS_LIB_PATH (PATH-style)
+./build/RelWithDebInfo/dcs circuit.json -I blueprints -I ../shared/blueprints
 ```
 
 ## Using as a Subdirectory
@@ -112,6 +125,21 @@ set(DCS_BUILD_VERILOG OFF CACHE BOOL "" FORCE)
 add_subdirectory(digital_circuit_simulation)
 
 target_link_libraries(my_app PRIVATE dcs_lib)
+```
+
+Mutable state lives in `dsc::Context`, LLVM-style: the blueprint library (definitions plus
+search paths) and the JIT include directory. A `Circuit` uses `Context::global()` unless you
+call `setContext()`, and `Circuit::fromJson(json, err, base_dir, &ctx)` binds the load to a
+context — so one process can host several independent circuits even if they define
+blueprints with the same name. The component type registry (`ComponentFactory`) stays
+process-wide because registration happens in static initializers; only the per-load state
+is context-scoped.
+
+```cpp
+dsc::Context ctx;
+ctx.library().addSearchPath("blueprints");
+std::string error;
+auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 ```
 
 ## Component Types
@@ -352,7 +380,8 @@ are rejected. See `examples/jsons/composite_library.json` + `examples/jsons/libr
 
 `schemas/circuit.schema.json` and `schemas/blueprint.schema.json` are for editor
 completion only — they are never used for validation, and a file does not have to
-reference them.
+reference them. `schemas/component.schema.json` is generated from the component registry
+with `dcs --dump-schema > schemas/component.schema.json`.
 
 ## Architecture
 

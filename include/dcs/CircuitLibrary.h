@@ -21,6 +21,8 @@ struct ComponentRecipe {
 // 复合元件蓝图定义
 struct CircuitDefinition {
     std::string name;
+    // 这个定义从哪来：内联定义的来源标签，或蓝图文件的路径。只用于诊断输出
+    std::string source;
     std::vector<std::string> nets; // 内部线网名
     std::vector<ComponentRecipe> components; // 子元件配方
     std::unordered_map<std::string, std::string> input_expose; // pin_name → net_name
@@ -48,7 +50,8 @@ public:
 
     // JSON 支持
     std::string exportJson() const;
-    void importJson(const std::string &json, std::string &error);
+    // source 只是记录在定义上，供 --list-definitions 之类的诊断用
+    void importJson(const std::string &json, std::string &error, const std::string &source = "");
 
     const auto &definitions() const {
         return _defs;

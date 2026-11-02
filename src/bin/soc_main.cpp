@@ -6,10 +6,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
 #include <dcs/CircuitLibrary.h>
+#include <dcs/Context.h>
+#include <dcs/util/PathList.h>
 #include <dcs/components/platform/RiscVCPU.h>
 #include <dcs/components/platform/WishboneDcache.h>
 #include <dcs/components/io/UartFeed.h>
@@ -128,7 +131,7 @@ bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
 
 int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks, int delay_ms, bool forever,
            const std::string &dump_mem, const std::string &feed_file, uint64_t feed_after,
-           const std::string &watch_file, bool trace_cpu) {
+           const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -137,7 +140,8 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
     std::ostringstream oss;
     oss << ifs.rdbuf();
     std::string error;
-    auto circuit = dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string());
+    auto circuit =
+            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
     if (!circuit) {
         std::cerr << std::format("JSON 错误: {}\n", error);
         return 1;
@@ -455,10 +459,15 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // 蓝图库查找路径要在 fromJson 之前登记（电路 JSON 的 definitions 会用到）
+    // 蓝图库查找路径要在 fromJson 之前登记（电路 JSON 的 definitions 会用到）。
+    // --lib-path 在前，环境变量 DCS_LIB_PATH（PATH 风格）在后
+    dsc::Context ctx;
     if (result.count("lib-path"))
         for (auto &p: result["lib-path"].as<std::vector<std::string>>())
-            dsc::CircuitLibrary::instance().addSearchPath(p);
+            ctx.library().addSearchPath(p);
+    if (const char *env = std::getenv("DCS_LIB_PATH"))
+        for (auto &p: dsc::splitPathList(env))
+            ctx.library().addSearchPath(p);
 
     if (!result.count("circuit")) {
         std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
@@ -474,5 +483,5 @@ int main(int argc, char *argv[]) {
                   result.count("feed") ? result["feed"].as<std::string>() : std::string{},
                   result["feed-after"].as<uint64_t>(),
                   result.count("watch") ? result["watch"].as<std::string>() : std::string{},
-                  result.count("trace-cpu") != 0);
+                  result.count("trace-cpu") != 0, ctx);
 }

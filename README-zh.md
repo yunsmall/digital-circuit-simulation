@@ -101,6 +101,19 @@ unpacked 数组端口会按维展开成独立引脚，`inout` 用 Verilator 官�
 
 # 查看 DLL 元件信息
 ./build/RelWithDebInfo/dcs --dll-info adder8_dll.dll
+
+# 校验电路或蓝图（只加载、展开、静态检查，不编译）
+./build/RelWithDebInfo/dcs --check circuit.json
+./build/RelWithDebInfo/dcs --check library/adder.json
+
+# 列出蓝图定义以及它们来自哪个文件
+./build/RelWithDebInfo/dcs --list-definitions circuit.json
+
+# 从元件注册表生成 schema（给 IDE 提示用）
+./build/RelWithDebInfo/dcs --dump-schema > schemas/component.schema.json
+
+# 额外的蓝图查找路径（可重复），另外还有 DCS_LIB_PATH（PATH 风格）
+./build/RelWithDebInfo/dcs circuit.json -I blueprints -I ../shared/blueprints
 ```
 
 ## 作为子目录集成
@@ -112,6 +125,20 @@ set(DCS_BUILD_VERILOG OFF CACHE BOOL "" FORCE)
 add_subdirectory(digital_circuit_simulation)
 
 target_link_libraries(my_app PRIVATE dcs_lib)
+```
+
+可变状态放在 `dsc::Context` 里（LLVM 的 `LLVMContext` 那种形式）：蓝图库（定义 + 查找
+路径）和 JIT 头文件目录。`Circuit` 不调用 `setContext()` 时用 `Context::global()`；
+`Circuit::fromJson(json, err, base_dir, &ctx)` 可以把这次加载绑定到指定上下文，所以
+一个进程里可以同时存在多套互不相关的电路，即使它们定义了同名蓝图也不会互相覆盖。
+元件类型注册表（`ComponentFactory`）仍是进程级的：登记发生在静态初始化阶段，只有
+"这次加载出来的状态"按上下文隔离。
+
+```cpp
+dsc::Context ctx;
+ctx.library().addSearchPath("blueprints");
+std::string error;
+auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 ```
 
 ## 元件类型
@@ -360,7 +387,8 @@ JSON 往返后会保留。
 `examples/jsons/composite_library.json` 和 `examples/jsons/library/`。
 
 `schemas/circuit.schema.json`、`schemas/blueprint.schema.json` 只给编辑器提示用，
-不参与任何校验，文件里不引用它们也没关系。
+不参与任何校验，文件里不引用它们也没关系。`schemas/component.schema.json` 由元件
+注册表生成：`dcs --dump-schema > schemas/component.schema.json`。
 
 ## 技术架构
 

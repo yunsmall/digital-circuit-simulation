@@ -2,6 +2,7 @@
 #include "dcs/CodeGen.h"
 #include "dcs/CircuitSerializer.h"
 #include "dcs/CircuitLibrary.h"
+#include "dcs/Context.h"
 #include "dcs/components/platform/Composite.h"
 #include "dcs/util/ExePath.h"
 
@@ -19,15 +20,21 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// JIT 头文件搜索路径（静态成员）
-std::string dsc::Circuit::_jit_include_dir;
-
+// JIT 头文件搜索路径的旧接口：等价于操作默认上下文的设置，保留给老调用方
 void dsc::Circuit::setJitIncludeDir(const std::string &dir) {
-    _jit_include_dir = dir;
+    Context::global().setJitIncludeDir(dir);
 }
 
 const std::string &dsc::Circuit::jitIncludeDir() {
-    return _jit_include_dir;
+    return Context::global().jitIncludeDir();
+}
+
+dsc::Context &dsc::Circuit::context() {
+    return _context ? *_context : Context::global();
+}
+
+const dsc::Context &dsc::Circuit::context() const {
+    return _context ? *_context : Context::global();
 }
 
 // 编译器后端（LLVM/TCC）相关的东西都在 JitBackend.cpp，这里不需要任何后端头
@@ -116,6 +123,9 @@ Net *Circuit::createNet(const std::string &name) {
 }
 
 Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *error) {
+    // 复合元件要按本电路的上下文查定义（不同 Context 可以有同名蓝图）
+    if (auto *cc = dynamic_cast<CompositeComponent *>(comp.get()))
+        cc->setLibrary(&context().library());
     // 加入电路时立即准备元件（DLL 加载、读取描述符创建引脚等）
     std::string prep_err;
     if (!comp->prepare(prep_err)) {
@@ -313,7 +323,17 @@ Pin *Circuit::findPin(Component *comp, const std::string &name) {
 // 环路检测
 // ============================================================
 
-CircuitError Circuit::check() {
+CircuitError Circuit::validate(std::vector<std::string> *warnings) {
+    // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT
+    jitCleanup();
+    if (auto err = expandComposites(); err.code != ErrorCode::OK)
+        return err;
+    for (int i = 0; i < (int) _components.size(); i++)
+        _components[i]->setId(i);
+    return check(warnings);
+}
+
+CircuitError Circuit::check(std::vector<std::string> *warnings) {
     // setNet() 是公开接口，可能把引脚挂到不属于本电路的 Net 上。
     // 在入口统一扫一遍，后面的所有下标访问（driver_count、adj）就不必逐个兜底
     for (auto &comp: _components) {
@@ -358,7 +378,11 @@ CircuitError Circuit::check() {
     // 只会让主设备永远等 ack。这属于接错线，不是电路非法，所以只告警、不拦编译
     for (auto &comp: _components) {
         std::string msg = comp->checkTopology(*this);
-        if (!msg.empty())
+        if (msg.empty())
+            continue;
+        if (warnings)
+            warnings->push_back(std::format("元件 '{}': {}", comp->name(), msg));
+        else
             std::cerr << std::format("[dcs] 警告: 元件 '{}': {}\n", comp->name(), msg);
     }
 
@@ -510,11 +534,12 @@ CircuitError Circuit::compile() {
         std::ofstream(dump) << c_code;
     }
 
-    // shim 路径：优先使用 setJitIncludeDir() 设置的路径，否则按构建目录布局自动检测
-    auto shim_path = []() -> std::string {
+    // shim 路径：优先使用上下文的 setJitIncludeDir() 设置，否则按构建目录布局自动检测
+    auto shim_path = [this]() -> std::string {
         namespace fs = std::filesystem;
-        if (!_jit_include_dir.empty() && fs::exists(_jit_include_dir))
-            return _jit_include_dir;
+        const std::string &include_dir = context().jitIncludeDir();
+        if (!include_dir.empty() && fs::exists(include_dir))
+            return include_dir;
         auto dir = fs::path(exeDir());
         auto shim = dir / "shim";
         if (fs::exists(shim))
@@ -691,7 +716,7 @@ std::string Circuit::exportJson() const {
     root["$meta"] = meta;
 
     // 共享定义库
-    json j_defs = json::parse(CircuitLibrary::instance().exportJson());
+    json j_defs = json::parse(context().library().exportJson());
     if (!j_defs.empty())
         root["definitions"] = j_defs;
 
@@ -742,8 +767,8 @@ std::string Circuit::exportJson() const {
 
 
 std::unique_ptr<Circuit> Circuit::fromJson(const std::string &json_str, std::string &error,
-                                            const std::string &base_dir) {
-    return loadCircuitFromJson(json_str, error, base_dir);
+                                            const std::string &base_dir, Context *context) {
+    return loadCircuitFromJson(json_str, error, base_dir, context);
 }
 
 } // namespace dsc

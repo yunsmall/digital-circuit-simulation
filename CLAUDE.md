@@ -209,6 +209,16 @@ add_subdirectory(digital_circuit_simulation)
 target_link_libraries(my_app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>)
 ```
 
+## Context：集成时的可变状态
+
+`dsc::Context`（`include/dcs/Context.h`）按 LLVM 的 `LLVMContext` 那套组织：蓝图库
+（定义 + 查找路径）和 JIT 头文件目录都放里面。`Circuit` 默认用 `Context::global()`，
+`setContext()` 之后就用指定的那份；`Circuit::fromJson(json, err, base_dir, &ctx)` 把
+加载绑定到上下文。一个进程里可以放多套电路，各自的同名蓝图不会互相覆盖。
+
+新增的可变全局状态一律放进 Context，不要再写进程级单例。`ComponentFactory` 例外：
+元件类型通过静态初始化自注册，只能进程级；它只登记"有哪些类型"，不保存加载结果。
+
 ## 技术栈
 
 - C++23, CMake 4.2
@@ -456,6 +466,11 @@ ack/dat 下一拍就组合多路选择给主设备，从设备侧请求仍在时
   写在根上，名字取 `$meta.name`，没写就用引用处的键。
 - 文件引用先导入、顶层内联定义后导入，同名时以内联定义为准；蓝图之间循环引用
   会报错。`schemas/*.schema.json` 只给 IDE 提示，不参与校验。
+
+排查工具：`dcs --check file.json`（电路或蓝图，加载 + 展开 + 静态检查，不编译）、
+`dcs --list-definitions file.json`（定义名和来源文件）、`dcs --dump-schema out.json`
+（从元件注册表生成 schema）。查找路径 = `-I/--lib-path`（可重复）在前、
+`DCS_LIB_PATH`（PATH 风格）在后。
 
 ## 元件 JSON 序列化 / 反序列化注意事项
 

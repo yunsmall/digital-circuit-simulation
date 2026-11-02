@@ -15,6 +15,7 @@
 #include "dcs/Circuit.h"
 #include "dcs/CircuitLibrary.h"
 #include "dcs/ComponentFactory.h"
+#include "dcs/Context.h"
 
 namespace dsc {
 
@@ -65,7 +66,8 @@ bool readMeta(const nlohmann::json &root, std::string &kind, std::string &error)
 
 // 蓝图路径解析：绝对路径直接用；相对路径先按引用它的 JSON 所在目录找，
 // 再按 --lib-path 给的目录顺序找
-std::filesystem::path resolveLibPath(const std::string &p, const std::filesystem::path &base) {
+std::filesystem::path resolveLibPath(const std::string &p, const std::filesystem::path &base,
+                                     const CircuitLibrary &lib) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path rel(p);
@@ -73,7 +75,7 @@ std::filesystem::path resolveLibPath(const std::string &p, const std::filesystem
         return fs::exists(rel, ec) ? rel : fs::path{};
     if (auto cand = base / rel; fs::exists(cand, ec))
         return cand;
-    for (auto &dir: CircuitLibrary::instance().searchPaths()) {
+    for (auto &dir: lib.searchPaths()) {
         if (auto cand = fs::path(dir) / rel; fs::exists(cand, ec))
             return cand;
     }
@@ -81,11 +83,12 @@ std::filesystem::path resolveLibPath(const std::string &p, const std::filesystem
 }
 
 bool importBlueprintFile(const std::filesystem::path &file, const std::string &key,
-                         std::vector<std::string> &stack, std::string &error);
+                         CircuitLibrary &lib, std::vector<std::string> &stack, std::string &error);
 
 // definitions 对象：值是对象 → 内联定义；值是字符串 → 相对路径引用蓝图 JSON
 bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &base,
-                       std::vector<std::string> &stack, std::string &error) {
+                       CircuitLibrary &lib, std::vector<std::string> &stack, std::string &error,
+                       const std::string &inline_source) {
     using json = nlohmann::json;
     if (!defs.is_object()) {
         error = "definitions 必须是对象（定义名 → 定义对象或蓝图文件路径）";
@@ -95,14 +98,14 @@ bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &
     json inline_defs = json::object();
     for (auto &[key, val]: defs.items()) {
         if (val.is_string()) {
-            const auto file = resolveLibPath(val.get<std::string>(), base);
+            const auto file = resolveLibPath(val.get<std::string>(), base, lib);
             if (file.empty()) {
                 error = std::format("找不到蓝图文件 '{}'（键 '{}'）：相对路径按引用文件所在目录和 "
                                     "--lib-path 查找",
                                     val.get<std::string>(), key);
                 return false;
             }
-            if (!importBlueprintFile(file, key, stack, error))
+            if (!importBlueprintFile(file, key, lib, stack, error))
                 return false;
         } else if (val.is_object()) {
             inline_defs[key] = val;
@@ -113,7 +116,7 @@ bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &
     }
     if (!inline_defs.empty()) {
         std::string import_error;
-        CircuitLibrary::instance().importJson(inline_defs.dump(), import_error);
+        lib.importJson(inline_defs.dump(), import_error, inline_source);
         if (!import_error.empty()) {
             error = import_error;
             return false;
@@ -123,7 +126,7 @@ bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &
 }
 
 bool importBlueprintFile(const std::filesystem::path &file, const std::string &key,
-                         std::vector<std::string> &stack, std::string &error) {
+                         CircuitLibrary &lib, std::vector<std::string> &stack, std::string &error) {
     using json = nlohmann::json;
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -158,7 +161,7 @@ bool importBlueprintFile(const std::filesystem::path &file, const std::string &k
     }
 
     if (root.contains("definitions")) {
-        if (!importDefinitions(root["definitions"], file.parent_path(), stack, error))
+        if (!importDefinitions(root["definitions"], file.parent_path(), lib, stack, error, file.generic_string()))
             return false;
     } else if (root.contains("components")) {
         // 单定义蓝图：定义内容直接写在根上，名字取 $meta.name，没写就用引用处的键。
@@ -171,7 +174,7 @@ bool importBlueprintFile(const std::filesystem::path &file, const std::string &k
         json wrap = json::object();
         wrap[name] = def;
         std::string import_error;
-        CircuitLibrary::instance().importJson(wrap.dump(), import_error);
+        lib.importJson(wrap.dump(), import_error, file.generic_string());
         if (!import_error.empty()) {
             error = import_error;
             return false;
@@ -200,7 +203,7 @@ void flattenParams(const nlohmann::json &j, const std::string &prefix, std::unor
 } // namespace
 
 std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::string &error,
-                                           const std::string &base_dir) {
+                                           const std::string &base_dir, Context *context) {
     using json = nlohmann::json;
 
     json root;
@@ -230,6 +233,8 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
     }
 
     auto circuit = std::make_unique<Circuit>();
+    if (context)
+        circuit->setContext(*context);
     if (auto m = root.find("$meta"); m != root.end())
         circuit->setMetadata(m->value("author", std::string{}), m->value("description", std::string{}));
 
@@ -259,7 +264,7 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
     if (root.contains("definitions")) {
         const std::filesystem::path base = base_dir.empty() ? std::filesystem::current_path() : std::filesystem::path(base_dir);
         std::vector<std::string> stack;
-        if (!importDefinitions(root["definitions"], base, stack, error))
+        if (!importDefinitions(root["definitions"], base, circuit->context().library(), stack, error, "内联"))
             return nullptr;
     }
 

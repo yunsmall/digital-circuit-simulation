@@ -1,0 +1,3152 @@
+{
+  "$id": "https://github.com/yunsmall/digital-circuit-simulation/schemas/component.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "由 dcs --dump-schema 从元件注册表生成，供 IDE 提示；不参与运行期校验",
+  "oneOf": [
+    {
+      "description": "绝对值，输出=|输入|",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "abs"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "模数转换：float 电压量化到数字量，越界饱和到 0 / 满量程",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "vref": {
+              "default": "5.0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "adc"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "全加器，sum=a+b+cin, cout=进位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "adder"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多功能 ALU：op=0加 1减 2与 3或 4异或 5左移 6逻辑右移 7算术右移 8有符号小于 9无符号小于 10等于 11不等 12乘 13无符号除 14传a 15取反",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "alu"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入与门，所有输入为1时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "and"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "算术右移，out=in>>shift，高位补符号位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "asr"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "仿真断言：clk 上升沿 cond=0 时记一次失败并打印（最多 max_reports 次）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "max_reports": {
+              "default": "1",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "assert"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "双时钟域异步 FIFO：格雷码指针 + 两级同步器，wr_full/rd_empty 基于同步后的指针",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "depth": {
+              "default": "16",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "async_fifo"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "AXI4-Lite 从设备到 Wishbone 主设备的桥",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "axi_lite_bridge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "桶形移位器，支持左移/逻辑右移/算术右移",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "barrel"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "BCD/十六进制到七段码译码，seg 的 bit0..6 为 a..g，bit7 为小数点",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "active_low": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            },
+            "hex_mode": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "bcd2seg"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "缓冲器，输出=输入",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "buf"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "RISC-V CLINT 定时器/软件中断发生器",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "clint"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "时钟分频器，每N个clk周期翻转一次",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "divisor": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "clkdiv"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "时钟发生器，可设高/低电平持续tick数",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "high_ticks": {
+              "default": "1",
+              "type": "string"
+            },
+            "low_ticks": {
+              "default": "1",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "clkgen"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "复合元件，由JSON定义嵌套子电路",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "definition": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "composite"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "常量，输出固定值",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "value": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "constant"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "计数器，支持加载/使能/升降方向/清零",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "has_clr": {
+              "default": "0",
+              "type": "string"
+            },
+            "has_en": {
+              "default": "0",
+              "type": "string"
+            },
+            "has_load": {
+              "default": "0",
+              "type": "string"
+            },
+            "has_updown": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "counter"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "数模转换：数字量线性映射到 [0, vref]，analog 是 float 位模式",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "vref": {
+              "default": "5.0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "dac"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "按键去抖：输入稳定 stable_ticks 个时钟沿后才更新输出",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "1",
+              "type": "string"
+            },
+            "stable_ticks": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "debounce"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "译码器，n位地址→2^n位独热码",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "n_selects": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "decoder"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "延迟线，可配深度和时钟使能的流水线延迟",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "depth": {
+              "default": "1",
+              "type": "string"
+            },
+            "use_clock": {
+              "default": "1",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "delay"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "D触发器，clk上升沿采样d输出到q",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "dff"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "显示件：值变化时把新值交给宿主（GUI 用 Display::setSink 接入）；kind=led/seg/text",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "digits": {
+              "default": "1",
+              "type": "string"
+            },
+            "kind": {
+              "default": "led",
+              "enum": [
+                "led",
+                "seg",
+                "text"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "display"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "除法器，quot=a/b, rem=a%b",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "div"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "外部DLL元件，由动态库提供仿真逻辑",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "dll"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "存储器到存储器块搬运的 DMA 控制器",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "dma"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "双边沿检测，in任意边沿时out=1一个周期",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "edgedet_both"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "下降沿检测，in下降沿时out=1一个周期",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "edgedet_fall"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "上升沿检测，in上升沿时out=1一个周期",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "edgedet_rise"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "编码器，2^n位独热码→n位二进制",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "n_selects": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "encoder"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "等于比较，a==b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "eq"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点转整型，截断小数部分",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "fp": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "int_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "f2i"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点加法，out=a+b；flags 见元件说明",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fadd"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点常量",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "default": "0.0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fconst"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点除法，out=a/b；flags 见元件说明",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fdiv"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点等于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "feq"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点大于等于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点大于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fgt"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "同步FIFO，先入先出队列，支持异步复位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "data_width": {
+              "default": "8",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "depth": {
+              "default": "16",
+              "type": "string"
+            },
+            "has_rst": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fifo"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点小于等于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fle"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点小于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "flt"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点乘法，out=a*b；flags 见元件说明",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fmul"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点不等于比较",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fne"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点打印，clk上升沿打印浮点值",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fprint"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "浮点减法，out=a-b；flags 见元件说明",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "precision": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "fsub"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "大于等于比较，a>=b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "ge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "由 Verilog 模块 adder8 自动生成的元件",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "gen_adder8"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "由 Verilog 模块 counter8 自动生成的元件",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "gen_counter8"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "由 Verilog 模块 iobuf 自动生成的元件",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "gen_iobuf"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "由 Verilog 模块 wide128 自动生成的元件",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "gen_wide128"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "32 位 GPIO：DIR/OUT/IN 三个寄存器，gpio_in/gpio_out 为外部引脚",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "gpio"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "大于比较，a>b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "gt"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "I2C 主机，一次起始-地址-数据-停止的写事务",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "clkdiv": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "i2c"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "整型转浮点",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "fp": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "int_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "i2f"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "JK触发器，j/k控制置位/复位，j=k=1时翻转",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "jkff"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "锁存器，en=1时透明，en=0时锁存",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "latch"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "小于等于比较，a<=b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "le"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "逻辑左移，out=in<<shift，低位补0",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "lsl"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "逻辑右移，out=in>>shift，高位补0",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "lsr"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "小于比较，a<b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "lt"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "最大值，输出=max(a,b)",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "max"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "可寻址RAM，支持独立配置读写延迟",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "addr_width": {
+              "default": "4",
+              "type": "string"
+            },
+            "data_width": {
+              "default": "8",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "read_latency": {
+              "default": "0",
+              "type": "string"
+            },
+            "write_latency": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "memory"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "位合并，将num_bits个1位输入合并为多bit输出",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "num_bits": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "merge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "最小值，输出=min(a,b)",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "min"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多端口RAM，支持多个独立读写端口和流水线延迟",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "addr_width": {
+              "default": "4",
+              "type": "string"
+            },
+            "data_width": {
+              "default": "8",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "num_read_ports": {
+              "default": "1",
+              "type": "string"
+            },
+            "num_write_ports": {
+              "default": "1",
+              "type": "string"
+            },
+            "read_latency": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "mpram"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "乘法器，prod=a*b（双倍位宽输出）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "mul"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多路选择器，根据sel选择一路输入输出",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "n_selects": {
+              "default": "1",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "mux"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入与非门，相当于与门+非门",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "nand"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "不等于比较，a!=b时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "signed": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "ne"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入或非门，相当于或门+非门",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "nor"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "非门/反相器，输出=~输入",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "not"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入或门，任一输入为1时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "or"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "奇偶校验位生成：even 让数据+校验位共偶数个 1，odd 相反",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "mode": {
+              "default": "even",
+              "enum": [
+                "even",
+                "odd"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "parity"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "RISC-V PLIC 平台级中断控制器，单 context",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "num_sources": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "plic"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "优先编码器，输出最高位1的位置",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "num_inputs": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "prienc"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "ascii": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            },
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "print"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "单通道 PWM：PERIOD/DUTY/CTRL 寄存器，输出方波引脚",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "pwm"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "归约与，输出=所有输入位的AND",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "redand"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "归约或，输出=所有输入位的OR",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "redor"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "归约异或，输出=所有输入位的XOR",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "redxor"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "Wishbone 从设备转通用寄存器接口（addr/wdata/we/en → rdata/ready）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "reg_bridge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多读口寄存器堆：组合读、时钟沿写，越界地址读出 0",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "32",
+              "type": "string"
+            },
+            "depth": {
+              "default": "32",
+              "type": "string"
+            },
+            "num_read_ports": {
+              "default": "2",
+              "type": "string"
+            },
+            "num_write_ports": {
+              "default": "1",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "regfile"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "寄存器，clk上升沿采样d",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "register"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "环形/约翰逊计数器：复位后环形为最低位 one-hot，约翰逊为全 0",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "johnson": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            },
+            "length": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "ringcounter"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "RISC-V 软核处理器，Wishbone 总线主设备，支持外部/定时器/软件中断；xlen 选 32（RV32IMA）或 64（RV64IMA）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "xlen": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "riscv_cpu"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "只读存储器，内存模式通过IStorage写入，文件模式从二进制文件加载",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "addr_width": {
+              "default": "4",
+              "type": "string"
+            },
+            "data_width": {
+              "default": "8",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "filepath": {
+              "type": "string"
+            },
+            "read_latency": {
+              "default": "0",
+              "type": "string"
+            },
+            "source_type": {
+              "default": "mem",
+              "enum": [
+                "mem",
+                "file"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "rom"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "ns_per_tick": {
+              "default": "100",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "rtc"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "移位寄存器，支持串入/方向切换/清零",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "has_clr": {
+              "default": "0",
+              "type": "string"
+            },
+            "has_dir": {
+              "default": "0",
+              "type": "string"
+            },
+            "length": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "shift"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "符号扩展，将窄位宽有符号数扩展到宽位宽",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "dst_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "src_width": {
+              "default": "4",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "signext"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "SPI 主机（模式 0），按 clkdiv 分频收发 8 位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "clkdiv": {
+              "default": "4",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "spi"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "位拆分，将多bit输入拆分为num_bits个1位输出",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "num_bits": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "split"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "全减器，diff=a-b-bin, bout=借位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "sub"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "开关，en=1时out=in，en=0时高阻",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "switch"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "跨时钟域两级同步器，q 比 d 晚两个时钟沿",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "1",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "sync2ff"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "T触发器，clk上升沿且t=1时翻转",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "tff"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "三态缓冲器，oe=1时输出=输入，oe=0时高阻",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "tsbuf"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "16550A 兼容 8N1 串口（reg-shift=2），按 baud_div 个 tick 一位",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "baud_div": {
+              "default": "8",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "uart"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "baud_div": {
+              "default": "16",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "uart_feed"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "串口输入端：把宿主 stdin 的字符按 8N1 发到 UART 的 rx 引脚（baud_div 要和 UART 一致）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "baud_div": {
+              "default": "16",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "uart_in"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "baud_div": {
+              "default": "16",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "uart_term"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "virtio-blk：从端口接 CPU，主端口经总线访问 virtqueue；镜像来自宿主文件或 ROM",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "virtio_blk"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "virtio-blk：介质是设备自带存储，JIT 直接读写；框架可用 IStorage 装载镜像",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "size_kb": {
+              "default": "1024",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "virtio_blk_mem"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "virtio-input：宿主 pushInputEvent 塞 evdev 事件，设备把事件写进驱动提交的缓冲区",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "virtio_input"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "virtio-net：队列 0 收包、队列 1 发包；宿主用 pushRxPacket/popTxPacket 或 BackendOps 对接",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "backend": {
+              "default": "none",
+              "enum": [
+                "none",
+                "slirp"
+              ],
+              "type": "string"
+            },
+            "backend_opts": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "virtio_net"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "virtio-rng：设备把随机数写进驱动提供的缓冲区，随机数在 JIT 里生成",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "virtio_rng"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "日历时钟：虚拟模式按 ns_per_tick 累加；sync_host=1 时每个上升沿直接取宿主当前时间",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "base_epoch": {
+              "type": "string"
+            },
+            "ns_per_tick": {
+              "default": "100",
+              "type": "string"
+            },
+            "sync_host": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wallclock"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "看门狗定时器：CTRL/TIMEOUT/FEED/STATUS，超时拉 irq",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "watchdog"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "直接映射数据缓存，串在 CPU 与存储器之间",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "lines": {
+              "default": "16",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wb_cache"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "写直通数据缓存：命中读当拍应答，监听总线失效其它主设备写入的行",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "base": {
+              "default": "2147483648",
+              "type": "string"
+            },
+            "lines": {
+              "default": "1024",
+              "type": "string"
+            },
+            "size": {
+              "default": "268435456",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wb_dcache"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "num_masters": {
+              "default": "1",
+              "type": "string"
+            },
+            "segments": {
+              "default": "0:65536",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wishbone_ic"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "Wishbone 从设备存储器，支持 IStorage 加载程序",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "addr_width": {
+              "default": "16",
+              "type": "string"
+            },
+            "data_width": {
+              "default": "32",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wishbone_mem"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "ROM 的 Wishbone 适配器，插在 ROM 与 Wishbone 总线之间。适配器 rom_addr→ROM.addr, ROM.data_out→适配器 rom_data，适配器须在 ROM 之后加入电路",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "addr_width": {
+              "default": "16",
+              "type": "string"
+            },
+            "data_width": {
+              "default": "32",
+              "enum": [
+                "8",
+                "16",
+                "32",
+                "64"
+              ],
+              "type": "string"
+            },
+            "read_latency": {
+              "default": "0",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "wishbone_rom_adapter"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入同或门，相当于异或门+非门",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "xnor"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "多输入异或门，输入中1的个数为奇数时输出1",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "properties": {
+            "bit_width": {
+              "default": "8",
+              "type": "string"
+            },
+            "inputs": {
+              "default": "2",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "xor"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    }
+  ],
+  "title": "dcs 元件"
+}

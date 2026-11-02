@@ -16,11 +16,18 @@
 namespace dsc {
 
 struct CircuitDefinition;
+class CircuitLibrary;
 
 class CompositeComponent : public Component {
 public:
     // definition_name: CircuitLibrary 中注册的定义名
     CompositeComponent(const std::string &name, const std::string &definition_name);
+
+    // 定义来自哪个库。Circuit::addComponent 会设置成它所在上下文的库；
+    // 不设置时退回进程默认库（兼容直接 new 出来用的老代码）
+    void setLibrary(const CircuitLibrary *lib) {
+        _lib = lib;
+    }
 
     // 引用的定义名
     const std::string &definitionName() const {
@@ -59,6 +66,9 @@ public:
 private:
     std::string _def_name;
     bool _prepared = false;
+    const CircuitLibrary *_lib = nullptr;
+
+    const CircuitLibrary &lib() const;
 
     // 从定义加载引脚
     void loadPinsFromDef();
