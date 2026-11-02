@@ -1,0 +1,22 @@
+{
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "not_gate",
+    "author": "dcs",
+    "description": "单输入取反。单定义形式：内容直接写在根上，名字取 $meta.name"
+  },
+  "nets": ["in", "out"],
+  "components": [
+    {
+      "type": "not",
+      "name": "n0",
+      "params": { "bit_width": "1" },
+      "connections": { "in": "in", "out": "out" }
+    }
+  ],
+  "expose": {
+    "inputs": { "in": "in" },
+    "outputs": { "out": "out" }
+  }
+}

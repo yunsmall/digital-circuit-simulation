@@ -318,6 +318,42 @@ own options: `"params": {"backend": "slirp", "backend_opts": {"hostfwd": "..."}}
 flattened on load into the `backend_opts.hostfwd` parameter (the table stays string→string),
 and the backend picks out its own prefix.
 
+### Metadata and blueprint files
+
+Both kinds of file may carry optional metadata:
+
+```json
+"$meta": { "kind": "circuit", "format": 1, "author": "...", "description": "..." }
+```
+
+`kind` is `circuit` (the default when `$meta` is absent, so old files still load) or
+`blueprint`. `format` is the data-format version; a file newer than the program
+supports is rejected. `author`/`description` are optional and survive a JSON round trip.
+
+Reusable sub-circuits may live in their own blueprint files, referenced from the
+top-level `definitions` by path. Relative paths are resolved against the referencing
+file first, then against the `-I/--lib-path` directories (C++ include-path style):
+
+```json
+{
+  "$meta": { "kind": "circuit", "format": 1 },
+  "definitions": {
+    "not_gate": "library/not_gate.json"
+  },
+  "components": []
+}
+```
+
+A blueprint file is marked `"$meta": {"kind": "blueprint"}` and either holds a
+`definitions` map or one definition directly at the root (its name comes from
+`$meta.name`, falling back to the key used at the reference site). Inline definitions in
+the top-level file win over same-named ones from referenced files, and reference cycles
+are rejected. See `examples/jsons/composite_library.json` + `examples/jsons/library/`.
+
+`schemas/circuit.schema.json` and `schemas/blueprint.schema.json` are for editor
+completion only — they are never used for validation, and a file does not have to
+reference them.
+
 ## Architecture
 
 ```

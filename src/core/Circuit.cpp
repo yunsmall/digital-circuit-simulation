@@ -679,6 +679,17 @@ std::string Circuit::exportJson() const {
 
     json root;
 
+    // 元数据：kind 区分电路/蓝图，format 是数据格式版本。作者和说明是可选字段，
+    // 加载时原样保留、导出时写回，方便脚本和 IDE 识别文件用途
+    json meta;
+    meta["kind"] = "circuit";
+    meta["format"] = kJsonFormatVersion;
+    if (!_author.empty())
+        meta["author"] = _author;
+    if (!_description.empty())
+        meta["description"] = _description;
+    root["$meta"] = meta;
+
     // 共享定义库
     json j_defs = json::parse(CircuitLibrary::instance().exportJson());
     if (!j_defs.empty())

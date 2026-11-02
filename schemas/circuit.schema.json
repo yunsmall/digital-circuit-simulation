@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yunsmall/digital-circuit-simulation/schemas/circuit.schema.json",
+  "title": "dcs 顶层电路 JSON",
+  "description": "dcs 的顶层电路描述。只用于 IDE 提示，不参与运行期校验。$meta 可省略（老文件）。",
+  "type": "object",
+  "properties": {
+    "$meta": { "$ref": "#/$defs/meta" },
+    "definitions": {
+      "type": "object",
+      "description": "复合元件的蓝图。值是内联定义对象，或蓝图 JSON 的相对路径（先按本文件所在目录找，再按 --lib-path 找）",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "$ref": "#/$defs/definition" }
+        ]
+      }
+    },
+    "nets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "线网名列表；连接里出现但没在这里声明的名字会自动创建"
+    },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    }
+  },
+  "required": ["components"],
+  "additionalProperties": true,
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "description": "元数据。kind 省略时按 circuit 处理；format 是数据格式版本",
+      "properties": {
+        "kind": { "enum": ["circuit", "blueprint"], "default": "circuit" },
+        "format": { "type": "integer", "minimum": 1, "default": 1 },
+        "name": { "type": "string", "description": "仅蓝图使用" },
+        "author": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "component": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "type": "string", "description": "元件类型，见 dcs --list-types" },
+        "name": { "type": "string", "description": "电路内唯一实例名" },
+        "params": {
+          "type": "object",
+          "description": "元件参数。值可以是标量，也可以嵌套对象（后端私有选项会被拍平成 a.b 键）",
+          "additionalProperties": true
+        },
+        "connections": {
+          "type": "object",
+          "description": "引脚名 → 线网名",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "definition": {
+      "type": "object",
+      "description": "一个复合元件的蓝图：{ nets, components, expose }",
+      "properties": {
+        "nets": { "type": "array", "items": { "type": "string" } },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+        "expose": {
+          "type": "object",
+          "description": "把内部线网暴露成复合元件的引脚",
+          "properties": {
+            "inputs": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "outputs": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

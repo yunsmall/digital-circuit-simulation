@@ -36,6 +36,16 @@ public:
     const CircuitDefinition *find(const std::string &name) const;
     bool exists(const std::string &name) const;
 
+    // 蓝图库查找路径（类似编译器的 -I）：definitions 里的相对路径先按引用它的
+    // JSON 所在目录找，找不到再按这里的顺序逐个找。CLI 的 --lib-path 就是往这里加
+    void addSearchPath(const std::string &dir);
+    const std::vector<std::string> &searchPaths() const {
+        return _search_paths;
+    }
+    void clearSearchPaths() {
+        _search_paths.clear();
+    }
+
     // JSON 支持
     std::string exportJson() const;
     void importJson(const std::string &json, std::string &error);
@@ -46,6 +56,7 @@ public:
 
 private:
     std::unordered_map<std::string, CircuitDefinition> _defs;
+    std::vector<std::string> _search_paths;
 };
 
 } // namespace dsc

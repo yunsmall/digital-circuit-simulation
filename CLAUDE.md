@@ -437,6 +437,26 @@ ack/dat 下一拍就组合多路选择给主设备，从设备侧请求仍在时
 访问和直连从设备的周期数相同（`tests/test_wishbone_ic/perf_latency.cpp` 守着这条
 不变量）；空闲拍不重写主设备侧输出（`_wbic_any` 门控）。
 
+## 电路 JSON 的两种文件形式
+
+顶层电路和可复用的蓝图可以分开存文件，两者都带可选的 `$meta`：
+
+```json
+"$meta": { "kind": "circuit", "format": 1, "author": "...", "description": "..." }
+```
+
+- 没有 `$meta` 按 circuit 处理（向后兼容）；蓝图必须写 `kind: "blueprint"`，
+  直接当顶层电路加载会报错。
+- `format` 是 JSON 数据格式版本（`kJsonFormatVersion`，见 `CircuitSerializer.h`），
+  加载时拒绝比程序新的版本。新增可选字段不用升版本。
+- 顶层 `definitions` 的值可以是内联定义对象，也可以是蓝图文件路径。相对路径先按
+  引用它的文件所在目录找，再按 `-I/--lib-path` 的顺序找
+  （`CircuitLibrary::searchPaths()`），和 C++ 头文件搜索一致。
+- 蓝图文件里可以写 `definitions` 映射（一个文件多个定义），也可以把单个定义直接
+  写在根上，名字取 `$meta.name`，没写就用引用处的键。
+- 文件引用先导入、顶层内联定义后导入，同名时以内联定义为准；蓝图之间循环引用
+  会报错。`schemas/*.schema.json` 只给 IDE 提示，不参与校验。
+
 ## 元件 JSON 序列化 / 反序列化注意事项
 
 序列化流程：`toJson()` → `jc["type"] = c->typeName()` + `jc["params"] = c->exportParams()` → `fromJson()` → `factory.create(type, name, params)`

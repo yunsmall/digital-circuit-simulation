@@ -24,6 +24,12 @@ bool CircuitLibrary::exists(const std::string &name) const {
     return _defs.find(name) != _defs.end();
 }
 
+void CircuitLibrary::addSearchPath(const std::string &dir) {
+    if (dir.empty())
+        return;
+    _search_paths.push_back(dir);
+}
+
 std::string CircuitLibrary::exportJson() const {
     using json = nlohmann::json;
     json root = json::object();

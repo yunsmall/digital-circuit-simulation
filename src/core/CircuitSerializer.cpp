@@ -1,10 +1,14 @@
 #include "dcs/CircuitSerializer.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -15,6 +19,170 @@
 namespace dsc {
 
 namespace {
+
+bool readWholeFile(const std::filesystem::path &p, std::string &out) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f)
+        return false;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+// 读取 $meta：kind 缺省为 circuit，format 缺省为 1；比本程序新的大版本直接拒绝。
+// 元数据本身是可选的，老文件（没有 $meta）按电路处理
+bool readMeta(const nlohmann::json &root, std::string &kind, std::string &error) {
+    kind = "circuit";
+    auto it = root.find("$meta");
+    if (it == root.end())
+        return true;
+    if (!it->is_object()) {
+        error = "$meta 必须是对象";
+        return false;
+    }
+    if (auto k = it->find("kind"); k != it->end()) {
+        if (!k->is_string()) {
+            error = "$meta.kind 必须是字符串（circuit 或 blueprint）";
+            return false;
+        }
+        kind = k->get<std::string>();
+    }
+    if (auto f = it->find("format"); f != it->end()) {
+        if (!f->is_number_integer()) {
+            error = "$meta.format 必须是整数";
+            return false;
+        }
+        const int version = f->get<int>();
+        if (version < 1 || version > kJsonFormatVersion) {
+            error = std::format("JSON 格式版本 {} 不受支持（本程序支持 1~{}），请升级 dcs", version,
+                                kJsonFormatVersion);
+            return false;
+        }
+    }
+    return true;
+}
+
+// 蓝图路径解析：绝对路径直接用；相对路径先按引用它的 JSON 所在目录找，
+// 再按 --lib-path 给的目录顺序找
+std::filesystem::path resolveLibPath(const std::string &p, const std::filesystem::path &base) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path rel(p);
+    if (rel.is_absolute())
+        return fs::exists(rel, ec) ? rel : fs::path{};
+    if (auto cand = base / rel; fs::exists(cand, ec))
+        return cand;
+    for (auto &dir: CircuitLibrary::instance().searchPaths()) {
+        if (auto cand = fs::path(dir) / rel; fs::exists(cand, ec))
+            return cand;
+    }
+    return {};
+}
+
+bool importBlueprintFile(const std::filesystem::path &file, const std::string &key,
+                         std::vector<std::string> &stack, std::string &error);
+
+// definitions 对象：值是对象 → 内联定义；值是字符串 → 相对路径引用蓝图 JSON
+bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &base,
+                       std::vector<std::string> &stack, std::string &error) {
+    using json = nlohmann::json;
+    if (!defs.is_object()) {
+        error = "definitions 必须是对象（定义名 → 定义对象或蓝图文件路径）";
+        return false;
+    }
+    // 文件引用先导入、内联定义后导入：同名时以本文件里的内联定义为准
+    json inline_defs = json::object();
+    for (auto &[key, val]: defs.items()) {
+        if (val.is_string()) {
+            const auto file = resolveLibPath(val.get<std::string>(), base);
+            if (file.empty()) {
+                error = std::format("找不到蓝图文件 '{}'（键 '{}'）：相对路径按引用文件所在目录和 "
+                                    "--lib-path 查找",
+                                    val.get<std::string>(), key);
+                return false;
+            }
+            if (!importBlueprintFile(file, key, stack, error))
+                return false;
+        } else if (val.is_object()) {
+            inline_defs[key] = val;
+        } else {
+            error = std::format("definitions['{}'] 必须是定义对象或蓝图文件路径", key);
+            return false;
+        }
+    }
+    if (!inline_defs.empty()) {
+        std::string import_error;
+        CircuitLibrary::instance().importJson(inline_defs.dump(), import_error);
+        if (!import_error.empty()) {
+            error = import_error;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool importBlueprintFile(const std::filesystem::path &file, const std::string &key,
+                         std::vector<std::string> &stack, std::string &error) {
+    using json = nlohmann::json;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string canon = fs::weakly_canonical(file, ec).string();
+    if (std::find(stack.begin(), stack.end(), canon) != stack.end()) {
+        error = std::format("蓝图引用出现循环: {}", canon);
+        return false;
+    }
+    stack.push_back(canon);
+
+    std::string text;
+    if (!readWholeFile(file, text)) {
+        error = std::format("读不了蓝图文件: {}", file.string());
+        return false;
+    }
+    json root;
+    try {
+        root = json::parse(text);
+    } catch (const json::parse_error &e) {
+        error = std::format("蓝图 JSON 解析失败（{}）: {}", file.string(), e.what());
+        return false;
+    }
+
+    std::string kind;
+    if (!readMeta(root, kind, error)) {
+        error = std::format("{}: {}", file.string(), error);
+        return false;
+    }
+    if (kind != "blueprint") {
+        error = std::format("{} 不是蓝图 JSON（$meta.kind 应为 \"blueprint\"）", file.string());
+        return false;
+    }
+
+    if (root.contains("definitions")) {
+        if (!importDefinitions(root["definitions"], file.parent_path(), stack, error))
+            return false;
+    } else if (root.contains("components")) {
+        // 单定义蓝图：定义内容直接写在根上，名字取 $meta.name，没写就用引用处的键。
+        // 一个文件一个元件时用这种形式最省事
+        json def = root;
+        def.erase("$meta");
+        std::string name = key;
+        if (auto m = root.find("$meta"); m != root.end() && m->contains("name") && (*m)["name"].is_string())
+            name = (*m)["name"].get<std::string>();
+        json wrap = json::object();
+        wrap[name] = def;
+        std::string import_error;
+        CircuitLibrary::instance().importJson(wrap.dump(), import_error);
+        if (!import_error.empty()) {
+            error = import_error;
+            return false;
+        }
+    } else {
+        error = std::format("蓝图 JSON 里既没有 definitions 也没有 components: {}", file.string());
+        return false;
+    }
+    stack.pop_back();
+    return true;
+}
 
 // 参数值除了标量，还可以是嵌套对象（后端私有选项之类）。对象按键路径拍平成
 // "backend_opts.hostfwd" 这样的扁平键，参数表因此保持 string→string 不变，
@@ -42,8 +210,28 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
         error = std::format("JSON 解析失败: {}", e.what());
         return nullptr;
     }
+    if (!root.is_object()) {
+        error = "电路 JSON 的根必须是对象";
+        return nullptr;
+    }
+
+    // 元数据：区分电路/蓝图，检查格式版本。蓝图文件要由顶层电路的 definitions 引用
+    std::string kind;
+    if (!readMeta(root, kind, error))
+        return nullptr;
+    if (kind == "blueprint") {
+        error = "这是蓝图 JSON（$meta.kind=blueprint），不能直接当电路加载；"
+                "应放到顶层电路的 definitions 里引用";
+        return nullptr;
+    }
+    if (kind != "circuit") {
+        error = std::format("未知的 $meta.kind: '{}'（应为 circuit 或 blueprint）", kind);
+        return nullptr;
+    }
 
     auto circuit = std::make_unique<Circuit>();
+    if (auto m = root.find("$meta"); m != root.end())
+        circuit->setMetadata(m->value("author", std::string{}), m->value("description", std::string{}));
 
     // 1. 创建线网，记录名字→Net*
     std::unordered_map<std::string, Net *> net_map;
@@ -67,9 +255,13 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
         return net;
     };
 
-    // 2. 导入共享定义（必须在创建实例前）
-    if (root.contains("definitions"))
-        CircuitLibrary::instance().importJson(root["definitions"].dump(), error);
+    // 2. 导入共享定义（必须在创建实例前）：值可以是内联定义，也可以是蓝图文件路径
+    if (root.contains("definitions")) {
+        const std::filesystem::path base = base_dir.empty() ? std::filesystem::current_path() : std::filesystem::path(base_dir);
+        std::vector<std::string> stack;
+        if (!importDefinitions(root["definitions"], base, stack, error))
+            return nullptr;
+    }
 
     // 3. 创建元件
     if (!root.contains("components") || !root["components"].is_array()) {

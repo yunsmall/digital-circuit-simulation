@@ -154,6 +154,18 @@ public:
     static std::unique_ptr<Circuit> fromJson(const std::string &json, std::string &error,
                                              const std::string &base_dir = ""); // 从 JSON 重建电路
 
+    // JSON 元数据：加载时从 $meta 读入、导出时原样写回（都可为空）
+    void setMetadata(const std::string &author, const std::string &description) {
+        _author = author;
+        _description = description;
+    }
+    [[nodiscard]] const std::string &author() const {
+        return _author;
+    }
+    [[nodiscard]] const std::string &description() const {
+        return _description;
+    }
+
     // --- JIT 头文件搜索路径 ---
     // 设置后优先使用；为空时使用默认行为（exe 同目录下的 shim/）
     static void setJitIncludeDir(const std::string &dir);
@@ -168,6 +180,9 @@ private:
     std::map<int, std::vector<BusDriver>> _bus_nets;
 
     bool _compiled = false;
+
+    // JSON 元数据（$meta.author / $meta.description），导出时写回
+    std::string _author, _description;
     CircuitError _tick_error;
 
     // JIT 后端是编译期选定的具体类型，不是多态接口——这里的每次调用都只发生在

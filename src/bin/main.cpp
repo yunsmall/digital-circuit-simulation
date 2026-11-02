@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
+#include <dcs/CircuitLibrary.h>
 #include <dcs/ComponentFactory.h>
 #include <dcs/TruthTable.h>
 #include <dcs/components/memory/WishboneMemory.h>
@@ -396,7 +397,9 @@ int main(int argc, char *argv[]) {
             "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>())(
             "truth-table", "导出组合电路的真值表和卡诺图（需 --inputs 和 --output）")(
             "inputs", "真值表的输入网名，逗号分隔（第一个是最高位）", cxxopts::value<std::string>())(
-            "output", "真值表的输出网名", cxxopts::value<std::string>());
+            "output", "真值表的输出网名", cxxopts::value<std::string>())(
+            "I,lib-path", "蓝图库查找路径（可重复）；definitions 里的相对路径先按引用文件所在目录找，再按这些目录顺序找",
+            cxxopts::value<std::vector<std::string>>());
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
@@ -432,6 +435,11 @@ int main(int argc, char *argv[]) {
 )";
         return 0;
     }
+
+    // 蓝图库查找路径要在任何 fromJson 之前登记（电路 JSON 的 definitions 会用到）
+    if (result.count("lib-path"))
+        for (auto &p: result["lib-path"].as<std::vector<std::string>>())
+            dsc::CircuitLibrary::instance().addSearchPath(p);
 
     if (result.count("list-types")) {
         if (result.count("json"))

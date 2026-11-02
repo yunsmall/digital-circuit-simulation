@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "演示从蓝图文件加载复合元件：definitions 里用相对路径引用 library/not_gate.json"
+  },
+  "definitions": {
+    "not_gate": "library/not_gate.json"
+  },
+  "nets": ["a", "y"],
+  "components": [
+    {
+      "type": "constant",
+      "name": "in0",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "a" }
+    },
+    {
+      "type": "composite",
+      "name": "u_not",
+      "params": { "definition": "not_gate" },
+      "connections": { "in": "a", "out": "y" }
+    }
+  ]
+}

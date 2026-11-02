@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cxxopts.hpp>
 #include <dcs/Circuit.h>
+#include <dcs/CircuitLibrary.h>
 #include <dcs/components/platform/RiscVCPU.h>
 #include <dcs/components/platform/WishboneDcache.h>
 #include <dcs/components/io/UartFeed.h>
@@ -415,7 +416,9 @@ int main(int argc, char *argv[]) {
             cxxopts::value<std::string>())(
             "dump-mem", "仿真结束后按 addr:len（十六进制，物理地址）导出存储器内容",
             cxxopts::value<std::string>())(
-            "trace-cpu", "长时间 PC 不变时打印 CPU 现场（调试死循环 / 等中断用）");
+            "trace-cpu", "长时间 PC 不变时打印 CPU 现场（调试死循环 / 等中断用）")(
+            "I,lib-path", "蓝图库查找路径（可重复）；definitions 里的相对路径先按引用文件所在目录找，再按这些目录顺序找",
+            cxxopts::value<std::vector<std::string>>());
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
 
@@ -451,6 +454,11 @@ int main(int argc, char *argv[]) {
 )";
         return 0;
     }
+
+    // 蓝图库查找路径要在 fromJson 之前登记（电路 JSON 的 definitions 会用到）
+    if (result.count("lib-path"))
+        for (auto &p: result["lib-path"].as<std::vector<std::string>>())
+            dsc::CircuitLibrary::instance().addSearchPath(p);
 
     if (!result.count("circuit")) {
         std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";

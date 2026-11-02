@@ -328,6 +328,40 @@ UART 的 `reg-shift`、CLINT 的 mtimecmp 复位值等）都在
 `"params": {"backend": "slirp", "backend_opts": {"hostfwd": "..."}}` 加载时拍平成
 `backend_opts.hostfwd` 参数键（参数表仍然是 string→string），后端按前缀取自己那段。
 
+### 元数据与蓝图文件
+
+两种 JSON 都可以带可选的元数据：
+
+```json
+"$meta": { "kind": "circuit", "format": 1, "author": "...", "description": "..." }
+```
+
+`kind` 是 `circuit`（没有 `$meta` 时的默认值，老文件照常加载）或 `blueprint`；
+`format` 是数据格式版本，比程序支持的新会直接拒绝；`author` / `description` 可选，
+JSON 往返后会保留。
+
+可复用的子电路可以单独存成蓝图 JSON，顶层电路在 `definitions` 里按路径引用。
+相对路径先按引用它的文件所在目录找，再按 `-I/--lib-path` 给的目录顺序找
+（和 C++ 头文件搜索一样）：
+
+```json
+{
+  "$meta": { "kind": "circuit", "format": 1 },
+  "definitions": {
+    "not_gate": "library/not_gate.json"
+  },
+  "components": []
+}
+```
+
+蓝图文件用 `"$meta": {"kind": "blueprint"}` 标记，内容可以是 `definitions` 映射，
+也可以把单个定义直接写在根上（名字取 `$meta.name`，没写就用引用处的键）。顶层文件里的
+内联定义优先于文件里的同名定义；蓝图之间循环引用会被拒绝。示例见
+`examples/jsons/composite_library.json` 和 `examples/jsons/library/`。
+
+`schemas/circuit.schema.json`、`schemas/blueprint.schema.json` 只给编辑器提示用，
+不参与任何校验，文件里不引用它们也没关系。
+
 ## 技术架构
 
 ```

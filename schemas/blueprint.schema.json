@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yunsmall/digital-circuit-simulation/schemas/blueprint.schema.json",
+  "title": "dcs 蓝图 JSON",
+  "description": "可复用的复合元件定义，被顶层电路 JSON 的 definitions 按路径引用。$meta.kind 必须是 blueprint。只用于 IDE 提示，不参与运行期校验。",
+  "type": "object",
+  "properties": {
+    "$meta": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "blueprint" },
+        "format": { "type": "integer", "minimum": 1, "default": 1 },
+        "name": { "type": "string", "description": "单定义形式时用它作为定义名" },
+        "author": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "definitions": {
+      "type": "object",
+      "description": "多定义形式：定义名 → 定义对象。定义之间也可以按路径引用别的蓝图文件",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "$ref": "#/$defs/definition" }
+        ]
+      }
+    },
+    "nets": { "type": "array", "items": { "type": "string" } },
+    "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+    "expose": { "$ref": "#/$defs/expose" }
+  },
+  "required": ["$meta"],
+  "anyOf": [
+    { "required": ["definitions"] },
+    { "required": ["components"] }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "component": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "params": { "type": "object", "additionalProperties": true },
+        "connections": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "expose": {
+      "type": "object",
+      "description": "把内部线网暴露成复合元件的引脚",
+      "properties": {
+        "inputs": { "type": "object", "additionalProperties": { "type": "string" } },
+        "outputs": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "nets": { "type": "array", "items": { "type": "string" } },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+        "expose": { "$ref": "#/$defs/expose" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
