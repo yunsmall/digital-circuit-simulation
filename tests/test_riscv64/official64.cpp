@@ -158,15 +158,23 @@ uint32_t runElf(const std::string &path, std::string &err) {
 TEST(RiscV64Official, AllElf) {
     namespace fs = std::filesystem;
     const std::string dir = elfDir();
+    // 环境变量是 CMake 设的绝对路径（构建目录里跑 ctest 就是这种情况）：目录缺失
+    // 说明 ELF 没编出来，不能算通过，否则 CI 上会静默跳过、结果仍是绿的
+    const bool configured = std::getenv("DCS_RISCV64_ELF_DIR") != nullptr;
     if (!fs::is_directory(dir)) {
-        GTEST_SKIP() << "找不到 RV64 官方测试 ELF 目录: " << dir << "（先跑 tests/riscv-official/build_rv64.sh）";
+        if (configured)
+            GTEST_FAIL() << "RV64 官方测试 ELF 目录不存在: " << dir << "（先跑 tests/riscv-official/build.sh）";
+        GTEST_SKIP() << "找不到 RV64 官方测试 ELF 目录: " << dir << "（先跑 tests/riscv-official/build.sh）";
     }
     std::vector<fs::path> elfs;
     for (const auto &e : fs::directory_iterator(dir))
         if (e.path().extension() == ".elf")
             elfs.push_back(e.path());
-    if (elfs.empty())
+    if (elfs.empty()) {
+        if (configured)
+            GTEST_FAIL() << "RV64 官方测试 ELF 目录是空的: " << dir << "（build.sh 可能编译失败）";
         GTEST_SKIP() << "目录里没有 .elf: " << dir;
+    }
     std::sort(elfs.begin(), elfs.end());
 
     // 每个用例都搭一份独立电路，JIT 上下文是每实例独立的（编译器目标初始化已 call_once），

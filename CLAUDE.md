@@ -140,6 +140,17 @@ cmake --build build --parallel --config RelWithDebInfo
 ctest --test-dir build -C RelWithDebInfo --output-on-failure
 ```
 
+官方 riscv-tests 的 ELF 不在版本库里，`test_riscv` / `test_riscv64` 在找不到目录时会
+`GTEST_SKIP`（CI 上会被静默跳过）。本地要跑官方套件先编：
+
+```bash
+bash tests/riscv-official/build.sh     # 产物 tests/riscv-official/out、out64
+```
+
+脚本用 clang 交叉编译（默认 `CLANG=clang`，可覆盖），链接必须走 lld——宿主的系统
+`ld` 不认 riscv 目标。CI 由独立的 `riscv-elfs` 任务在 Ubuntu 上编一次，其余矩阵任务
+下载 artifact 复用。
+
 ## 性能基准
 
 `benchmarks/` 下有六个 ELF 负载场景和两个纯电路场景，用来防止性能回归。

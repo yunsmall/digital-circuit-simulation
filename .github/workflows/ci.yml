@@ -8,8 +8,48 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 官方 riscv-tests 的 ELF 只在 Linux 上编一次，其它任务下载产物复用。
+  # 测试代码在找不到目录时会 GTEST_SKIP，所以这一步必须存在，否则官方用例全被跳过。
+  riscv-elfs:
+    name: riscv-tests ELF
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # ELF 只取决于 riscv-tests 源码、构建脚本和编译器版本：把这些输入哈希进 key，
+      # 命中就直接复用上次的产物（约 4 MB），不用重编。改了脚本或换 clang 大版本会自动失效
+      - uses: actions/cache@v4
+        id: elf-cache
+        with:
+          path: |
+            tests/riscv-official/out
+            tests/riscv-official/out64
+          key: riscv-elfs-${{ runner.os }}-clang22-${{ hashFiles('tests/riscv-official/src/**', 'tests/riscv-official/env/**', 'tests/riscv-official/env_p/**', 'tests/riscv-official/build.sh', 'tests/riscv-official/fix_float16.py', 'tests/riscv-official/*.ld') }}
+
+      # 链接器必须用 lld：宿主是 x86 时系统 ld 不认 riscv 目标。
+      # 用 LLVM 22 编，和主构建的 clang 版本保持一致（Zicond/Zbkb 等新扩展需要较新的 LLVM）
+      - name: Install LLVM 22
+        if: steps.elf-cache.outputs.cache-hit != 'true'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 22
+          sudo apt-get install -y -qq clang-22 lld-22
+        shell: bash
+
+      - name: Build official riscv-tests ELFs
+        if: steps.elf-cache.outputs.cache-hit != 'true'
+        run: CLANG=clang-22 JOBS=4 bash tests/riscv-official/build.sh
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: riscv-tests-elfs
+          path: |
+            tests/riscv-official/out
+            tests/riscv-official/out64
+
   build:
     name: ${{ matrix.os }} / ${{ matrix.backend }}
+    needs: riscv-elfs
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -23,6 +63,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # 官方 riscv-tests 的 ELF（由 riscv-elfs 任务在 Linux 上编好）。
+      # artifact 里是 out/ 和 out64/ 两个目录（upload 的公共前缀是 riscv-official），
+      # 直接解到源码树的 riscv-official 下，CMake 设的 DCS_RISCV*_ELF_DIR 正好指向这里
+      - uses: actions/download-artifact@v4
+        with:
+          name: riscv-tests-elfs
+          path: tests/riscv-official
 
       # ============================================================
       # CMake >= 4.2（pip 安装，跨平台可靠）

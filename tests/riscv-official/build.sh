@@ -7,13 +7,19 @@
 # gcc 可以。本机只有 clang，所以这里把源码复制到临时目录并去掉这两行 .global，
 # 仓库里不必再维护一份改过的副本——从 GitHub 下载的原始源码可以直接编译。
 #
+# 链接器必须用 lld（-fuse-ld=lld）：宿主是 x86 时系统自带的 ld 只有 x86 模拟
+# （报 "unrecognised emulation mode: elf64lriscv"），只有 lld 能链接 riscv 目标。
+#
 # 用法: bash build.sh [输出目录32] [输出目录64]
 #       环境变量 RISCV_TESTS_DIR 指定原始源码根（含 isa/ 与 env/），
 #       默认依次找 tmp/riscv-tests-master、tests/riscv-official/src
+#       环境变量 CLANG 指定编译器（默认 clang），JOBS 指定并行度（默认 6）
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CLANG=${CLANG:-clang}
 JOBS=${JOBS:-6}
+# 有些发行版只装 python3，没有 python 这个名字
+PYTHON=${PYTHON:-$(command -v python || command -v python3)}
 OUT32=${1:-$ROOT/tests/riscv-official/out}
 OUT64=${2:-$ROOT/tests/riscv-official/out64}
 
@@ -51,12 +57,12 @@ plan_suite() {
         # 去掉 .global mtvec_handler / .global stvec_handler（见文件头说明），
         # 并把 .float16 换成 .hword 位模式
         grep -v -E '^[[:space:]]*\.global[[:space:]]+(mtvec|stvec)_handler' "$STRIP/$suite/$name.i.S" \
-            | python "$ROOT/tests/riscv-official/fix_float16.py" > "$STRIP/$suite/$name.S"
+            | "$PYTHON" "$ROOT/tests/riscv-official/fix_float16.py" > "$STRIP/$suite/$name.S"
         # dirty.S 用 "符号 - DRAM_BASE" 计算虚拟地址：只有链接在 DRAM_BASE 时
         # 这个差值才是它期望的低地址（链接在 0 会让 32 位减法回绕）
         link=$LINK_LOW
         [ "$name" = "dirty" ] && link=$LINK_DRAM
-        echo "$CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi -nostdlib -nostartfiles -static -x assembler -T$link -Wl,--no-relax -o $outdir/$suite-p-$name.elf $STRIP/$suite/$name.S || echo FAIL:$suite-p-$name.elf >> $CMDS.fail" >> "$CMDS"
+        echo "$CLANG --target=riscv${xlen}-unknown-elf -march=$march -mabi=$mabi -nostdlib -nostartfiles -static -fuse-ld=lld -x assembler -T$link -Wl,--no-relax -o $outdir/$suite-p-$name.elf $STRIP/$suite/$name.S || echo FAIL:$suite-p-$name.elf >> $CMDS.fail" >> "$CMDS"
     done
 }
 
