@@ -37,9 +37,11 @@ Thumbs.db
 .claude/
 CLAUDE.local.md
 
-# 官方 riscv-tests 的编译产物，用 tests/riscv-official/build.sh（RV64 用 build_rv64.sh）生成
+# 官方 riscv-tests 的编译产物，用 tests/riscv-official/build.sh 生成（RV32 + RV64 一次编完）
 tests/riscv-official/out/
 tests/riscv-official/out64/
+# build.sh 预处理出来的 .i.S/.S 中间文件
+tests/riscv-official/.build-src/
 
 # 基准场景的交叉编译产物，用 benchmarks/build.sh 生成
 benchmarks/out/
