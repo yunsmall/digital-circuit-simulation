@@ -55,9 +55,18 @@ plan_suite() {
             -I"$ENVINC/p" -I"$ISADIR" -I"$ISADIR/macros/scalar" -I"$ENVINC" \
             -E "$s" -o "$STRIP/$suite/$name.i.S"
         # 去掉 .global mtvec_handler / .global stvec_handler（见文件头说明），
-        # 并把 .float16 换成 .hword 位模式
+        # 并把 .float16 换成 .hword 位模式；32 位目标再截断装不下的 li 立即数
+        # （rv32uzbb 的 zext_h/sext_h/sext_b 直接 include rv64 源码，见 fix_imm64.py）
+        imm_filter() {
+            if [ "$xlen" = 32 ]; then
+                "$PYTHON" "$ROOT/tests/riscv-official/fix_imm64.py"
+            else
+                cat
+            fi
+        }
         grep -v -E '^[[:space:]]*\.global[[:space:]]+(mtvec|stvec)_handler' "$STRIP/$suite/$name.i.S" \
-            | "$PYTHON" "$ROOT/tests/riscv-official/fix_float16.py" > "$STRIP/$suite/$name.S"
+            | "$PYTHON" "$ROOT/tests/riscv-official/fix_float16.py" \
+            | imm_filter > "$STRIP/$suite/$name.S"
         # dirty.S 用 "符号 - DRAM_BASE" 计算虚拟地址：只有链接在 DRAM_BASE 时
         # 这个差值才是它期望的低地址（链接在 0 会让 32 位减法回绕）
         link=$LINK_LOW
@@ -96,4 +105,11 @@ xargs -d '\n' -P "$JOBS" -I CMD sh -c CMD < "$CMDS"
 FAILED=0
 [ -f "$CMDS.fail" ] && FAILED=$(wc -l < "$CMDS.fail")
 echo "编译完成: $((TOTAL-FAILED)) 个, 失败 $FAILED 个 -> $OUT32 / $OUT64"
+if [ "$FAILED" -gt 0 ]; then
+    # 静默跳过会让"少编了几个"看起来和成功一样，失败用例必须让脚本以非 0 退出
+    echo "以下用例编译失败:" >&2
+    sed 's/^FAIL://' "$CMDS.fail" >&2
+    rm -f "$CMDS" "$CMDS.fail"
+    exit 1
+fi
 rm -f "$CMDS" "$CMDS.fail"

@@ -24,7 +24,7 @@ jobs:
           path: |
             tests/riscv-official/out
             tests/riscv-official/out64
-          key: riscv-elfs-${{ runner.os }}-clang22-${{ hashFiles('tests/riscv-official/src/**', 'tests/riscv-official/env/**', 'tests/riscv-official/env_p/**', 'tests/riscv-official/build.sh', 'tests/riscv-official/fix_float16.py', 'tests/riscv-official/*.ld') }}
+          key: riscv-elfs-${{ runner.os }}-clang22-${{ hashFiles('tests/riscv-official/src/**', 'tests/riscv-official/env/**', 'tests/riscv-official/env_p/**', 'tests/riscv-official/build.sh', 'tests/riscv-official/*.py', 'tests/riscv-official/*.ld') }}
 
       # 链接器必须用 lld：宿主是 x86 时系统 ld 不认 riscv 目标。
       # 用 LLVM 22 编，和主构建的 clang 版本保持一致（Zicond/Zbkb 等新扩展需要较新的 LLVM）
