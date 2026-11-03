@@ -103,17 +103,20 @@ public:
 
     // --- 仿真运行 ---
     void init(); // 调用 circuit_init()，清零所有状态
-    void tick(); // 调用 circuit_tick()，执行一个周期。有未清错误时直接返回
+    // 以下 tick 系列在"未编译/编译后结构又变了/有未清错误"时直接返回，
+    // 不执行过期的 JIT 代码
+    void tick(); // 调用 circuit_tick()，执行一个周期
     // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
     void tickCycle(int clk_net_id);
     // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）
     void tickCycles(int clk_net_id, uint64_t n);
     // 只跑 n 拍、不碰时钟线网：时钟由电路里的 clkgen 自己产生时用这个
     void tickBatch(uint64_t n);
-    // JIT 内的死循环，一直跑到进程被 Ctrl+C 终止
-    [[noreturn]] void tickForever();
+    // JIT 内的死循环，一直跑到进程被 Ctrl+C 终止；未编译/有错误时直接返回
+    void tickForever();
     void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
+    // 线网槽属于 JIT：未编译或结构已改时读写不做任何事
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
     // 标量快捷路径：高频驱动时钟/复位这类 1 位线网时，不必每拍构造一次 vector
     void setWire(int id, uint64_t value);

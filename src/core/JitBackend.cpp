@@ -252,10 +252,18 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
 
     auto action = std::make_unique<clang::EmitLLVMOnlyAction>(_impl->llvm_ctx.get());
     if (!ci->ExecuteAction(*action)) {
+        // action 可能持有挂在 llvm_ctx 上的 IR 对象，先放掉再销毁上下文
+        action.reset();
         cleanup();
         return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 编译 C 代码失败"};
     }
     auto module = action->takeModule();
+    if (!module) {
+        // ExecuteAction 成功但拿不到模块属于后端内部状态异常，不能解引用空指针
+        action.reset();
+        cleanup();
+        return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 没有返回 IR 模块"};
+    }
     runJitPasses(*module);
 
     // 调试用：把 JIT 实际拿去编译的 IR 落到文件里。JIT 出来的机器码没有符号表，
@@ -269,6 +277,8 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
 
     auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
     if (!jtmb) {
+        // module 析构要碰它所属的 LLVMContext，必须先放掉 module 再 cleanup
+        module.reset();
         cleanup();
         return {ErrorCode::JIT_LINK_FAILED, -1, "检测目标机失败: " + llvm::toString(jtmb.takeError())};
     }
@@ -276,6 +286,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     auto jit_or_err = llvm::orc::LLJITBuilder().setJITTargetMachineBuilder(std::move(*jtmb)).create();
     if (!jit_or_err) {
         auto llvm_err = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());
+        module.reset();
         cleanup();
         return {ErrorCode::JIT_LINK_FAILED, -1, llvm_err};
     }
@@ -305,6 +316,8 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
             add(name, ptr);
         if (auto err = _impl->jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(syms)))) {
             auto sym_err = "注入 JIT 符号失败: " + llvm::toString(std::move(err));
+            // module 还没交给 ThreadSafeModule，cleanup 会销毁它依赖的 LLVMContext
+            module.reset();
             cleanup();
             return {ErrorCode::JIT_SYMBOL_FAILED, -1, sym_err};
         }

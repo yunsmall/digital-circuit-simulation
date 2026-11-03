@@ -60,9 +60,8 @@ Circuit::Circuit() = default;
 
 Circuit::~Circuit() {
     // 先放掉 JIT 里持有的外部资源（circuit_deinit 的 dcs_dll_destroy、
-    // DllComponent 的句柄引用计数），再拆电路。clear() 是重建用的清理，
-    // 不能代替这一步——用户按"重建电路"的直觉直接 clear() 时，
-    // 析构时这一层兜底能保证资源最终归还
+    // DllComponent 的句柄引用计数），再拆电路。clear() 自己也做这一步，
+    // 所以"用户直接 clear() 重建"同样能归还资源
     deinit();
     clear();
 }
@@ -82,6 +81,10 @@ void Circuit::deinit() {
 }
 
 void Circuit::clear() {
+    // 先跑 deinit：它要用 JIT 里的 circuit_deinit 和元件对象，清掉 JIT/元件之后就跑不了了。
+    // deinit 内部会置空 _deinit_fn，元件侧保证 simDeinit 可重复调用，所以析构路径
+    // （先 deinit 再 clear）不会重复执行
+    deinit();
     jitCleanup();
     _nets.clear();
     _components.clear();
@@ -89,6 +92,7 @@ void Circuit::clear() {
 }
 
 void Circuit::reset() {
+    _tick_error = {};
     if (_reset_fn)
         _reset_fn();
 }
@@ -133,7 +137,12 @@ Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *
             *error = {ErrorCode::PREPARE_FAILED, -1, {}, prep_err};
         return nullptr;
     }
-    comp->setId((int) _components.size());
+    // 用"现有最大 ID + 1"而不是 size()：removeComponent 不重编号，
+    // 按 size 分配会和留下来的元件撞号（编译前按 id 查元件/生成符号都会歧义）
+    int next_id = 0;
+    for (auto &c: _components)
+        next_id = std::max(next_id, c->id() + 1);
+    comp->setId(next_id);
     Component *ptr = comp.get();
     _components.push_back(std::move(comp));
     _compiled = false; // 元件集合变了，旧的 JIT 代码不再对应当前电路
@@ -251,6 +260,11 @@ void Circuit::removeComponent(Component *comp) {
 }
 
 void Circuit::removeNet(Net *net) {
+    // 只接受本电路里的 net：外来 Net* 的 id 可能恰好等于本电路某根线网的 id，
+    // 直接按 id 删 _bus_nets 会误删本电路的总线驱动记录，而且不报错
+    if (std::find_if(_nets.begin(), _nets.end(),
+                     [net](const auto &uptr) { return uptr.get() == net; }) == _nets.end())
+        return;
     // 断开所有连接到此线网的引脚
     for (auto &c : _components) {
         for (auto &p : c->outputs()) {
@@ -514,6 +528,8 @@ CircuitError Circuit::compile() {
     // 先把入口指针全部置空再清理后端：cleanup() 会释放已编译的代码，
     // 若本次编译失败，残留的旧函数指针就成了悬空指针
     jitCleanup();
+    // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
+    _tick_error = {};
 
     // 展开复合元件
     if (auto err = expandComposites(); err.code != ErrorCode::OK)
@@ -592,6 +608,8 @@ CircuitError Circuit::compile() {
 // ============================================================
 
 void Circuit::init() {
+    // 初始化等于一次冷启动，上一个电路残留的运行期错误不能带进新状态
+    _tick_error = {};
     // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）
     for (auto &comp: _components)
         comp->simInit();
@@ -599,6 +617,10 @@ void Circuit::init() {
         _init_fn();
 }
 void Circuit::tick() {
+    // 编译后改了结构只会清 _compiled，旧 JIT 还在：直接跑会用过期代码读写
+    // 已经变过的 net/元件编号，结果静默出错。没编译好就当没有电路
+    if (!_compiled)
+        return;
     if (_tick_error.code != ErrorCode::OK)
         return;
     if (_tick_fn)
@@ -606,6 +628,8 @@ void Circuit::tick() {
 }
 
 void Circuit::tickCycle(int clk_net_id) {
+    if (!_compiled)
+        return;
     if (_tick_error.code != ErrorCode::OK)
         return;
     if (_tick_cycle_fn) {
@@ -619,6 +643,8 @@ void Circuit::tickCycle(int clk_net_id) {
 }
 
 void Circuit::tickCycles(int clk_net_id, uint64_t n) {
+    if (!_compiled)
+        return;
     if (_tick_error.code != ErrorCode::OK)
         return;
     if (_tick_cycles_fn) {
@@ -630,6 +656,8 @@ void Circuit::tickCycles(int clk_net_id, uint64_t n) {
 }
 
 void Circuit::tickBatch(uint64_t n) {
+    if (!_compiled)
+        return;
     if (_tick_error.code != ErrorCode::OK)
         return;
     if (_tick_batch_fn) {
@@ -641,6 +669,8 @@ void Circuit::tickBatch(uint64_t n) {
 }
 
 void Circuit::tickForever() {
+    if (!_compiled)
+        return;
     if (_tick_forever_fn)
         _tick_forever_fn();
     for (;;)
@@ -668,7 +698,7 @@ void Circuit::onBusConflict(int net_id) {
 }
 
 void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
-    if (!_set_wire_fn)
+    if (!_compiled || !_set_wire_fn)
         return;
     uint8_t buf[16] = {};
     for (size_t i = 0; i < value.size() && i < 16; i++)
@@ -677,6 +707,8 @@ void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
 }
 
 void Circuit::setWire(int id, uint64_t value) {
+    if (!_compiled)
+        return;
     if (_set_wire_u64_fn) {
         _set_wire_u64_fn(id, value);
         return;
@@ -690,7 +722,7 @@ void Circuit::setWire(int id, uint64_t value) {
 
 std::vector<uint8_t> Circuit::getWire(int id) {
     std::vector<uint8_t> val(16, 0);
-    if (_get_wire_fn)
+    if (_compiled && _get_wire_fn)
         _get_wire_fn(id, val.data());
     return val;
 }

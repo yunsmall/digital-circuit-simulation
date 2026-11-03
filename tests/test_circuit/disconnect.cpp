@@ -3,6 +3,7 @@
 #include <dcs/components/combinational/BarrelShifter.h>
 #include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
+#include <set>
 
 // getWire 固定返回 16 字节，辅助比较
 static std::vector<uint8_t> w(uint8_t b) {
@@ -167,4 +168,75 @@ TEST(DisconnectTest, RemoveComponent) {
     // g2 仍在电路中
     EXPECT_EQ(c.components()[0].get(), g2);
     EXPECT_NO_THROW(c.compile());
+}
+
+// 删掉元件后再加，新元件不能复用仍在电路里的 ID（编译前按 id 查元件会歧义）
+TEST(DisconnectTest, AddAfterRemoveKeepsIdsUnique) {
+    dsc::Circuit c;
+    auto *a = c.addComponent(std::make_unique<dsc::UnaryGate>("a", 8, false));
+    auto *b = c.addComponent(std::make_unique<dsc::UnaryGate>("b", 8, false));
+    auto *d = c.addComponent(std::make_unique<dsc::UnaryGate>("d", 8, false));
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    ASSERT_NE(d, nullptr);
+
+    c.removeComponent(a);
+    auto *e = c.addComponent(std::make_unique<dsc::UnaryGate>("e", 8, false));
+    ASSERT_NE(e, nullptr);
+
+    std::set<int> ids;
+    for (auto &comp: c.components())
+        ids.insert(comp->id());
+    EXPECT_EQ(ids.size(), c.components().size()) << "元件 ID 出现重复";
+    EXPECT_NE(e->id(), b->id());
+    EXPECT_NE(e->id(), d->id());
+}
+
+// 编译后改结构又没重新编译时，tick/setWire/getWire 必须拒绝执行过期 JIT
+TEST(DisconnectTest, TickAfterStructuralChangeIsIgnored) {
+    dsc::Circuit c;
+    auto *n0 = c.createNet("n0"), *n1 = c.createNet("n1");
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("buf", 8, false));
+    c.connect(g, "in", n0);
+    c.connect(g, "out", n1);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    c.setWire(n0->id(), w(0xAA));
+    c.tick();
+    EXPECT_EQ(c.getWire(n1->id()), w(0xAA));
+
+    // 结构改了但没重编译：旧 JIT 的线网编号已经对不上
+    c.disconnect(g, "out");
+    c.setWire(n0->id(), w(0x55));
+    c.tick();
+    EXPECT_EQ(c.getWire(n1->id()), w(0)) << "过期 JIT 仍在执行";
+}
+
+// 总线冲突留在 _tick_error 里，重新编译/初始化后必须清掉，否则新电路一 tick 就停摆
+TEST(DisconnectTest, TickErrorClearedOnRecompile) {
+    dsc::Circuit c;
+    auto *n_in = c.createNet("in"), *n_bus = c.createNet("bus"), *n_en = c.createNet("en");
+    auto *ts1 = c.addComponent(std::make_unique<dsc::GateTSBUF>("ts1", 8));
+    auto *ts2 = c.addComponent(std::make_unique<dsc::GateTSBUF>("ts2", 8));
+    c.connect(ts1, "in", n_in);
+    c.connect(ts1, "out", n_bus);
+    c.connect(ts1, "oe", n_en);
+    c.connect(ts2, "in", n_in);
+    c.connect(ts2, "out", n_bus);
+    c.connect(ts2, "oe", n_en);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    c.setWire(n_in->id(), w(0x5A));
+    c.setWire(n_en->id(), w(1));
+    c.tick();
+    ASSERT_NE(c.tickError().code, dsc::ErrorCode::OK) << "两个三态门同时使能应报冲突";
+
+    // 拆掉一个驱动后重新编译，冲突错误必须清掉
+    c.disconnect(ts2, "out");
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    c.setWire(n_in->id(), w(0x5A));
+    c.setWire(n_en->id(), w(1));
+    c.tick();
+    EXPECT_EQ(c.getWire(n_bus->id())[0], 0x5A) << "旧的总线冲突错误把新电路卡死了";
 }
