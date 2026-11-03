@@ -306,6 +306,18 @@ void CircuitLibrary::importJson(const std::string &json_str, std::string &error,
                         return;
                     }
                 }
+                // 输入和输出暴露到同一个内部线网时，net_map 会被后者覆盖，
+                // 输出外部线网静默悬空；导入时就拒绝
+                for (auto &[pin, ep]: def.input_expose) {
+                    for (auto &[opin, oep]: def.output_expose) {
+                        if (ep.net == oep.net) {
+                            error = std::format(
+                                    "定义 '{}' 的 expose 输入 '{}' 和输出 '{}' 指向同一个内部线网 '{}'",
+                                    name, pin, opin, ep.net);
+                            return;
+                        }
+                    }
+                }
             }
 
             parsed.push_back(std::move(def));

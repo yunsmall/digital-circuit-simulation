@@ -27,6 +27,8 @@ TEST(DllTest, Recompile) {
     c.deinit();
     // deinit 后 JIT 里的 DLL 函数指针已经失效，不能再 tick；必须重新 compile
     EXPECT_FALSE(c.isCompiled());
+    c.init(); // 未重新编译时 init 必须是 no-op，不能碰旧 JIT
+    EXPECT_FALSE(c.isCompiled());
     c.clear();
     auto *a2 = c.createNet("a2"), *b2 = c.createNet("b2"), *y2 = c.createNet("y2");
     auto dl2 = std::make_unique<dsc::DllComponent>("and_gate2", path);

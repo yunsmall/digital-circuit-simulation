@@ -43,3 +43,13 @@ TEST(JsonRoundTrip, Composite) {
     c2->tick();
     EXPECT_EQ(c2->getWire(c2->findNet("sum0")->id())[0], 1);
 }
+
+// 输入和输出暴露到同一个内部线网时，展开会静默丢掉输出外部线网；
+// 导入阶段必须拒绝
+TEST(JsonTypes, RejectsExposeAliasingInputOutputNet) {
+    CircuitLibrary lib;
+    std::string err;
+    lib.importJson(
+            R"({"bad":{"nets":["n"],"components":[],"expose":{"inputs":{"a":"n"},"outputs":{"y":"n"}}}})", err);
+    EXPECT_NE(err.find("同一个内部线网"), std::string::npos) << err;
+}

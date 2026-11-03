@@ -613,6 +613,10 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
 // ============================================================
 
 void Circuit::init() {
+    // deinit 之后 JIT 里的外部符号已经失效（DLL 已卸载）；没有重新 compile
+    // 就不能再执行 circuit_init，否则会调到旧地址
+    if (!_compiled)
+        return;
     // 初始化等于一次冷启动，上一个电路残留的运行期错误不能带进新状态
     _tick_error = {};
     // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）

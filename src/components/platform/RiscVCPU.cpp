@@ -1681,6 +1681,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // 规范 2.1.6 允许非自然对齐的访存在不触发异常的情况下完成，所以 4n+4 的
         // FLD 走下面两段读，不按 8 字节对齐报错
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
+        // FLD 要读两个字；第二段地址跨过地址空间顶端时会回绕到 0，
+        // 和 LOAD 一样必须在发起事务前拦住
+        if (f3 == 3) {
+            const XLen a2 = (pa & ~(XLen)3) + 4;
+            if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        }
         // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
         // 地址要抹掉低两位，具体取哪半由 acc_va 在读回时移位决定
         wb_adr=pa & ~(XLen)3; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
@@ -1703,6 +1709,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (triggerMatch(s, va, RV::TRIG_STORE)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
         // 与 LOAD_FP 同：只要求总线字对齐；规范 2.1.6 允许 4n+4 的 FSD 拆段完成
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
+        // FSD 要写两个字；第二段地址回绕同样要拦
+        if (f3 == 3) {
+            const XLen a2 = (pa & ~(XLen)3) + 4;
+            if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
+        }
         // 同 hart 写覆盖保留地址所在的字即失效（规范 5.2 的保守实现）；
         // FSD 跨两个字（4 字节对齐时也一样），两个字都要查
         if (s.lr_valid) {
