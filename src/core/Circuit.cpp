@@ -366,7 +366,10 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
     // 非三态输出严格单驱动：两个非三态输出接同一根线就是短路。
     // connect() 已经拒绝这种连接，但反序列化、直接 setNet、以后的编辑接口都能绕过它；
     // 而直写 _w[] 的优化元件（CPU、WishboneMemory）完全依赖"这根线只有我一个驱动"
-    // 这个前提。在这里按最终结构证明一遍，前提不成立就拒绝编译
+    // 这个前提。在这里按最终结构证明一遍，前提不成立就拒绝编译。
+    //
+    // 这里独立统计全部输出驱动，不复用 _bus_nets：后者只记录"多个三态输出共享"的线网，
+    // 单驱动线网和"三态 + 非三态"冲突都不在里面，拿来判多驱动会漏
     {
         std::vector<int> driver_count(_nets.size(), 0);
         for (auto &comp: _components)
