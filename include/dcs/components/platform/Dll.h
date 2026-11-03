@@ -28,7 +28,8 @@ public:
     bool hasSequential() const override {
         return _tick_seq_fn != nullptr;
     }
-    bool prepare(std::string &error) override;
+    // 按加载上下文解析相对路径后再加载；后续 simInit/simDeinit 复用解析后的路径
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
     void simInit() override;
     void simDeinit() override;

@@ -3,6 +3,7 @@
 #include "dcs/ComponentFactory.h"
 
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -40,7 +41,7 @@ VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
 
 VirtioBlkMem::~VirtioBlkMem() = default;
 
-bool VirtioBlkMem::prepare(std::string & /*error*/) {
+bool VirtioBlkMem::prepare(Context &, std::string & /*error*/) {
     return true;
 }
 
@@ -63,7 +64,8 @@ virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
     p.state_decl = std::format(
             "static uint8_t *_vio_mem_{0};\n"
             "static unsigned long long _vio_mem_size_{0};\n"
-            "static uint32_t _vio_type_{0}, _vio_sec_{0};\n"
+            "static uint32_t _vio_type_{0};\n"
+            "static uint64_t _vio_sec_{0};\n"
             "static uint8_t _vio_status_byte_{0};\n",
             p.id);
     // 介质就是设备自己的存储，直接读写，不经过任何回调或总线
@@ -73,12 +75,12 @@ virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
             "    _vio_status_byte_{0} = 0;\n",
             p.id, (unsigned long long) reinterpret_cast<uintptr_t>(_mem.empty() ? nullptr : _mem.data()), _mem.size());
     p.read_stmt = std::format(
-            "                if ((unsigned long long)(_io_off + _c) <= _vio_mem_size_{0})\n"
+            "                if (_io_off <= _vio_mem_size_{0} && _c <= _vio_mem_size_{0} - _io_off)\n"
             "                    dcs_memcpy(_vio_mp_buf_{0}, _vio_mem_{0} + _io_off, _c);\n"
             "                else _vio_status_byte_{0} = 1;\n",
             p.id);
     p.write_stmt = std::format(
-            "                    if ((unsigned long long)(_io_off + _c) <= _vio_mem_size_{0})\n"
+            "                    if (_io_off <= _vio_mem_size_{0} && _c <= _vio_mem_size_{0} - _io_off)\n"
             "                        dcs_memcpy(_vio_mem_{0} + _io_off, _vio_mp_buf_{0}, _c);\n"
             "                    else _vio_status_byte_{0} = 1;\n",
             p.id);
@@ -114,7 +116,11 @@ DCS_REGISTER_COMPONENT(
      dsc::ComponentCategory::Bus,
      "virtio-blk：介质是设备自带存储，JIT 直接读写；框架可用 IStorage 装载镜像"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-        const uint64_t kb = (uint64_t) dsc::paramInt(p, "size_kb", 1024);
-        return std::make_unique<dsc::VirtioBlkMem>(n, kb * 1024u);
+        const int kb = dsc::paramInt(p, "size_kb", 1024);
+        // 负数转成 uint64 会回绕成天文数字，最后只在 assign 里炸出一句实现细节；
+        // 上下限在这里挡掉，报错才说得清是参数问题
+        if (kb <= 0 || kb > 4 * 1024 * 1024)
+            throw std::invalid_argument(std::format("size_kb 必须在 1..{} 之间", 4 * 1024 * 1024));
+        return std::make_unique<dsc::VirtioBlkMem>(n, (uint64_t) kb * 1024u);
     });
 } // namespace

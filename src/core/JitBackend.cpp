@@ -225,7 +225,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     ci->createDiagnostics();
     auto &invoc = ci->getInvocation();
     invoc.getTargetOpts().Triple = llvm::sys::getDefaultTargetTriple();
-    invoc.getTargetOpts().CPU = "x86-64"; // 基线 x86-64，避免 CI VM 中 SIGILL
+    // 空 CPU = 目标架构的默认基线。写死 x86-64 会让 ARM64 宿主直接失败；
+    // 用基线也避免 CI 虚拟机不支持宿主新指令时 SIGILL
+    invoc.getTargetOpts().CPU = "";
     invoc.getLangOpts().C99 = true;
     invoc.getLangOpts().C11 = true;
     invoc.getLangOpts().CPlusPlus = false;
@@ -282,7 +284,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         cleanup();
         return {ErrorCode::JIT_LINK_FAILED, -1, "检测目标机失败: " + llvm::toString(jtmb.takeError())};
     }
-    jtmb->setCPU("x86-64");
+    // detectHost 会按宿主 CPU 填 CPU；显式清空改成该架构的通用基线，
+    // 否则 A 机器编出来的代码到 B 机器上可能用不了
+    jtmb->setCPU("");
     auto jit_or_err = llvm::orc::LLJITBuilder().setJITTargetMachineBuilder(std::move(*jtmb)).create();
     if (!jit_or_err) {
         auto llvm_err = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());

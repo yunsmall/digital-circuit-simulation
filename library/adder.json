@@ -1,0 +1,33 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "adder",
+    "author": "dcs",
+    "description": "参数化 N 位加法器：bit_width 通过 ${bit_width} 传给内部 adder，端口用总线显式给位宽"
+  },
+  "params": {
+    "bit_width": "8"
+  },
+  "nets": ["a", "b", "cin", "sum", "cout"],
+  "components": [
+    {
+      "type": "adder",
+      "name": "u_add",
+      "params": { "bit_width": "${bit_width}" },
+      "connections": { "a": "a", "b": "b", "cin": "cin", "sum": "sum", "cout": "cout" }
+    }
+  ],
+  "expose": {
+    "inputs": {
+      "a": { "net": "a", "width": "${bit_width}" },
+      "b": { "net": "b", "width": "${bit_width}" },
+      "cin": { "net": "cin", "width": "1" }
+    },
+    "outputs": {
+      "sum": { "net": "sum", "width": "${bit_width}" },
+      "cout": { "net": "cout", "width": "1" }
+    }
+  }
+}

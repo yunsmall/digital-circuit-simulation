@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "计数器选通 4 路浮点常量，经 mux 后做加/减/乘，观察时序推进下的数据变化"
+  },
   "nets": [
     "clk", "sel", "sel0", "sel1",
     "a0","b0","a1","b1","a2","b2","a3","b3",

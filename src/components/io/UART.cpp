@@ -37,7 +37,7 @@ UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "u
 
 UART::~UART() = default;
 
-bool UART::prepare(std::string &) { return true; }
+bool UART::prepare(Context &, std::string &) { return true; }
 
 std::string UART::genStateDecl() const {
     return std::format(

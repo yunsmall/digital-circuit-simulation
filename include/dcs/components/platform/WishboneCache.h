@@ -19,7 +19,7 @@ public:
     explicit WishboneCache(const std::string &name, int lines = 16);
     ~WishboneCache() override;
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }

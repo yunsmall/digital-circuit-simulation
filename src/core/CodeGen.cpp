@@ -1,4 +1,5 @@
 #include "dcs/CodeGen.h"
+#include "dcs/CodeGenNames.h"
 #include "dcs_shim_embedded.h"
 
 #include <algorithm>
@@ -28,6 +29,9 @@ std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
 
     for (int bi = 0; bi < C; bi++) {
         auto *b = comb[bi];
+        // 这里不能用 getCombinationalDeps()：它为三态/时序输出返回空依赖，那是
+        // 环路检测的语义（三态可断开，不能据此判环）。排序是数据流顺序，三态门
+        // 仍必须排在驱动它输入的组合元件之后，否则它读到的是上一拍的输入
         for (auto &pin: b->inputs()) {
             Net *net = pin->net();
             if (!net)
@@ -70,16 +74,20 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     oss << dsc::kShimSource << "\n";
     oss << std::format("#define NET_COUNT {}\n", nets.size());
     oss << std::format("#define COMP_COUNT {}\n\n", components.size());
-    oss << "static uint8_t _w[NET_COUNT][16];\n";
+    // 未连接的输入引脚 netId() 返回 -1，元件生成的代码会直接读 _w[-1]。在线网数组
+    // 前面留一个恒零槽位，_w[-1] 落在这个槽位里，既保住悬空输入读 0 的语义，又不用
+    // 改上百处 _w[nid] 的生成代码。只有输入会读到负下标：输出没接线时 CodeGen 直接跳过
+    oss << "static uint8_t _w_all[NET_COUNT + 1][16];\n";
+    oss << "#define _w (_w_all + 1)\n";
     oss << std::format("static void* _circuit_ptr = (void*)0x{:X};\n", reinterpret_cast<uintptr_t>(circuit_ptr));
     oss << "extern void dcs_bus_conflict(void*, int);\n\n";
 
     // 每个元件的每个输出：_c_out_<comp_id>_<out_idx>[16] + _c_oe_<comp_id>_<out_idx>
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
-            oss << std::format("static uint8_t _c_out_{}_{}[16];\n", c->id(), oi);
+            oss << std::format("static uint8_t {}[16];\n", cgen::cOut(c->id(), oi));
             bool ts = c->outputs()[oi]->isTriState();
-            oss << std::format("static bool _c_oe_{}_{} = {};\n", c->id(), oi, ts ? "false" : "true");
+            oss << std::format("static bool {} = {};\n", cgen::cOe(c->id(), oi), ts ? "false" : "true");
         }
     }
     oss << "\n";
@@ -190,14 +198,14 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
                 // 这里再整块拷一遍是纯冗余，每拍每个输出能省一次 16 字节写
                 if (!c->outputs()[oi]->isTriState())
                     continue;
-                oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
+                oss << std::format("    if ({}) {{\n", cgen::cOe(c->id(), oi));
                 // _c_out 的高位由 genOutputWrite 清零，整块 16 字节一次拷过去即可：
                 // 比"拷 nb 字节再清剩余"少一次调用，定长拷贝也更容易被编译器展开
-                oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n", nid, c->id(), oi);
+                oss << std::format("        dcs_memcpy({}, {}, 16);\n", cgen::wire(nid), cgen::cOut(c->id(), oi));
                 // 三态输出关闭时必须把线网清成 0：这里是"执行即传播"，
                 // 同一阶段里排在后面的组合元件马上就会读它，读到上一拍的残留值就错了
                 oss << "    } else {\n";
-                oss << std::format("        dcs_memset(_w[{}], 0, 16);\n", nid);
+                oss << std::format("        dcs_memset({}, 0, 16);\n", cgen::wire(nid));
                 oss << "    }\n";
             }
         }
@@ -223,26 +231,26 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
             int cid = drivers[di].comp->id();
             int oi = drivers[di].out_idx;
             if (di == 0)
-                oss << std::format("        if (_c_oe_{}_{}) _active = {};\n", cid, oi, di);
+                oss << std::format("        if ({}) _active = {};\n", cgen::cOe(cid, oi), di);
             else
                 // 多驱动冲突只置标志，不跳转：跳转会绕过下面所有语句（包括旧值快照的初始化）
                 oss << std::format(
-                        "        if (_c_oe_{}_{}) {{\n"
+                        "        if ({}) {{\n"
                         "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); _conflict = 1; }}\n"
                         "            else _active = {};\n"
                         "        }}\n",
-                        cid, oi, net_id, di);
+                        cgen::cOe(cid, oi), net_id, di);
         }
         oss << "        if (!_conflict) {\n";
         oss << "        if (_active >= 0) {\n";
         for (int di = 0; di < (int) drivers.size(); di++) {
             int cid = drivers[di].comp->id();
             int oi = drivers[di].out_idx;
-            oss << std::format("            {}if (_active == {}) dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n",
-                               di == 0 ? "" : "else ", di, net_id, cid, oi);
+            oss << std::format("            {}if (_active == {}) dcs_memcpy({}, {}, 16);\n",
+                               di == 0 ? "" : "else ", di, cgen::wire(net_id), cgen::cOut(cid, oi));
         }
         oss << "        } else {\n";
-        oss << std::format("            dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", net_id);
+        oss << std::format("            dcs_memset({}, 0, 16);  // Hi-Z\n", cgen::wire(net_id));
         oss << "        }\n";
         oss << "        }\n";
         if (track_change)
@@ -265,10 +273,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
             // 非三态输出已经由 genOutputWrite 直接写进 _w，这里再拷一遍是纯冗余
             if (!c->outputs()[oi]->isTriState())
                 continue;
-            oss << std::format("    if (_c_oe_{}_{}) {{\n", c->id(), oi);
-            oss << std::format("        dcs_memcpy(_w[{}], _c_out_{}_{}, 16);\n", nid, c->id(), oi);
+            oss << std::format("    if ({}) {{\n", cgen::cOe(c->id(), oi));
+            oss << std::format("        dcs_memcpy({}, {}, 16);\n", cgen::wire(nid), cgen::cOut(c->id(), oi));
             oss << "    } else {\n";
-            oss << std::format("        dcs_memset(_w[{}], 0, 16);  // Hi-Z\n", nid);
+            oss << std::format("        dcs_memset({}, 0, 16);  // Hi-Z\n", cgen::wire(nid));
             oss << "    }\n";
         }
     }
@@ -335,15 +343,15 @@ void circuit_run_forever(void) {
 }
 
 void circuit_init(void) {
-    dcs_memset(_w, 0, sizeof(_w));
+    dcs_memset(_w_all, 0, sizeof(_w_all));
 )";
     // 清零所有 _c_out 和 _c_oe
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
-            oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+            oss << std::format("    dcs_memset({}, 0, 16);\n", cgen::cOut(c->id(), oi));
             // 三态使能也要回到初值：否则运行中被置真的三态输出复位后会以 0 驱动总线，
             // 多条三态线挂同一总线时第一拍就可能报假冲突
-            oss << std::format("    _c_oe_{}_{} = {};\n", c->id(), oi,
+            oss << std::format("    {} = {};\n", cgen::cOe(c->id(), oi),
                                c->outputs()[oi]->isTriState() ? "false" : "true");
         }
     }
@@ -364,15 +372,15 @@ void circuit_init(void) {
     oss << "}\n\n";
 
     oss << R"(void circuit_reset(void) {
-    dcs_memset(_w, 0, sizeof(_w));
+    dcs_memset(_w_all, 0, sizeof(_w_all));
 )";
     // 清零所有 _c_out 和 _c_oe
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
-            oss << std::format("    dcs_memset(_c_out_{}_{}, 0, 16);\n", c->id(), oi);
+            oss << std::format("    dcs_memset({}, 0, 16);\n", cgen::cOut(c->id(), oi));
             // 三态使能也要回到初值：否则运行中被置真的三态输出复位后会以 0 驱动总线，
             // 多条三态线挂同一总线时第一拍就可能报假冲突
-            oss << std::format("    _c_oe_{}_{} = {};\n", c->id(), oi,
+            oss << std::format("    {} = {};\n", cgen::cOe(c->id(), oi),
                                c->outputs()[oi]->isTriState() ? "false" : "true");
         }
     }

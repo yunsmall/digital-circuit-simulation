@@ -24,7 +24,7 @@ public:
     explicit VirtioBlkMem(const std::string &name, uint64_t size_bytes = 1024u * 1024u);
     ~VirtioBlkMem() override;
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }

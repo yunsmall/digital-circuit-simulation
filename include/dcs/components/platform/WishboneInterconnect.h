@@ -45,7 +45,7 @@ public:
     bool hasCombinational() const override { return true; }
     bool hasSequential() const override { return true; }
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }

@@ -70,9 +70,9 @@ void Circuit::deinit() {
     // 销毁元件状态（JIT circuit_deinit 中调用 dcs_dll_destroy）。
     // 用完置空：clear() 内部也会调 deinit()，用户显式 deinit() 之后再 clear()
     // 就会第二次执行 circuit_deinit，去访问已经被 simDeinit 卸载的 DLL 状态对象
-    if (_deinit_fn) {
-        _deinit_fn();
-        _deinit_fn = nullptr;
+    if (_jit.deinit) {
+        _jit.deinit();
+        _jit.deinit = nullptr;
     }
 
     // 仿真结束通知（DLL: dcs_dll_deinit）。各元件自己保证可重复调用
@@ -93,23 +93,13 @@ void Circuit::clear() {
 
 void Circuit::reset() {
     _tick_error = {};
-    if (_reset_fn)
-        _reset_fn();
+    if (_jit.reset)
+        _jit.reset();
 }
 
 void Circuit::jitCleanup() {
     // 仅清理 JIT 状态（函数指针 + 后端资源）
-    _tick_fn = nullptr;
-    _tick_cycle_fn = nullptr;
-    _tick_cycles_fn = nullptr;
-    _tick_batch_fn = nullptr;
-    _tick_forever_fn = nullptr;
-    _init_fn = nullptr;
-    _deinit_fn = nullptr;
-    _reset_fn = nullptr;
-    _set_wire_fn = nullptr;
-    _set_wire_u64_fn = nullptr;
-    _get_wire_fn = nullptr;
+    _jit = {};
     _backend.cleanup();
     _compiled = false;
 }
@@ -132,7 +122,7 @@ Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *
         cc->setLibrary(&context().library());
     // 加入电路时立即准备元件（DLL 加载、读取描述符创建引脚等）
     std::string prep_err;
-    if (!comp->prepare(prep_err)) {
+    if (!comp->prepare(context(), prep_err)) {
         if (error)
             *error = {ErrorCode::PREPARE_FAILED, -1, {}, prep_err};
         return nullptr;
@@ -318,9 +308,12 @@ Net *Circuit::findNet(const std::string &name) const {
 }
 
 Component *Circuit::componentById(int id) const {
-    if (id < 0 || id >= (int) _components.size())
-        return nullptr;
-    return _components[id].get();
+    // 不能按 _components[id] 取：removeComponent 之后别的元件 ID 不会立刻重排，
+    // 下标和 ID 只在 validate()/compile() 重编号后才一致
+    for (auto &c: _components)
+        if (c->id() == id)
+            return c.get();
+    return nullptr;
 }
 
 Pin *Circuit::findPin(Component *comp, const std::string &name) {
@@ -337,14 +330,19 @@ Pin *Circuit::findPin(Component *comp, const std::string &name) {
 // 环路检测
 // ============================================================
 
-CircuitError Circuit::validate(std::vector<std::string> *warnings) {
-    // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT
-    jitCleanup();
+CircuitError Circuit::prepareNetlist(std::vector<std::string> *warnings) {
     if (auto err = expandComposites(); err.code != ErrorCode::OK)
         return err;
+    // 展开后重新编号，保证 ID = 索引
     for (int i = 0; i < (int) _components.size(); i++)
         _components[i]->setId(i);
     return check(warnings);
+}
+
+CircuitError Circuit::validate(std::vector<std::string> *warnings) {
+    // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT
+    jitCleanup();
+    return prepareNetlist(warnings);
 }
 
 CircuitError Circuit::check(std::vector<std::string> *warnings) {
@@ -389,15 +387,14 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
     }
 
     // 元件自己的接线检查：比如互连的某个从设备端口后面根本没接设备，访问那段地址
-    // 只会让主设备永远等 ack。这属于接错线，不是电路非法，所以只告警、不拦编译
+    // 只会让主设备永远等 ack。这属于接错线，不是电路非法，所以只告警、不拦编译。
+    // 收集和打印分开：检查函数只负责填 warnings，CLI/compile 决定怎么呈现
     for (auto &comp: _components) {
         std::string msg = comp->checkTopology(*this);
         if (msg.empty())
             continue;
         if (warnings)
             warnings->push_back(std::format("元件 '{}': {}", comp->name(), msg));
-        else
-            std::cerr << std::format("[dcs] 警告: 元件 '{}': {}\n", comp->name(), msg);
     }
 
     int N = (int) _nets.size();
@@ -531,17 +528,11 @@ CircuitError Circuit::compile() {
     // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
     _tick_error = {};
 
-    // 展开复合元件
-    if (auto err = expandComposites(); err.code != ErrorCode::OK)
+    std::vector<std::string> warnings;
+    if (auto err = prepareNetlist(&warnings); err.code != ErrorCode::OK)
         return err;
-
-    // 展开后重新编号，保证 ID = 索引
-    for (int i = 0; i < (int) _components.size(); i++)
-        _components[i]->setId(i);
-
-    // 环路检测
-    if (auto err = check(); err.code != ErrorCode::OK)
-        return err;
+    for (auto &w: warnings)
+        std::cerr << std::format("[dcs] 警告: {}\n", w);
 
     std::string c_code = generateC();
 
@@ -587,17 +578,7 @@ CircuitError Circuit::compile() {
     if (res.code != ErrorCode::OK)
         return {res.code, -1, {}, res.message};
 
-    _tick_fn = res.tick;
-    _tick_cycle_fn = res.tick_cycle;
-    _tick_cycles_fn = res.tick_cycles;
-    _tick_batch_fn = res.tick_batch;
-    _tick_forever_fn = res.tick_forever;
-    _init_fn = res.init;
-    _deinit_fn = res.deinit;
-    _reset_fn = res.reset;
-    _set_wire_fn = res.set_wire;
-    _set_wire_u64_fn = res.set_wire_u64;
-    _get_wire_fn = res.get_wire;
+    _jit = res;
     _compiled = true;
     return {ErrorCode::OK};
 }
@@ -613,8 +594,8 @@ void Circuit::init() {
     // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）
     for (auto &comp: _components)
         comp->simInit();
-    if (_init_fn)
-        _init_fn();
+    if (_jit.init)
+        _jit.init();
 }
 void Circuit::tick() {
     // 编译后改了结构只会清 _compiled，旧 JIT 还在：直接跑会用过期代码读写
@@ -623,8 +604,8 @@ void Circuit::tick() {
         return;
     if (_tick_error.code != ErrorCode::OK)
         return;
-    if (_tick_fn)
-        _tick_fn();
+    if (_jit.tick)
+        _jit.tick();
 }
 
 void Circuit::tickCycle(int clk_net_id) {
@@ -632,8 +613,8 @@ void Circuit::tickCycle(int clk_net_id) {
         return;
     if (_tick_error.code != ErrorCode::OK)
         return;
-    if (_tick_cycle_fn) {
-        _tick_cycle_fn(clk_net_id);
+    if (_jit.tick_cycle) {
+        _jit.tick_cycle(clk_net_id);
         return;
     }
     setWire(clk_net_id, 0);
@@ -647,8 +628,8 @@ void Circuit::tickCycles(int clk_net_id, uint64_t n) {
         return;
     if (_tick_error.code != ErrorCode::OK)
         return;
-    if (_tick_cycles_fn) {
-        _tick_cycles_fn(clk_net_id, n);
+    if (_jit.tick_cycles) {
+        _jit.tick_cycles(clk_net_id, n);
         return;
     }
     for (uint64_t i = 0; i < n; i++)
@@ -660,8 +641,8 @@ void Circuit::tickBatch(uint64_t n) {
         return;
     if (_tick_error.code != ErrorCode::OK)
         return;
-    if (_tick_batch_fn) {
-        _tick_batch_fn(n);
+    if (_jit.tick_batch) {
+        _jit.tick_batch(n);
         return;
     }
     for (uint64_t i = 0; i < n; i++)
@@ -671,8 +652,8 @@ void Circuit::tickBatch(uint64_t n) {
 void Circuit::tickForever() {
     if (!_compiled)
         return;
-    if (_tick_forever_fn)
-        _tick_forever_fn();
+    if (_jit.tick_forever)
+        _jit.tick_forever();
     for (;;)
         tick();
 }
@@ -698,32 +679,32 @@ void Circuit::onBusConflict(int net_id) {
 }
 
 void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
-    if (!_compiled || !_set_wire_fn)
+    if (!_compiled || !_jit.set_wire)
         return;
     uint8_t buf[16] = {};
     for (size_t i = 0; i < value.size() && i < 16; i++)
         buf[i] = value[i];
-    _set_wire_fn(id, buf);
+    _jit.set_wire(id, buf);
 }
 
 void Circuit::setWire(int id, uint64_t value) {
     if (!_compiled)
         return;
-    if (_set_wire_u64_fn) {
-        _set_wire_u64_fn(id, value);
+    if (_jit.set_wire_u64) {
+        _jit.set_wire_u64(id, value);
         return;
     }
-    if (!_set_wire_fn)
+    if (!_jit.set_wire)
         return;
     uint8_t buf[16] = {};
     std::memcpy(buf, &value, sizeof(value));
-    _set_wire_fn(id, buf);
+    _jit.set_wire(id, buf);
 }
 
 std::vector<uint8_t> Circuit::getWire(int id) {
     std::vector<uint8_t> val(16, 0);
-    if (_compiled && _get_wire_fn)
-        _get_wire_fn(id, val.data());
+    if (_compiled && _jit.get_wire)
+        _jit.get_wire(id, val.data());
     return val;
 }
 

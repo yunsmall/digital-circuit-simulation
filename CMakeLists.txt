@@ -243,6 +243,12 @@ if(DCS_BUILD_EXECUTABLE)
         target_link_libraries(dcs PRIVATE PkgConfig::SLIRP)
         target_sources(dcs_soc PRIVATE src/net/SlirpBackend.cpp)
         target_link_libraries(dcs_soc PRIVATE PkgConfig::SLIRP)
+        # slirp 的 socket 调用在 Windows 上要显式链 ws2_32；MSVC 的隐式链接
+        # 在 clang + lld 下不生效，会报 WSAStartup/socket 等符号未定义
+        if(WIN32)
+            target_link_libraries(dcs PRIVATE ws2_32)
+            target_link_libraries(dcs_soc PRIVATE ws2_32)
+        endif()
     endif()
 endif()
 

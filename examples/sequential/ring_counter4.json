@@ -1,0 +1,40 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "4 位环形计数器：复位后最低位 one-hot，每个时钟沿移位"
+  },
+  "nets": ["clk", "en1", "rst0", "q"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "constant",
+      "name": "no_reset",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "rst0" }
+    },
+    {
+      "type": "ringcounter",
+      "name": "ring4",
+      "params": { "length": "4", "johnson": "0" },
+      "connections": { "clk": "clk", "en": "en1", "rst": "rst0", "q": "q" }
+    },
+    {
+      "type": "display",
+      "name": "ring_leds",
+      "params": { "bit_width": "4", "kind": "led", "digits": "1" },
+      "connections": { "in": "q" }
+    }
+  ]
+}

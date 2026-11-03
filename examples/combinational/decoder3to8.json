@@ -1,0 +1,67 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "3-8 译码器演示：计数器驱动 library/decoder3to8，独热输出合并成灯带"
+  },
+  "definitions": {
+    "decoder3to8": "../../library/decoder3to8.json"
+  },
+  "nets": [
+    "clk", "sel", "s0", "s1", "s2", "en1",
+    "y0", "y1", "y2", "y3", "y4", "y5", "y6", "y7", "lamps"
+  ],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "sel_counter",
+      "params": { "bit_width": "3", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "sel" }
+    },
+    {
+      "type": "split",
+      "name": "split_sel",
+      "params": { "num_bits": "3" },
+      "connections": { "in": "sel", "out0": "s0", "out1": "s1", "out2": "s2" }
+    },
+    {
+      "type": "composite",
+      "name": "u_dec",
+      "params": { "definition": "decoder3to8" },
+      "connections": {
+        "sel0": "s0", "sel1": "s1", "sel2": "s2",
+        "out0": "y0", "out1": "y1", "out2": "y2", "out3": "y3",
+        "out4": "y4", "out5": "y5", "out6": "y6", "out7": "y7"
+      }
+    },
+    {
+      "type": "merge",
+      "name": "join_lamps",
+      "params": { "num_bits": "8" },
+      "connections": {
+        "in0": "y0", "in1": "y1", "in2": "y2", "in3": "y3",
+        "in4": "y4", "in5": "y5", "in6": "y6", "in7": "y7",
+        "out": "lamps"
+      }
+    },
+    {
+      "type": "display",
+      "name": "lamp_display",
+      "params": { "bit_width": "8", "kind": "led", "digits": "1" },
+      "connections": { "in": "lamps" }
+    }
+  ]
+}

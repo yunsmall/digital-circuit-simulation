@@ -4,8 +4,37 @@
 #include <nlohmann/json.hpp>
 #include "dcs/ComponentFactory.h"
 #include "dcs/Context.h"
+#include "dcs/util/ParamFlatten.h"
 
 namespace dsc {
+
+bool resolveTemplate(const std::string &src, const std::map<std::string, std::string> &params, std::string &out,
+                     std::string &missing) {
+    out.clear();
+    size_t pos = 0;
+    while (pos < src.size()) {
+        const size_t start = src.find("${", pos);
+        if (start == std::string::npos) {
+            out.append(src, pos, std::string::npos);
+            break;
+        }
+        const size_t end = src.find('}', start + 2);
+        if (end == std::string::npos) {
+            out.append(src, pos, std::string::npos);
+            break;
+        }
+        out.append(src, pos, start - pos);
+        const std::string key = src.substr(start + 2, end - start - 2);
+        auto it = params.find(key);
+        if (it == params.end()) {
+            missing = key;
+            return false;
+        }
+        out += it->second;
+        pos = end + 1;
+    }
+    return true;
+}
 
 CircuitLibrary &CircuitLibrary::instance() {
     // 进程级默认上下文里的库；显式建 Context 的调用方直接用自己的那份
@@ -39,6 +68,13 @@ std::string CircuitLibrary::exportJson() const {
     for (auto &[name, def]: _defs) {
         json jd;
 
+        if (!def.params.empty()) {
+            json jp = json::object();
+            for (auto &[k, v]: def.params)
+                jp[k] = v;
+            jd["params"] = jp;
+        }
+
         // 线网
         json jnets = json::array();
         for (auto &n: def.nets)
@@ -70,14 +106,18 @@ std::string CircuitLibrary::exportJson() const {
 
         // expose
         json jexp;
-        json jin = json::object();
-        for (auto &[pin, net]: def.input_expose)
-            jin[pin] = net;
-        json jout = json::object();
-        for (auto &[pin, net]: def.output_expose)
-            jout[pin] = net;
-        jexp["inputs"] = jin;
-        jexp["outputs"] = jout;
+        auto emit_expose = [](const std::map<std::string, ExposedPin> &m) {
+            json j = json::object();
+            for (auto &[pin, ep]: m) {
+                if (ep.width.empty())
+                    j[pin] = ep.net;
+                else
+                    j[pin] = {{"net", ep.net}, {"width", ep.width}};
+            }
+            return j;
+        };
+        jexp["inputs"] = emit_expose(def.input_expose);
+        jexp["outputs"] = emit_expose(def.output_expose);
         jd["expose"] = jexp;
 
         root[name] = jd;
@@ -86,20 +126,10 @@ std::string CircuitLibrary::exportJson() const {
     return root.dump();
 }
 
-// 参数键的拍平规则与顶层电路装载（CircuitSerializer::flattenParams）保持一致：
-// 嵌套对象变成 "backend_opts.hostfwd" 这样的点分键，其它值转成字符串
-static void flattenParams(const nlohmann::json &j, const std::string &prefix,
-                          std::unordered_map<std::string, std::string> &out) {
-    for (auto &[k, v]: j.items()) {
-        const std::string key = prefix.empty() ? k : prefix + "." + k;
-        if (v.is_object())
-            flattenParams(v, key, out);
-        else
-            out[key] = v.is_string() ? v.get<std::string>() : v.dump();
-    }
-}
+// 参数键的拍平规则统一在 dcs/util/ParamFlatten.h，与顶层电路装载共用一份实现
 
-void CircuitLibrary::importJson(const std::string &json_str, std::string &error, const std::string &source) {
+void CircuitLibrary::importJson(const std::string &json_str, std::string &error, const std::string &source,
+                                const std::string &base_dir) {
     using json = nlohmann::json;
 
     json root;
@@ -127,6 +157,22 @@ void CircuitLibrary::importJson(const std::string &json_str, std::string &error,
             CircuitDefinition def;
             def.name = name;
             def.source = source;
+            def.base_dir = base_dir;
+
+            // 蓝图参数默认值：都是字符串，实例可以按名字覆盖
+            if (jd.contains("params")) {
+                if (!jd["params"].is_object()) {
+                    error = std::format("定义 '{}' 的 params 必须是对象", name);
+                    return;
+                }
+                for (auto &[k, v]: jd["params"].items()) {
+                    if (!v.is_string()) {
+                        error = std::format("定义 '{}' 的参数 '{}' 必须是字符串", name, k);
+                        return;
+                    }
+                    def.params[k] = v.get<std::string>();
+                }
+            }
 
             // 线网
             if (jd.contains("nets")) {
@@ -202,35 +248,54 @@ void CircuitLibrary::importJson(const std::string &json_str, std::string &error,
                     return;
                 }
                 auto &jexp = jd["expose"];
+                auto parse_expose = [&](const nlohmann::json &obj, std::map<std::string, ExposedPin> &out,
+                                        const char *which) {
+                    for (auto &[pin, jv]: obj.items()) {
+                        ExposedPin ep;
+                        if (jv.is_string()) {
+                            ep.net = jv.get<std::string>();
+                        } else if (jv.is_object()) {
+                            if (!jv.contains("net") || !jv["net"].is_string()) {
+                                error = std::format("定义 '{}' 的 expose.{}['{}'].net 必须是字符串", name, which, pin);
+                                return false;
+                            }
+                            ep.net = jv["net"].get<std::string>();
+                            if (jv.contains("width")) {
+                                if (!jv["width"].is_string()) {
+                                    error = std::format("定义 '{}' 的 expose.{}['{}'].width 必须是字符串", name,
+                                                        which, pin);
+                                    return false;
+                                }
+                                ep.width = jv["width"].get<std::string>();
+                            }
+                        } else {
+                            error = std::format("定义 '{}' 的 expose.{}['{}'] 必须是线网名或 {{net,width}}", name,
+                                                which, pin);
+                            return false;
+                        }
+                        out[pin] = std::move(ep);
+                    }
+                    return true;
+                };
                 if (jexp.contains("inputs")) {
                     if (!jexp["inputs"].is_object()) {
                         error = std::format("定义 '{}' 的 expose.inputs 必须是对象", name);
                         return;
                     }
-                    for (auto &[pin, jnet]: jexp["inputs"].items()) {
-                        if (!jnet.is_string()) {
-                            error = std::format("定义 '{}' 的 expose.inputs['{}'] 必须是字符串", name, pin);
-                            return;
-                        }
-                        def.input_expose[pin] = jnet.get<std::string>();
-                    }
+                    if (!parse_expose(jexp["inputs"], def.input_expose, "inputs"))
+                        return;
                 }
                 if (jexp.contains("outputs")) {
                     if (!jexp["outputs"].is_object()) {
                         error = std::format("定义 '{}' 的 expose.outputs 必须是对象", name);
                         return;
                     }
-                    for (auto &[pin, jnet]: jexp["outputs"].items()) {
-                        if (!jnet.is_string()) {
-                            error = std::format("定义 '{}' 的 expose.outputs['{}'] 必须是字符串", name, pin);
-                            return;
-                        }
-                        def.output_expose[pin] = jnet.get<std::string>();
-                    }
+                    if (!parse_expose(jexp["outputs"], def.output_expose, "outputs"))
+                        return;
                 }
                 // 复合元件的引脚按名字连接；同名输入/输出会让连接目标产生歧义
-                for (auto &[pin, net]: def.input_expose) {
-                    (void) net;
+                for (auto &[pin, ep]: def.input_expose) {
+                    (void) ep;
                     if (def.output_expose.count(pin)) {
                         error = std::format("定义 '{}' 的引脚 '{}' 同时出现在 expose.inputs 和 expose.outputs",
                                             name, pin);

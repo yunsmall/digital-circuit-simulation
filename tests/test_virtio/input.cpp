@@ -163,6 +163,15 @@ TEST(VirtioInput, ConfigDevIds) {
     EXPECT_EQ(f.read(0x108), 0x44430006u);
 }
 
+// ID_DEVIDS 只有 8 字节：越过 size 的读必须返回 0，不能漏出紧随其后的能力位图
+TEST(VirtioInput, ConfigDevIdsDoesNotOverread) {
+    VirtioFixture<VirtioInput> f;
+    f.write(0x100, 0x03);
+    EXPECT_EQ(f.read(0x108), 0x44430006u);
+    EXPECT_EQ(f.read(0x110), 0u) << "0x110 已越过 ID_DEVIDS 的 8 字节";
+    EXPECT_EQ(f.read(0x114), 0u);
+}
+
 // config 空间：EV_KEY 能力位图，Linux 靠它决定设备能发哪些按键
 TEST(VirtioInput, ConfigEvKeyBits) {
     VirtioFixture<VirtioInput> f;

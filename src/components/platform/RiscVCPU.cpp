@@ -77,7 +77,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::pc() const { return _state.pc; }
 template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::halted() const { return _state.wfi_halted || _state.powered_off; }
 template<int XLEN> requires SupportedXlen<XLEN>
-bool RiscVCPU<XLEN>::prepare(std::string &) { _prepared = true; return true; }
+bool RiscVCPU<XLEN>::prepare(Context &, std::string &) { _prepared = true; return true; }
 template<int XLEN> requires SupportedXlen<XLEN>
 std::vector<Component::JitSymbol> RiscVCPU<XLEN>::extraJitSymbols() const {
     // 符号名必须随 XLEN 区分：RV32 和 RV64 的 cpuTick 是两份不同的函数，

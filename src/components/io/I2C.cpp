@@ -43,7 +43,7 @@ I2C::I2C(const std::string &name, int clkdiv) : SequentialComponent(name, "i2c")
 
 I2C::~I2C() = default;
 
-bool I2C::prepare(std::string &) {
+bool I2C::prepare(Context &, std::string &) {
     _prepared = true;
     return true;
 }

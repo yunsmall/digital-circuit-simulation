@@ -1,0 +1,24 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "parity8",
+    "author": "dcs",
+    "description": "偶校验生成器：数据位宽由 bit_width 参数决定，默认 8"
+  },
+  "params": { "bit_width": "8" },
+  "nets": ["din", "parity"],
+  "components": [
+    {
+      "type": "parity",
+      "name": "parity_gen",
+      "params": { "bit_width": "${bit_width}", "mode": "even" },
+      "connections": { "in": "din", "out": "parity" }
+    }
+  ],
+  "expose": {
+    "inputs": { "din": { "net": "din", "width": "${bit_width}" } },
+    "outputs": { "parity": "parity" }
+  }
+}

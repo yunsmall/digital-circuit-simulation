@@ -1,0 +1,53 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "gray4",
+    "author": "dcs",
+    "description": "4 位二进制转格雷码：g0=b0^b1, g1=b1^b2, g2=b2^b3, g3=b3"
+  },
+  "nets": ["bin", "b0", "b1", "b2", "b3", "g0", "g1", "g2", "g3", "gray"],
+  "components": [
+    {
+      "type": "split",
+      "name": "split_bin",
+      "params": { "num_bits": "4" },
+      "connections": { "in": "bin", "out0": "b0", "out1": "b1", "out2": "b2", "out3": "b3" }
+    },
+    {
+      "type": "xor",
+      "name": "g0_xor",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "b0", "in1": "b1", "out": "g0" }
+    },
+    {
+      "type": "xor",
+      "name": "g1_xor",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "b1", "in1": "b2", "out": "g1" }
+    },
+    {
+      "type": "xor",
+      "name": "g2_xor",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "b2", "in1": "b3", "out": "g2" }
+    },
+    {
+      "type": "buf",
+      "name": "g3_buf",
+      "params": { "bit_width": "1" },
+      "connections": { "in": "b3", "out": "g3" }
+    },
+    {
+      "type": "merge",
+      "name": "join_gray",
+      "params": { "num_bits": "4" },
+      "connections": { "in0": "g0", "in1": "g1", "in2": "g2", "in3": "g3", "out": "gray" }
+    }
+  ],
+  "expose": {
+    "inputs": { "bin": "bin" },
+    "outputs": { "gray": "gray" }
+  }
+}

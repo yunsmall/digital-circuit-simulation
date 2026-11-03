@@ -1,0 +1,55 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "RAM 读写：计数器给地址，分频时钟写常量 0xA5，读口持续输出"
+  },
+  "nets": ["clk", "addr", "data", "we", "dout", "busy", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "addr_counter",
+      "params": { "bit_width": "4", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "addr" }
+    },
+    {
+      "type": "constant",
+      "name": "write_data",
+      "params": { "bit_width": "8", "value": "165" },
+      "connections": { "out": "data" }
+    },
+    {
+      "type": "clkdiv",
+      "name": "write_pulse",
+      "params": { "divisor": "2" },
+      "connections": { "clk": "clk", "out": "we" }
+    },
+    {
+      "type": "memory",
+      "name": "ram16",
+      "params": { "addr_width": "4", "data_width": "8", "read_latency": "0", "write_latency": "0" },
+      "connections": {
+        "addr": "addr", "data_in": "data", "we": "we", "clk": "clk",
+        "data_out": "dout", "busy": "busy"
+      }
+    },
+    {
+      "type": "display",
+      "name": "data_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "dout" }
+    }
+  ]
+}

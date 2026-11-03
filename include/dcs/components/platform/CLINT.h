@@ -22,7 +22,7 @@ public:
     CLINT(const std::string &name);
 
     // ---- Component 接口 ----
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }

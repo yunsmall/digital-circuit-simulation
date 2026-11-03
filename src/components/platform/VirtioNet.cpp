@@ -92,14 +92,19 @@ void VirtioNet::setBackend(const BackendOps &ops) {
     _ops = ops;
 }
 
-bool VirtioNet::prepare(std::string &error) {
+bool VirtioNet::prepare(Context &, std::string &error) {
     if (_backend == "none" || _ops.create)
         return true;
     auto &reg = backendRegistry();
     auto it = reg.find(_backend);
     if (it == reg.end()) {
-        error = std::format("virtio_net 请求的后端 '{}' 没有注册", _backend);
-        return false;
+        // 精简构建可能没把网络后端编进来（DCS_BUILD_NET=OFF）。整机启动、
+        // 块设备、控制台都不依赖网卡，缺后端时退化成 none 并告警，而不是
+        // 让电路直接加载失败
+        std::fprintf(stderr, "[dcs] 警告: virtio_net 后端 '%s' 未注册，按 none 运行（guest 无网络）\n",
+                     _backend.c_str());
+        _backend = "none";
+        return true;
     }
     _ops = it->second;
     return true;
@@ -130,7 +135,9 @@ std::vector<Component::JitSymbol> VirtioNet::extraJitSymbols() const {
 
 bool VirtioNet::pushRxPacket(const uint8_t *data, uint32_t len) {
     auto &s = *_state;
-    if (len > State::PKT_MAX)
+    // 0 长度帧没有意义，而且设备侧会把它当"头写完但没有包体"：rx_tail 不前进，
+    // 后面所有包都被它堵在环里
+    if (len == 0 || len > State::PKT_MAX)
         return false;
     // 单生产者环：后端线程写 head，JIT 写 tail，两边用 acquire/release 交接数据
     const uint32_t head = std::atomic_ref<uint32_t>(s.rx_head).load(std::memory_order_relaxed);
@@ -213,6 +220,10 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
     // 只有真的有包时才消费描述符：驱动的 avail 环里常驻几十个空 buffer，
     // 若逐个消费，rx_tail 会越过 rx_head，之后 `h != t` 永远成立，
     // 设备就会无限投递空包（used.idx 一路涨）。没有包时回到空闲，等 wake 再启动
+    //
+    // buffer 装不下 12 字节头时只归还描述符、不推进 rx_tail：包留在环里等驱动下次
+    // 提供足够大的 buffer（测试 TinyRxBufferKeepsPacket 锁着这个语义）。这里刻意
+    // 不丢包，因为丢弃对驱动不可见，等于静默吞帧
     rx.desc = std::format(
             "                uint32_t _rh = dcs_load_acq((char *)_vio_state_{0} + {1});\n"
             "                uint32_t _rt = dcs_load_acq((char *)_vio_state_{0} + {2});\n"

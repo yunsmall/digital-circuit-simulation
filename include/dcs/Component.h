@@ -42,6 +42,7 @@ std::string gen_write_wire(int comp_id, int out_idx, std::string_view val, int p
 // ============================================================
 
 class Circuit;
+class Context;
 
 class Component {
 public:
@@ -62,7 +63,11 @@ public:
         return _outputs;
     }
 
-    // 环路检测：返回输出引脚 out_idx 的组合逻辑依赖输入索引列表
+    // 环路检测专用：返回输出引脚 out_idx 在"静态组合路径"上的输入索引列表。
+    // 时序输出返回空（跨拍），三态输出也返回空（oe=0 时确实断开，静态判断不了使能，
+    // 一律按可断开处理，经过三态总线的环交给阶段 2b 的迭代上限兜底）。
+    // 注意：这不是通用的数据依赖列表。三态门仍然要在本拍读输入、算输出，所以
+    // 拓扑排序必须按 inputs() 建边，不能拿这个函数跳过三态/时序元件的先后顺序。
     // 默认检查引脚 is_sequential 属性，子类可重写
     [[nodiscard]] virtual std::vector<int> getCombinationalDeps(int out_idx) const;
 
@@ -143,8 +148,10 @@ public:
 
     // ======== 外部资源 & JIT 符号 ========
 
-    // 编译前准备（加载 DLL 等外部资源），返回 false 则编译中止
-    virtual bool prepare(std::string & /*error*/) {
+    // 编译前准备（加载 DLL/镜像等外部资源），返回 false 则编译中止。
+    // 上下文显式传入：需要把参数里的相对路径按当前 JSON 目录解析的元件
+    // 用 ctx.resolvePath，元件不自己保存 Context 指针
+    virtual bool prepare(Context & /*ctx*/, std::string & /*error*/) {
         return true;
     }
     // 需要注入 JIT 的额外符号（DLL 函数指针等），电路编译时统一注入

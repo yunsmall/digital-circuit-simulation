@@ -1,0 +1,61 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "GPIO 读输入：读 IN 寄存器（offset 8），gpio_in 固定 0xA5"
+  },
+  "nets": ["clk", "addr", "wdata", "we0", "en1", "gpio_in", "rdata", "ready", "gpio_out"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "in_offset",
+      "params": { "bit_width": "8", "value": "8" },
+      "connections": { "out": "addr" }
+    },
+    {
+      "type": "constant",
+      "name": "no_write_data",
+      "params": { "bit_width": "32", "value": "0" },
+      "connections": { "out": "wdata" }
+    },
+    {
+      "type": "constant",
+      "name": "read_only",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "we0" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "constant",
+      "name": "input_pins",
+      "params": { "bit_width": "32", "value": "165" },
+      "connections": { "out": "gpio_in" }
+    },
+    {
+      "type": "gpio",
+      "name": "gpio0",
+      "connections": {
+        "clk": "clk", "addr": "addr", "wdata": "wdata", "we": "we0", "en": "en1",
+        "gpio_in": "gpio_in",
+        "rdata": "rdata", "ready": "ready", "gpio_out": "gpio_out"
+      }
+    },
+    {
+      "type": "display",
+      "name": "rdata_display",
+      "params": { "bit_width": "32", "kind": "text", "digits": "3" },
+      "connections": { "in": "rdata" }
+    }
+  ]
+}

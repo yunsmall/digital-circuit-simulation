@@ -44,7 +44,7 @@ DMA::DMA(const std::string &name) : SequentialComponent(name, "dma") {
 
 DMA::~DMA() = default;
 
-bool DMA::prepare(std::string &) {
+bool DMA::prepare(Context &, std::string &) {
     _prepared = true;
     return true;
 }

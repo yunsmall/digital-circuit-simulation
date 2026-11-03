@@ -1,0 +1,30 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "prienc8",
+    "author": "dcs",
+    "description": "8 输入优先编码器：输出最高有效位的下标和 valid"
+  },
+  "nets": ["in0", "in1", "in2", "in3", "in4", "in5", "in6", "in7", "out", "valid"],
+  "components": [
+    {
+      "type": "prienc",
+      "name": "prienc8",
+      "params": { "num_inputs": "8" },
+      "connections": {
+        "in0": "in0", "in1": "in1", "in2": "in2", "in3": "in3",
+        "in4": "in4", "in5": "in5", "in6": "in6", "in7": "in7",
+        "out": "out", "valid": "valid"
+      }
+    }
+  ],
+  "expose": {
+    "inputs": {
+      "in0": "in0", "in1": "in1", "in2": "in2", "in3": "in3",
+      "in4": "in4", "in5": "in5", "in6": "in6", "in7": "in7"
+    },
+    "outputs": { "out": "out", "valid": "valid" }
+  }
+}

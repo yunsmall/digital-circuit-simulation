@@ -1,0 +1,29 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "half_adder",
+    "author": "dcs",
+    "description": "半加器：异或得和、与门得进位"
+  },
+  "nets": ["a", "b", "sum", "carry"],
+  "components": [
+    {
+      "type": "xor",
+      "name": "xor_sum",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "a", "in1": "b", "out": "sum" }
+    },
+    {
+      "type": "and",
+      "name": "and_carry",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "a", "in1": "b", "out": "carry" }
+    }
+  ],
+  "expose": {
+    "inputs": { "a": "a", "b": "b" },
+    "outputs": { "sum": "sum", "carry": "carry" }
+  }
+}

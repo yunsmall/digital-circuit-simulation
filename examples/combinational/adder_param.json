@@ -1,0 +1,62 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "参数化加法器演示：同一个 library/adder 蓝图按 bit_width=16 实例化，计数器 + 1"
+  },
+  "definitions": {
+    "adder": "../../library/adder.json"
+  },
+  "nets": ["clk", "cnt", "one", "zero", "sum", "cout", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "cnt_a",
+      "params": { "bit_width": "16", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "cnt" }
+    },
+    {
+      "type": "constant",
+      "name": "const_one",
+      "params": { "bit_width": "16", "value": "1" },
+      "connections": { "out": "one" }
+    },
+    {
+      "type": "constant",
+      "name": "const_zero",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "zero" }
+    },
+    {
+      "type": "composite",
+      "name": "u_add",
+      "params": { "definition": "adder", "bit_width": "16" },
+      "connections": { "a": "cnt", "b": "one", "cin": "zero", "sum": "sum", "cout": "cout" }
+    },
+    {
+      "type": "display",
+      "name": "sum_display",
+      "params": { "bit_width": "16", "kind": "text", "digits": "5" },
+      "connections": { "in": "sum" }
+    },
+    {
+      "type": "display",
+      "name": "cout_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "cout" }
+    }
+  ]
+}

@@ -14,8 +14,8 @@ inline void regHalfAdder() {
             {"xor", "xor", {{"inputs", "2"}, {"bit_width", "1"}}, {{"in0", "a"}, {"in1", "b"}, {"out", "sum"}}},
             {"and", "and", {{"inputs", "2"}, {"bit_width", "1"}}, {{"in0", "a"}, {"in1", "b"}, {"out", "carry"}}},
     };
-    def.input_expose = {{"a", "a"}, {"b", "b"}};
-    def.output_expose = {{"sum", "sum"}, {"carry", "carry"}};
+    def.input_expose = {{"a", {"a", ""}}, {"b", {"b", ""}}};
+    def.output_expose = {{"sum", {"sum", ""}}, {"carry", {"carry", ""}}};
     dsc::CircuitLibrary::instance().add(std::move(def));
 }
 
@@ -38,7 +38,7 @@ inline void regFullAdder() {
              {{"a", "s1"}, {"b", "cin"}, {"sum", "sum"}, {"carry", "c2"}}},
             {"or", "or", {{"inputs", "2"}, {"bit_width", "1"}}, {{"in0", "c1"}, {"in1", "c2"}, {"out", "cout"}}},
     };
-    def.input_expose = {{"a", "a"}, {"b", "b"}, {"cin", "cin"}};
-    def.output_expose = {{"sum", "sum"}, {"cout", "cout"}};
+    def.input_expose = {{"a", {"a", ""}}, {"b", {"b", ""}}, {"cin", {"cin", ""}}};
+    def.output_expose = {{"sum", {"sum", ""}}, {"cout", {"cout", ""}}};
     dsc::CircuitLibrary::instance().add(std::move(def));
 }

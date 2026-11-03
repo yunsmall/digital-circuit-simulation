@@ -39,7 +39,8 @@ struct VirtioFixture {
         return 1;
     }
 
-    explicit VirtioFixture(BlkImage img = BlkImage::None) {
+    // custom 非空时优先于 img：需要观察设备交给后端的 64 位偏移时用
+    explicit VirtioFixture(BlkImage img = BlkImage::None, const VirtioBlk::BackendOps *custom = nullptr) {
         auto d = std::make_unique<Dev>("vd0");
         dev = d.get();
         c->addComponent(std::move(d));
@@ -47,7 +48,10 @@ struct VirtioFixture {
         ram = r.get();
         c->addComponent(std::move(r));
         if constexpr (std::is_same_v<Dev, VirtioBlk>) {
-            if (img != BlkImage::None) {
+            if (custom) {
+                dev->setBackend(*custom);
+            }
+            else if (img != BlkImage::None) {
                 image.assign(512, 0);
                 VirtioBlk::BackendOps ops;
                 ops.ctx = &image;

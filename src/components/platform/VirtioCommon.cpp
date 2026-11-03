@@ -60,7 +60,11 @@ std::string genMmio(const DeviceSpec &s) {
         if (!s.queues[q].notify_kick)
             continue;
         kick_code += std::format(
-                "                    if (_qi == {0}u) _vio_q_{1}[{0}].phase = _vio_q_{1}[{0}].qready ? 1 : 0;\n", q,
+                // 驱动在设备处理中途再写 notify（连续发包时很常见）不能把当前阶段拽回
+                // 开头：在途的主端口事务会按新阶段解释自己搬回的数据。只允许空闲时启动，
+                // 已排队的新请求由阶段 8 回到阶段 1 时自然看到
+                "                    if (_qi == {0}u && _vio_q_{1}[{0}].phase == 0)\n"
+                "                        _vio_q_{1}[{0}].phase = _vio_q_{1}[{0}].qready ? 1 : 0;\n", q,
                 s.id);
     }
     return std::format(
@@ -92,11 +96,14 @@ std::string genMmio(const DeviceSpec &s) {
             "            case 0x030: _vio_qsel_{0} = _wdat < _VIO_{0}_NQ ? _wdat : _VIO_{0}_NQ - 1; break;\n"
             "            case 0x038: {{\n"
             "                _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}];\n"
-            "                _q->qnum = _wdat > _VIO_{0}_QUEUE_MAX ? _VIO_{0}_QUEUE_MAX : _wdat;\n"
+            // QueueNum 是环形缓冲的除数，0 会让后面的 % 直接除零。驱动不写就想
+            // ready 时按 1 处理，写 0 也钳到 1
+            "                _q->qnum = _wdat == 0 ? 1u : (_wdat > _VIO_{0}_QUEUE_MAX ? _VIO_{0}_QUEUE_MAX : _wdat);\n"
             "                break;\n"
             "            }}\n"
             "            case 0x044: {{\n"
             "                _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}];\n"
+            "                if (_q->qnum == 0) _q->qnum = 1;\n"
             "                _q->qready = _wdat & 1;\n"
             "                _q->last_avail = 0; _q->used_idx = 0; _q->phase = 0;\n"
             "                break;\n"
@@ -118,6 +125,11 @@ std::string genMmio(const DeviceSpec &s) {
             "                if (_wdat == 0) {{\n"
             "                    _vio_int_{0} = 0;\n"
             "                    dcs_memset(_vio_q_{0}, 0, sizeof(_vio_q_{0}));\n"
+            // 复位时主端口可能正有事务在途：不清掉的话下一拍还会按旧地址继续搬数据，
+            // 完成回调又会拿着已清零的队列推进阶段
+            "                    _vio_mp_active_{0} = 0; _vio_mp_gap_{0} = 0; _vio_mp_q_{0} = 0;\n"
+            "                    _vio_mp_ackp_{0} = 0; _vio_mp_beat_{0} = 0; _vio_mp_write_{0} = 0;\n"
+            "                    _vio_wd_{0} = 0; _vio_pd_{0} = 0;\n"
             "                    {6}(_vio_state_{0});\n"
             "                }}\n"
             "                break;\n"
@@ -164,7 +176,8 @@ std::string genMaster(const DeviceSpec &s) {
             "            _m_adr = _ma & ~3u; _m_stb = 1; _m_cyc = 1; _m_we = _vio_mp_write_{0};\n"
             "            _m_sel = (uint8_t)(((1u << _step) - 1u) << (_ma & 3));\n"
             "            if (_vio_mp_write_{0}) {{\n"
-            "                uint32_t _v = 0; dcs_memcpy(&_v, _vio_mp_buf_{0} + _vio_mp_beat_{0}, 4);\n"
+            // 只搬本拍实际长度：beat 到 63 时读 4 字节会越出 64 字节缓冲
+            "                uint32_t _v = 0; dcs_memcpy(&_v, _vio_mp_buf_{0} + _vio_mp_beat_{0}, _step);\n"
             "                _m_dout = _v << _shift;\n"
             "            }}\n"
             "            if (_m_ack && !_vio_mp_ackp_{0}) {{\n"
@@ -196,7 +209,9 @@ std::string genDone(const DeviceSpec &s) {
         c += "            switch (_qv->phase) {\n";
         c += "            case 1: { // avail.idx\n";
         c += std::format("                uint32_t _i = (uint32_t)_vio_mp_buf_{0}[0] | ((uint32_t)_vio_mp_buf_{0}[1] << 8);\n", s.id);
-        c += "                _qv->phase = _i == _qv->last_avail ? 0 : 2;\n";
+        // avail.idx 是规范的 16 位回绕计数，内部 last_avail 是 32 位。只比低 16 位，
+        // 否则队列跑过 65536 个请求后两边永远不等
+        c += "                _qv->phase = _i == (uint16_t)_qv->last_avail ? 0 : 2;\n";
         c += "                break;\n";
         c += "            }\n";
         c += "            case 2: { // avail.ring\n";
@@ -388,8 +403,8 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
     s.init_code = p.init_code;
     s.config_read = std::format(
             "            case 0x100: _dout = {}u; break;\n"
-            "            case 0x104: _dout = 0; break;\n",
-            (uint32_t) (p.size_bytes / 512));
+            "            case 0x104: _dout = {}u; break;\n",
+            (uint32_t) (p.size_bytes / 512), (uint32_t) ((p.size_bytes / 512) >> 32));
     s.out_write = p.out_write;
 
     QueueSpec q;
@@ -397,13 +412,16 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
     // desc0 是 16 字节请求头；之后带 NEXT 的都是数据段，链尾没有 NEXT 的是状态字节
     q.desc = std::format(
             "                if (_qv->step == 0) {{\n"
-            "                    _qv->step = 1; _qv->phase = {0};\n"
+            // 请求头不足 16 字节时不能照 16 字节去读 guest 内存（可能越过描述符甚至
+            // 未映射区域），直接以 written=0 完成，别让设备卡在在途事务上
+            "                    if (_qv->dlen < 16) _qv->phase = {3};\n"
+            "                    else {{ _qv->step = 1; _qv->phase = {0}; }}\n"
             "                }} else if (_qv->dflags & 1) {{\n"
             "                    _qv->phase = {1};\n"
             "                }} else {{\n"
             "                    _qv->phase = {2};\n"
             "                }}\n",
-            Q_DEV, Q_DEV + 1, Q_DEV + 2);
+            Q_DEV, Q_DEV + 1, Q_DEV + 2, Q_USED);
     q.start = std::format(
             "        case {0}: _a = _qv->daddr; _l = 16; _wr = 0; break;\n"
             "        case {3}: {{\n"
@@ -412,7 +430,8 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "            _qv->chunk = _c;\n"
             "            _a = _qv->daddr + _qv->off; _l = _c;\n"
             "            if (_vio_type_{1} == 0) {{\n"
-            "                uint32_t _io_off = _vio_sec_{1} * 512u + _qv->written;\n"
+            // sector 字段是 64 位：偏移必须按 64 位算，否则 4GiB 以上的镜像会回绕到盘头
+            "                uint64_t _io_off = _vio_sec_{1} * 512ull + _qv->written;\n"
             "{2}"
             "                _wr = 1;\n"
             "            }} else _wr = 0;\n"
@@ -422,10 +441,13 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             Q_DEV, id, p.read_stmt, Q_DEV + 1, Q_DEV + 2);
     q.done = std::format(
             "            case {0}: {{ // 请求头读完，进入数据段\n"
+            // 头描述符没有 NEXT 就没有状态描述符，按原流程会把状态字节写回请求头
+            // 本身所在的 guest 内存。畸形链直接完成请求，不再碰 guest 缓冲
+            "                if (!(_qv->dflags & 1)) {{ _qv->phase = {6}; break; }}\n"
             "                _vio_type_{1} = (uint32_t)_vio_mp_buf_{1}[0] | ((uint32_t)_vio_mp_buf_{1}[1] << 8) |\n"
             "                                ((uint32_t)_vio_mp_buf_{1}[2] << 16) | ((uint32_t)_vio_mp_buf_{1}[3] << 24);\n"
-            "                _vio_sec_{1} = (uint32_t)_vio_mp_buf_{1}[8] | ((uint32_t)_vio_mp_buf_{1}[9] << 8) |\n"
-            "                               ((uint32_t)_vio_mp_buf_{1}[10] << 16) | ((uint32_t)_vio_mp_buf_{1}[11] << 24);\n"
+            // 规范里 virtio_blk_req.sector 是 64 位字段，低 32 位装不下大盘
+            "                dcs_memcpy(&_vio_sec_{1}, _vio_mp_buf_{1} + 8, 8);\n"
             "                _qv->written = 0; _vio_status_byte_{1} = 0;\n"
             "                if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
             "                else _qv->phase = {3};\n"
@@ -435,7 +457,7 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "                uint32_t _c = _qv->chunk;\n"
             "                if (_vio_type_{1} == 0) _qv->written += _c;\n"
             "                else if (_vio_type_{1} == 1) {{\n"
-            "                    uint32_t _io_off = _vio_sec_{1} * 512u + _qv->written;\n"
+            "                    uint64_t _io_off = _vio_sec_{1} * 512ull + _qv->written;\n"
             "{2}"
             "                    _qv->written += _c;\n"
             "                }} else if (_vio_type_{1} != 4) _vio_status_byte_{1} = 2;\n"

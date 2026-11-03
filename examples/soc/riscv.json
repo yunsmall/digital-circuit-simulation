@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "最小裸机 SoC：RISC-V CPU（默认 RV32，RV64 请给 riscv_cpu 加 \"xlen\": \"64\"）+ 64KB Wishbone 内存，没有外设；配合 dcs_soc --elf 跑 riscv-tests/裸机程序，按 tohost 判定结果"
+  },
   "nets": ["clk", "rst", "irq", "mti", "msi", "wb_adr", "wb_dat_o", "wb_dat_i",
            "wb_we", "wb_sel", "wb_stb", "wb_cyc", "wb_ack", "halted"],
   "components": [

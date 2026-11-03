@@ -36,7 +36,7 @@ public:
 
     ~ROM() override;
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
 
     int depth() const { return _depth; }
     int addrWidth() const { return _addr_width; }

@@ -160,6 +160,15 @@ TEST(VirtioNet, EmptyRxBuffersStayQueued) {
     EXPECT_EQ(f.usedLen(s.used, 1), 28u);
 }
 
+// 0 长度包没有意义：设备会把它当"头写完但没有包体"，rx_tail 永不前进，
+// 后面所有包都被它堵在环里
+TEST(VirtioNet, EmptyPacketRejected) {
+    VirtioFixture<VirtioNet> f;
+    EXPECT_FALSE(f.dev->pushRxPacket(nullptr, 0));
+    uint8_t pkt[4] = {1, 2, 3, 4};
+    EXPECT_TRUE(f.dev->pushRxPacket(pkt, 4)) << "空包不能占用环里的位置";
+}
+
 // RX 宿主环满时 push 返回 false；设备消费后又能继续
 TEST(VirtioNet, RxRingFull) {
     VirtioFixture<VirtioNet> f;

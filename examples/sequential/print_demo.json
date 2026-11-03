@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "最小 print 示例：时钟驱动的浮点加法结果每拍打印到终端"
+  },
   "nets": ["a", "b", "clk", "sum"],
   "components": [
     {

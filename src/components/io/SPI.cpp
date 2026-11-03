@@ -39,7 +39,7 @@ SPI::SPI(const std::string &name, int clkdiv) : SequentialComponent(name, "spi")
 
 SPI::~SPI() = default;
 
-bool SPI::prepare(std::string &) {
+bool SPI::prepare(Context &, std::string &) {
     _prepared = true;
     return true;
 }

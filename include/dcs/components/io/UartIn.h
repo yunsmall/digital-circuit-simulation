@@ -17,7 +17,7 @@ public:
     explicit UartIn(const std::string &name, int baud_div = 16);
     ~UartIn() override;
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;

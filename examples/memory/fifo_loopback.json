@@ -1,0 +1,65 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "FIFO 回环：计数器写数据，两个分频信号分别控制写/读，观察 dout 与空满标志"
+  },
+  "nets": ["clk", "din", "wr", "rd", "dout", "full", "empty", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "data_counter",
+      "params": { "bit_width": "8", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "din" }
+    },
+    {
+      "type": "clkdiv",
+      "name": "wr_pulse",
+      "params": { "divisor": "2" },
+      "connections": { "clk": "clk", "out": "wr" }
+    },
+    {
+      "type": "clkdiv",
+      "name": "rd_pulse",
+      "params": { "divisor": "4" },
+      "connections": { "clk": "clk", "out": "rd" }
+    },
+    {
+      "type": "fifo",
+      "name": "fifo16",
+      "params": { "data_width": "8", "depth": "16", "has_rst": "0" },
+      "connections": { "din": "din", "wr_en": "wr", "rd_en": "rd", "clk": "clk",
+                       "dout": "dout", "full": "full", "empty": "empty" }
+    },
+    {
+      "type": "display",
+      "name": "dout_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "dout" }
+    },
+    {
+      "type": "display",
+      "name": "full_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "full" }
+    },
+    {
+      "type": "display",
+      "name": "empty_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "empty" }
+    }
+  ]
+}

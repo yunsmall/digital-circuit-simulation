@@ -94,7 +94,7 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
 
 WishboneInterconnect::~WishboneInterconnect() = default;
 
-bool WishboneInterconnect::prepare(std::string & /*error*/) {
+bool WishboneInterconnect::prepare(Context &, std::string & /*error*/) {
     _prepared = true;
     return true;
 }

@@ -174,14 +174,21 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
             "            {{\n"
             "                const uint32_t _b = _off - 0x108u;\n"
             "                const uint8_t *_p = 0;\n"
-            "                if (_vio_icfg_sel_{0} == 1) _p = (const uint8_t *)_vio_state_{0} + {2};\n"
-            "                else if (_vio_icfg_sel_{0} == 3) _p = (const uint8_t *)_vio_state_{0} + {3};\n"
+            // 每项载荷都有自己的长度：ID_DEVIDS 只有 8 字节，驱动按 0x108+4k
+            // 读到后面会穿越到相邻的 cfg_keybits，必须按 size 截断并补零
+            "                uint32_t _sz = 0;\n"
+            "                if (_vio_icfg_sel_{0} == 1) {{ _p = (const uint8_t *)_vio_state_{0} + {2}; _sz = 17; }}\n"
+            "                else if (_vio_icfg_sel_{0} == 3) {{ _p = (const uint8_t *)_vio_state_{0} + {3}; _sz = 8; }}\n"
             "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 1)\n"
-            "                    _p = (const uint8_t *)_vio_state_{0} + {4};\n"
+            "                    {{ _p = (const uint8_t *)_vio_state_{0} + {4}; _sz = 8; }}\n"
             "                else if (_vio_icfg_sel_{0} == 0x11 && _vio_icfg_sub_{0} == 0x11)\n"
-            "                    _p = (const uint8_t *)_vio_state_{0} + {5};\n"
+            "                    {{ _p = (const uint8_t *)_vio_state_{0} + {5}; _sz = 4; }}\n"
             "                _dout = 0;\n"
-            "                if (_p) dcs_memcpy(&_dout, _p + _b, 4);\n"
+            "                if (_p && _b < _sz) {{\n"
+            "                    uint32_t _cn = _sz - _b;\n"
+            "                    if (_cn > 4) _cn = 4;\n"
+            "                    dcs_memcpy(&_dout, _p + _b, _cn);\n"
+            "                }}\n"
             "                break;\n"
             "            }}\n",
             s.id, payload_cases, name_off, devids_off, keybits_off, ledbits_off);

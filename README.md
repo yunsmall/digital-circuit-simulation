@@ -376,7 +376,7 @@ A blueprint file is marked `"$meta": {"kind": "blueprint"}` and either holds a
 `definitions` map or one definition directly at the root (its name comes from
 `$meta.name`, falling back to the key used at the reference site). Inline definitions in
 the top-level file win over same-named ones from referenced files, and reference cycles
-are rejected. See `examples/jsons/composite_library.json` + `examples/jsons/library/`.
+are rejected. See `examples/combinational/composite_library.json` + `library/`.
 
 `schemas/circuit.schema.json` and `schemas/blueprint.schema.json` are for editor
 completion only — they are never used for validation, and a file does not have to

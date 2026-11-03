@@ -16,6 +16,7 @@
 #include "dcs/CircuitLibrary.h"
 #include "dcs/ComponentFactory.h"
 #include "dcs/Context.h"
+#include "dcs/util/ParamFlatten.h"
 
 namespace dsc {
 
@@ -124,7 +125,7 @@ bool importDefinitions(const nlohmann::json &defs, const std::filesystem::path &
     }
     if (!inline_defs.empty()) {
         std::string import_error;
-        lib.importJson(inline_defs.dump(), import_error, inline_source);
+        lib.importJson(inline_defs.dump(), import_error, inline_source, base.string());
         if (!import_error.empty()) {
             error = import_error;
             return false;
@@ -182,7 +183,7 @@ bool importBlueprintFile(const std::filesystem::path &file, const std::string &k
         json wrap = json::object();
         wrap[name] = def;
         std::string import_error;
-        lib.importJson(wrap.dump(), import_error, file.generic_string());
+        lib.importJson(wrap.dump(), import_error, file.generic_string(), file.parent_path().string());
         if (!import_error.empty()) {
             error = import_error;
             return false;
@@ -195,18 +196,8 @@ bool importBlueprintFile(const std::filesystem::path &file, const std::string &k
     return true;
 }
 
-// 参数值除了标量，还可以是嵌套对象（后端私有选项之类）。对象按键路径拍平成
-// "backend_opts.hostfwd" 这样的扁平键，参数表因此保持 string→string 不变，
-// 元件按前缀取自己那一段；数组和其它值仍然 dump 成字符串
-void flattenParams(const nlohmann::json &j, const std::string &prefix, std::unordered_map<std::string, std::string> &out) {
-    for (auto &[k, v]: j.items()) {
-        const std::string key = prefix.empty() ? k : prefix + "." + k;
-        if (v.is_object())
-            flattenParams(v, key, out);
-        else
-            out[key] = v.is_string() ? v.get<std::string>() : v.dump();
-    }
-}
+// 参数值除了标量，还可以是嵌套对象（后端私有选项之类）。拍平规则统一在
+// dcs/util/ParamFlatten.h，顶层电路和蓝图导入必须一致
 
 // 装载失败时把蓝图库恢复成导入前的样子。definitions 导入是逐个 add 的，
 // 靠后的蓝图失败时前面的已经写进上下文；不恢复的话后续 --check/--list-definitions
@@ -320,6 +311,12 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
             return nullptr;
         }
 
+        // 元件 prepare 里用 Context::resolvePath 解析参数中的相对路径时，
+        // 当前目录就是这份 JSON 所在目录；蓝图子元件展开时 Composite 会按
+        // 定义自己的 base_dir 再切一次
+        Context::ScopedSourceDir source_guard(
+                ctx, base_dir.empty() ? std::filesystem::current_path().string() : base_dir);
+
         auto &factory = ComponentFactory::instance();
 
         for (size_t ci = 0; ci < root["components"].size(); ci++) {
@@ -351,20 +348,8 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
                 }
                 flattenParams(jc["params"], "", params);
             }
-            // DLL 路径相对于 JSON 文件所在目录
-            // 带文件路径的元件，其路径相对于 JSON 所在目录解析；
-            // 不这样做的话，换个工作目录加载就找不到文件了
-            if (!base_dir.empty()) {
-                const char *path_key = type == "dll" ? "path" : type == "rom" ? "filepath" : nullptr;
-                if (path_key) {
-                    auto it = params.find(path_key);
-                    if (it != params.end()) {
-                        std::filesystem::path p(it->second);
-                        if (p.is_relative())
-                            it->second = (std::filesystem::path(base_dir) / p).string();
-                    }
-                }
-            }
+            // 元件参数里的相对路径不在这里改写：谁需要文件谁在 prepare(ctx) 里
+            // 用 Context::resolvePath 解析（当前目录由加载器设成 JSON 所在目录）
 
             std::string create_error;
             std::unique_ptr<Component> comp = factory.create(type, name, params, create_error);

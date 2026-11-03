@@ -1,0 +1,58 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "BCD 计数 + 七段译码：4 位计数器 0..15 轮流驱动数码管"
+  },
+  "nets": ["clk", "en1", "clr0", "dp0", "cnt", "seg"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "constant",
+      "name": "no_clear",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "clr0" }
+    },
+    {
+      "type": "constant",
+      "name": "no_dp",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "dp0" }
+    },
+    {
+      "type": "counter",
+      "name": "bcd_cnt",
+      "params": { "bit_width": "4", "has_en": "1", "has_clr": "1" },
+      "connections": { "clk": "clk", "en": "en1", "clr": "clr0", "q": "cnt" }
+    },
+    {
+      "type": "bcd2seg",
+      "name": "seg_decoder",
+      "params": { "hex_mode": "1", "active_low": "0" },
+      "connections": { "in": "cnt", "dp": "dp0", "seg": "seg" }
+    },
+    {
+      "type": "display",
+      "name": "seg_display",
+      "params": { "bit_width": "8", "kind": "seg", "digits": "1" },
+      "connections": { "in": "seg" }
+    },
+    {
+      "type": "display",
+      "name": "value_display",
+      "params": { "bit_width": "4", "kind": "text", "digits": "2" },
+      "connections": { "in": "cnt" }
+    }
+  ]
+}

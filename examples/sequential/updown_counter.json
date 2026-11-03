@@ -1,0 +1,40 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "8 位加/减计数器：updown 接常量 1，每拍递增"
+  },
+  "nets": ["clk", "en1", "up1", "q"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "constant",
+      "name": "count_up",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "up1" }
+    },
+    {
+      "type": "counter",
+      "name": "updown_cnt",
+      "params": { "bit_width": "8", "has_en": "1", "has_updown": "1" },
+      "connections": { "clk": "clk", "en": "en1", "updown": "up1", "q": "q" }
+    },
+    {
+      "type": "display",
+      "name": "count_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "q" }
+    }
+  ]
+}

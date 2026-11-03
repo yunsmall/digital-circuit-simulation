@@ -1,4 +1,5 @@
 #include "dcs/Component.h"
+#include "dcs/CodeGenNames.h"
 #include <cassert>
 #include <format>
 
@@ -40,8 +41,8 @@ std::string gen_read_wire(int net_id, int pin_w, int net_w, std::string_view var
         return std::format("{} {} = {};", c_int_type(pin_w), var, init);
     int b = byte_count(pin_w);
     std::string s = std::format(R"({} {} = {};
-    dcs_memcpy(&{}, _w[{}], {});)",
-                                c_int_type(pin_w), var, init, var, net_id, b);
+    dcs_memcpy(&{}, {}, {});)",
+                                c_int_type(pin_w), var, init, var, cgen::wire(net_id), b);
     // 宽引脚按字节数拷贝时已经截掉了高位，不需要再掩码
     if (net_w > pin_w && pin_w <= 64)
         s += std::format("\n    {} &= {};", var, gen_mask(pin_w));
@@ -50,9 +51,9 @@ std::string gen_read_wire(int net_id, int pin_w, int net_w, std::string_view var
 
 std::string gen_write_wire(int comp_id, int out_idx, std::string_view val, int pin_w) {
     int b = byte_count(pin_w);
-    return std::format(R"(    dcs_memcpy(_c_out_{0}_{1}, &{2}, {3});
-    dcs_memset(_c_out_{0}_{1} + {3}, 0, 16 - {3});)",
-                       comp_id, out_idx, val, b);
+    const std::string out = cgen::cOut(comp_id, out_idx);
+    return std::format("    dcs_memcpy({}, &{}, {});\n    dcs_memset({} + {}, 0, 16 - {});", out, val, b, out,
+                       b, b);
 }
 
 // ============================================================
@@ -67,7 +68,9 @@ std::vector<int> Component::getCombinationalDeps(int out_idx) const {
         const Pin *p = _outputs[out_idx].get();
         // 时序输出天然断开组合路径；三态输出在 oe=0 时也是断开的，静态分析
         // 判断不了使能，一律按"可断开"处理——经过三态总线的环靠阶段 2b 的
-        // 迭代上限兜底，这是框架既有的约定
+        // 迭代上限兜底，这是框架既有的约定。
+        // 只用于环路检测：三态门仍然要按输入算本拍输出，拓扑排序不能用这个
+        // 函数来省略三态/时序元件的先后顺序（见 CodeGen 的 topologicalSort）
         if (p->isSequential() || p->isTriState())
             return {};
     }
@@ -126,7 +129,7 @@ std::string Component::genInputPtrArray(std::string_view arr) const {
     for (size_t i = 0; i < _inputs.size(); i++) {
         int nid = _inputs[i]->netId();
         s += i ? "," : "";
-        s += nid >= 0 ? std::format("_w[{}]", nid) : std::string("_dcs_zero_slot");
+        s += nid >= 0 ? cgen::wire(nid) : std::string("_dcs_zero_slot");
     }
     s += "};\n";
     return s;
@@ -151,7 +154,7 @@ std::string Component::genOutputWirePtrArray(std::string_view arr) const {
     for (size_t i = 0; i < _outputs.size(); i++) {
         int nid = _outputs[i]->netId();
         s += i ? "," : "";
-        s += nid >= 0 ? std::format("_w[{}]", nid) : std::string("_dcs_out_dummy");
+        s += nid >= 0 ? cgen::wire(nid) : std::string("_dcs_out_dummy");
     }
     s += "};\n";
     return s;
@@ -165,14 +168,14 @@ std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin
     // 直接写 _w 就够了——省掉 _c_out 那一份拷贝和清零，每拍每个输出少两次写
     if (ts) {
         std::string s = gen_write_wire(_id, out_idx, val, pin_w);
-        s += std::format("\n    _c_oe_{}_{} = {};", _id, out_idx, drive);
+        s += std::format("\n    {} = {};", cgen::cOe(_id, out_idx), drive);
         return s;
     }
     int net_id = out_idx < (int) _outputs.size() ? _outputs[out_idx]->netId() : -1;
     if (net_id < 0)
         return "";
     int b = byte_count(pin_w);
-    std::string s = std::format("dcs_memcpy(_w[{}], &{}, {});", net_id, val, b);
+    std::string s = std::format("dcs_memcpy({}, &{}, {});", cgen::wire(net_id), val, b);
     // 线网槽的高 8 字节从 init 起一直是 0：<=64 位的驱动只写低 8 字节，
     // >64 位的驱动写满 16 字节且自带零扩展。所以每拍只需要清当前字节窗口里
     // 超出位宽的那几位，不用再把 16-b 字节全清一遍。
@@ -181,7 +184,7 @@ std::string Component::genOutputWrite(int out_idx, std::string_view val, int pin
     // 1. 合成一次 8 字节整写：下游按字节读同一根线，宽存储等不到存储转发（慢 13%）
     // 2. 只补零到线网宽度（1 位线网就不用补）：少了补零反而慢约 3%
     if (b < 8)
-        s += std::format("\n    dcs_memset(_w[{}] + {}, 0, {});", net_id, b, 8 - b);
+        s += std::format("\n    dcs_memset({} + {}, 0, {});", cgen::wire(net_id), b, 8 - b);
     return s;
 }
 

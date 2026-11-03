@@ -1,0 +1,34 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "按键去抖：输入恒定 1，稳定 8 个时钟沿后输出才更新"
+  },
+  "nets": ["clk", "raw", "clean"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "button",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "raw" }
+    },
+    {
+      "type": "debounce",
+      "name": "debounce_key",
+      "params": { "bit_width": "1", "stable_ticks": "8" },
+      "connections": { "clk": "clk", "in": "raw", "out": "clean" }
+    },
+    {
+      "type": "display",
+      "name": "clean_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "clean" }
+    }
+  ]
+}

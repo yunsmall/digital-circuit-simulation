@@ -1,0 +1,32 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "偶校验演示：0xF1 有 5 个 1，library/parity8 应输出校验位 1"
+  },
+  "definitions": {
+    "parity8": "../../library/parity8.json"
+  },
+  "nets": ["din", "parity"],
+  "components": [
+    {
+      "type": "constant",
+      "name": "data",
+      "params": { "bit_width": "8", "value": "241" },
+      "connections": { "out": "din" }
+    },
+    {
+      "type": "composite",
+      "name": "u_parity",
+      "params": { "definition": "parity8" },
+      "connections": { "din": "din", "parity": "parity" }
+    },
+    {
+      "type": "display",
+      "name": "parity_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "parity" }
+    }
+  ]
+}

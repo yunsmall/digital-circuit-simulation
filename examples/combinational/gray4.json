@@ -1,0 +1,50 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "格雷码演示：4 位计数器接到 library/gray4，观察二进制与格雷码的对应关系"
+  },
+  "definitions": {
+    "gray4": "../../library/gray4.json"
+  },
+  "nets": ["clk", "bin", "gray", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "bin_counter",
+      "params": { "bit_width": "4", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "bin" }
+    },
+    {
+      "type": "composite",
+      "name": "u_gray",
+      "params": { "definition": "gray4" },
+      "connections": { "bin": "bin", "gray": "gray" }
+    },
+    {
+      "type": "display",
+      "name": "bin_display",
+      "params": { "bit_width": "4", "kind": "text", "digits": "1" },
+      "connections": { "in": "bin" }
+    },
+    {
+      "type": "display",
+      "name": "gray_display",
+      "params": { "bit_width": "4", "kind": "text", "digits": "1" },
+      "connections": { "in": "gray" }
+    }
+  ]
+}

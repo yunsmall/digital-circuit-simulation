@@ -94,7 +94,7 @@ public:
     // --- 验证与编译 ---
     CircuitError check(std::vector<std::string> *warnings = nullptr); // 环路检测，失败返回错误
     // 校验：展开复合元件 + 环路/拓扑检查，不生成也不编译 JIT。
-    // warnings 非空时收集拓扑告警（悬空从端口等），否则照旧打到 stderr
+    // 拓扑告警只写进 warnings，不直接打印；CLI 层决定怎么呈现
     CircuitError validate(std::vector<std::string> *warnings = nullptr);
     CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）
     bool isCompiled() const {
@@ -120,6 +120,13 @@ public:
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
     // 标量快捷路径：高频驱动时钟/复位这类 1 位线网时，不必每拍构造一次 vector
     void setWire(int id, uint64_t value);
+    // 直接拿 Net* 驱动，省掉调用方到处写 ->id()
+    void setWire(Net *net, const std::vector<uint8_t> &value) {
+        setWire(net->id(), value);
+    }
+    void setWire(Net *net, uint64_t value) {
+        setWire(net->id(), value);
+    }
     std::vector<uint8_t> getWire(int id); // 读取线网值
 
     // --- 运行时错误 ---
@@ -152,10 +159,13 @@ public:
         return (int) _components.size();
     }
     Net *findNet(const std::string &name) const;
-    Component *componentById(int id) const; // 按 ID 查找元件
+    // 按元件 ID 查找。ID 在 compile()/validate() 里按索引重编号，构建期删过元件后
+    // 直到下一次重编号前，ID 不保证等于下标
+    Component *componentById(int id) const;
 
     // --- 调试 ---
-    std::string generateC() const; // 生成等效 C 代码，不触发编译
+    // 生成等效 C 代码，不触发 JIT 编译。要求网表已展开：先调 validate() 或 compile()
+    std::string generateC() const;
 
     // --- JSON 序列化 ---
     std::string exportJson() const; // 导出电路为 JSON 字符串
@@ -208,23 +218,17 @@ private:
     // compile() 里，tick 走的是后端解析出来的函数指针，热路径上没有额外间接层
     JitBackend _backend;
 
+    // 编译产物和 Circuit 的入口一一对应。直接持有 JitCompileResult，新增入口时
+    // 只改 JitBackend.cpp 的符号解析，这里不用再手工同步一份字段
+    JitCompileResult _jit;
+
     // 显式上下文（可为空，空表示用 Context::global()）
     Context *_context = nullptr;
 
-    void (*_tick_fn)() = nullptr;
-    void (*_tick_cycle_fn)(int) = nullptr;
-    void (*_tick_cycles_fn)(int, uint64_t) = nullptr;
-    void (*_tick_batch_fn)(uint64_t) = nullptr;
-    void (*_tick_forever_fn)() = nullptr;
-    void (*_init_fn)() = nullptr;
-    void (*_deinit_fn)() = nullptr;
-    void (*_reset_fn)() = nullptr;
-    void (*_set_wire_fn)(int, const uint8_t *) = nullptr;
-    void (*_set_wire_u64_fn)(int, uint64_t) = nullptr;
-    void (*_get_wire_fn)(int, uint8_t *) = nullptr;
-
     Pin *findPin(Component *comp, const std::string &name);
     void jitCleanup();
+    // expandComposites + 重编号 + check，两个入口共用的网表准备步骤
+    CircuitError prepareNetlist(std::vector<std::string> *warnings = nullptr);
     CircuitError expandComposites();
     bool dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color, std::vector<int> &path);
 };

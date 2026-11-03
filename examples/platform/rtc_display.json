@@ -1,0 +1,53 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "RTC 走时：读 TIME_LO 寄存器，每拍虚拟时间增加 100ns"
+  },
+  "nets": ["clk", "addr", "wdata", "we0", "en1", "rdata", "ready", "irq"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "time_lo_offset",
+      "params": { "bit_width": "8", "value": "0" },
+      "connections": { "out": "addr" }
+    },
+    {
+      "type": "constant",
+      "name": "no_write_data",
+      "params": { "bit_width": "32", "value": "0" },
+      "connections": { "out": "wdata" }
+    },
+    {
+      "type": "constant",
+      "name": "read_only",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "we0" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "rtc",
+      "name": "rtc0",
+      "params": { "ns_per_tick": "100" },
+      "connections": { "clk": "clk", "addr": "addr", "wdata": "wdata", "we": "we0", "en": "en1",
+                       "rdata": "rdata", "ready": "ready", "irq": "irq" }
+    },
+    {
+      "type": "display",
+      "name": "time_display",
+      "params": { "bit_width": "32", "kind": "text", "digits": "8" },
+      "connections": { "in": "rdata" }
+    }
+  ]
+}

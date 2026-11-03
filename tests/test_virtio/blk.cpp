@@ -116,3 +116,142 @@ TEST(VirtioTest, StatusZeroResetsQueue) {
     f.write(0x030, 0);
     EXPECT_EQ(f.read(0x044), 0u) << "status 写 0 应复位队列";
 }
+
+// QueueNum 会被当成 avail/used 环的除数：驱动写 0 时不能出现 % 0
+TEST(VirtioTest, ZeroQueueNumDoesNotDivideByZero) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    f.setupBlkQueue(desc, avail, used, 0, 0x200, 0x240, 0x280, 16, 0, 0, true);
+    f.write(0x030, 0);
+    f.write(0x038, 0); // 0 会被钳到 1
+    f.write(0x080, desc); f.write(0x084, 0);
+    f.write(0x090, avail); f.write(0x094, 0);
+    f.write(0x0A0, used); f.write(0x0A4, 0);
+    f.write(0x044, 1);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1) << "qnum=0 时仍要能正常处理（钳到 1）";
+    EXPECT_EQ(f.mem()[0x280], 0) << "请求应成功完成";
+}
+
+// 驱动在设备处理中途重复 notify 不能把当前阶段拽回开头并丢掉请求
+TEST(VirtioTest, NotifyDuringProcessingDoesNotLoseRequest) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    f.setupBlkQueue(desc, avail, used, 0, 0x200, 0x240, 0x280, 64, 0, 0, true);
+    f.configureQueue(desc, avail, used);
+
+    for (int i = 0; i < 300; i++) {
+        f.write(0x050, 0); // 连续发包时驱动的常规行为
+        if (f.get16(used + 2) == 1)
+            break;
+    }
+    EXPECT_EQ(f.get16(used + 2), 1u) << "处理期间收到 notify 后请求没有完成";
+    EXPECT_EQ(f.mem()[0x280], 0);
+}
+
+// status=0 复位时在途的主端口事务必须停止，不能继续往 guest 内存里搬数据
+TEST(VirtioTest, StatusZeroAbortsInflightMaster) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    for (int i = 0; i < 512; i++)
+        f.image[i] = (uint8_t) (0x30 + i);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    f.setupBlkQueue(desc, avail, used, 0, 0x200, 0x400, 0x700, 512, 0, 0, true);
+    std::memset(f.mem() + 0x400, 0xEE, 512);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 60; i++)
+        f.tick(); // 已经进入主端口搬运阶段
+
+    f.write(0x070, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    int dirty = 0;
+    for (int i = 256; i < 512; i++)
+        if (f.mem()[0x400 + i] != 0xEE)
+            dirty++;
+    EXPECT_EQ(dirty, 0) << "复位后在途事务还在写 guest 内存";
+    EXPECT_EQ(f.get16(used + 2), 0u);
+}
+
+namespace {
+struct OffsetRecorder {
+    uint64_t off = 0;
+};
+uint32_t recordRead(void *ctx, uint64_t off, uint8_t *buf, uint32_t len) {
+    static_cast<OffsetRecorder *>(ctx)->off = off;
+    std::memset(buf, 0x5A, len);
+    return 1;
+}
+} // namespace
+
+// 规范 2.6.4：sector 是 64 位。偏移超过 4GiB 时必须把高 32 位传给后端，
+// 容量寄存器的两个 32 位半也要分开返回
+TEST(VirtioTest, LargeSectorUsesSixtyFourBitOffset) {
+    OffsetRecorder rec;
+    VirtioBlk::BackendOps ops;
+    ops.ctx = &rec;
+    ops.read = &recordRead;
+    // 容量 2^32+5 个扇区：高半非 0，能同时验证 0x100/0x104 两个寄存器
+    ops.size = 512ull * ((1ull << 32) + 5);
+    VirtioFixture<VirtioBlk> f(BlkImage::None, &ops);
+
+    EXPECT_EQ(f.read(0x100), 5u) << "capacity 低 32 位";
+    EXPECT_EQ(f.read(0x104), 1u) << "capacity 高 32 位";
+
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint64_t sector = 0x800001; // 字节偏移 0x100000200，32 位装不下
+    f.setupBlkQueue(desc, avail, used, 0, 0x200, 0x240, 0x280, 16, 0, sector, true);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    EXPECT_EQ(rec.off, sector * 512) << "后端拿到的偏移被截成 32 位";
+    EXPECT_EQ(f.mem()[0x280], 0);
+    EXPECT_EQ(f.get16(used + 2), 1);
+}
+
+// 请求头描述符不足 16 字节：不能照 16 字节越界读，直接完成请求
+TEST(VirtioTest, ShortHeaderDescriptorCompletes) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    f.putDesc(desc, 0, 0x200, 8, 1, 1);       // 头只有 8 字节
+    f.putDesc(desc, 1, 0x240, 16, 3, 2);      // 数据
+    f.putDesc(desc, 2, 0x280, 1, 2, 0);       // 状态
+    f.put16(avail + 0, 0);
+    f.put16(avail + 2, 1);
+    f.put16(avail + 4, 0);
+    f.put16(used + 0, 0);
+    f.put16(used + 2, 0);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1u) << "畸形请求也必须归还描述符";
+    EXPECT_EQ(f.usedLen(used, 0), 0u);
+}
+
+// 请求头没有 NEXT：状态字节没有合法的落点，不能写回请求头所在的内存
+TEST(VirtioTest, HeaderWithoutNextDoesNotWriteHeader) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    f.putDesc(desc, 0, 0x200, 16, 0, 0);
+    f.put16(avail + 0, 0);
+    f.put16(avail + 2, 1);
+    f.put16(avail + 4, 0);
+    f.put16(used + 0, 0);
+    f.put16(used + 2, 0);
+    f.put32(0x200, 99); // 未知请求类型，保留下来当哨兵
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1u);
+    EXPECT_EQ(f.mem()[0x200], 99) << "状态字节被写进了请求头";
+}

@@ -46,7 +46,7 @@ PLIC::PLIC(const std::string &name, int num_sources) : SequentialComponent(name,
 
 PLIC::~PLIC() = default;
 
-bool PLIC::prepare(std::string &) {
+bool PLIC::prepare(Context &, std::string &) {
     _prepared = true;
     return true;
 }

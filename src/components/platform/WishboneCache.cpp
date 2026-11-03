@@ -46,7 +46,7 @@ WishboneCache::WishboneCache(const std::string &name, int lines)
 
 WishboneCache::~WishboneCache() = default;
 
-bool WishboneCache::prepare(std::string &) {
+bool WishboneCache::prepare(Context &, std::string &) {
     _prepared = true;
     return true;
 }

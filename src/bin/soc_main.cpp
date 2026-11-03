@@ -12,8 +12,10 @@
 #include <dcs/Circuit.h>
 #include <dcs/CircuitLibrary.h>
 #include <dcs/Context.h>
+#include <dcs/util/MemDump.h>
 #include <dcs/util/PathList.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include <dcs/components/platform/VirtioBlk.h>
 #include <dcs/components/platform/WishboneDcache.h>
 #include <dcs/components/io/UartFeed.h>
 #include <dcs/components/memory/WishboneMemory.h>
@@ -129,9 +131,9 @@ bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
     return true;
 }
 
-int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks, int delay_ms, bool forever,
-           const std::string &dump_mem, const std::string &feed_file, uint64_t feed_after,
-           const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
+int runSoc(const std::string &path, const std::string &elf_path, const std::string &disk_path, uint64_t ticks,
+           int delay_ms, bool forever, const std::string &dump_mem, const std::string &feed_file,
+           uint64_t feed_after, const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
     std::ifstream ifs(path);
     if (!ifs) {
         std::cerr << std::format("错误: 无法打开 '{}'\n", path);
@@ -147,6 +149,37 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
         return 1;
     }
     std::cout << std::format("电路: {} 线网, {} 元件\n", circuit->netCount(), circuit->componentCount());
+
+    // 运行期换盘：--disk 覆盖 JSON 里的 file 后端路径。必须在 compile() 之前，
+    // 容量和只读特性是生成 config 空间时按介质算的
+    if (!disk_path.empty()) {
+        int applied = 0;
+        for (auto &comp: circuit->components()) {
+            if (comp->typeName() != "virtio_blk")
+                continue;
+            auto *blk = dynamic_cast<dsc::VirtioBlk *>(comp.get());
+            if (!blk)
+                continue;
+            std::string derr;
+            if (!blk->setImagePath(circuit->context(), disk_path, derr)) {
+                std::cerr << derr << "\n";
+                return 1;
+            }
+            applied++;
+        }
+        if (applied == 0)
+            std::cerr << "警告: 电路里没有 virtio_blk，--disk 未生效\n";
+    }
+    // 整机跑 Linux 需要根文件系统；没给介质时早点说清楚，别等内核挂载失败
+    for (auto &comp: circuit->components()) {
+        if (comp->typeName() != "virtio_blk")
+            continue;
+        auto *blk = dynamic_cast<dsc::VirtioBlk *>(comp.get());
+        if (blk && blk->backendName() == "none") {
+            std::cerr << "错误: virtio_blk 没有介质，用 --disk 指定磁盘镜像\n";
+            return 1;
+        }
+    }
 
     auto err = circuit->compile();
     if (err.code != dsc::ErrorCode::OK) {
@@ -378,25 +411,10 @@ int runSoc(const std::string &path, const std::string &elf_path, uint64_t ticks,
             std::cerr << "错误: --dump-mem 格式应为 addr:len（十六进制）\n";
             return 1;
         }
-        size_t addr = std::stoull(dump_mem.substr(0, colon), nullptr, 0);
-        size_t len = std::stoull(dump_mem.substr(colon + 1), nullptr, 0);
+        const size_t addr = std::stoull(dump_mem.substr(0, colon), nullptr, 0);
+        const size_t len = std::stoull(dump_mem.substr(colon + 1), nullptr, 0);
         const uint8_t *p = mem->writableMemPtr();
-        for (size_t row = 0; row < len; row += 16) {
-            const size_t off = (addr + row) & (cap - 1);
-            std::cout << std::format("0x{:08X}  ", addr + row);
-            for (size_t k = 0; k < 16; ++k) {
-                if (row + k < len)
-                    std::cout << std::format("{:02X} ", p[(off + k) & (cap - 1)]);
-                else
-                    std::cout << "   ";
-            }
-            std::cout << " ";
-            for (size_t k = 0; k < 16 && row + k < len; ++k) {
-                const char ch = (char) p[(off + k) & (cap - 1)];
-                std::cout << (ch >= 0x20 && ch < 0x7F ? ch : '.');
-            }
-            std::cout << "\n";
-        }
+        dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
     }
 
     circuit->deinit();
@@ -410,6 +428,7 @@ int main(int argc, char *argv[]) {
 
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
             "elf", "要加载的 RISC-V ELF（镜像、入口地址、tohost 都从它读）", cxxopts::value<std::string>())(
+            "disk", "virtio_blk 的后备镜像，覆盖 JSON 里的 backend_opts.path", cxxopts::value<std::string>())(
             "t,ticks", "仿真 tick 数（默认 10）", cxxopts::value<uint64_t>()->default_value("10"))(
             "forever", "一直仿真直到 Ctrl+C（忽略 --ticks，循环留在 JIT 里）")(
             "d,delay", "每 tick 间隔毫秒（默认 0）", cxxopts::value<int>()->default_value("0"))(
@@ -450,6 +469,8 @@ int main(int argc, char *argv[]) {
 #endif
         std::cout << R"(示例:
   dcs_soc circuit.json --elf boot.elf --forever        串口交互跑 Linux
+  dcs_soc circuit.json --elf boot.elf --disk disk.img --forever
+                                                       运行期换一块磁盘镜像
   dcs_soc circuit.json --elf boot.elf --forever --watch /tmp/cmds.txt
                                                        仿真不退出，往文件追加即发命令
   dcs_soc circuit.json --elf test.elf -t 1000000       跑 riscv-tests，按 tohost 判定
@@ -478,6 +499,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     return runSoc(result["circuit"].as<std::string>(), result["elf"].as<std::string>(),
+                  result.count("disk") ? result["disk"].as<std::string>() : std::string{},
                   result["ticks"].as<uint64_t>(), result["delay"].as<int>(), result.count("forever") != 0,
                   result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{},
                   result.count("feed") ? result["feed"].as<std::string>() : std::string{},

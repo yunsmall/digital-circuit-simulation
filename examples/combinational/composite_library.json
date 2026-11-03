@@ -3,10 +3,10 @@
   "$meta": {
     "kind": "circuit",
     "format": 1,
-    "description": "演示从蓝图文件加载复合元件：definitions 里用相对路径引用 library/not_gate.json"
+    "description": "演示从蓝图文件加载复合元件：definitions 里用相对路径引用项目根 library/not_gate.json"
   },
   "definitions": {
-    "not_gate": "library/not_gate.json"
+    "not_gate": "../../library/not_gate.json"
   },
   "nets": ["a", "y"],
   "components": [

@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "浮点数据通路：常量 + 加/减/乘，用 fprint 把每拍结果打到终端"
+  },
   "nets": ["a", "b", "c", "sum", "prod"],
   "components": [
     {

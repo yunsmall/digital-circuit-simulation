@@ -1,0 +1,28 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "时钟分频：每 4 个输入时钟周期输出翻转一次"
+  },
+  "nets": ["clk", "out"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "clkdiv",
+      "name": "div4",
+      "params": { "divisor": "4" },
+      "connections": { "clk": "clk", "out": "out" }
+    },
+    {
+      "type": "display",
+      "name": "out_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "out" }
+    }
+  ]
+}

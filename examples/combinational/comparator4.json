@@ -1,0 +1,50 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "数值比较器演示：9 与 6 接到 library/comparator4，三根结果线各自点灯"
+  },
+  "definitions": {
+    "comparator4": "../../library/comparator4.json"
+  },
+  "nets": ["a", "b", "lt_out", "eq_out", "gt_out"],
+  "components": [
+    {
+      "type": "constant",
+      "name": "cmp_a",
+      "params": { "bit_width": "4", "value": "9" },
+      "connections": { "out": "a" }
+    },
+    {
+      "type": "constant",
+      "name": "cmp_b",
+      "params": { "bit_width": "4", "value": "6" },
+      "connections": { "out": "b" }
+    },
+    {
+      "type": "composite",
+      "name": "u_cmp",
+      "params": { "definition": "comparator4" },
+      "connections": { "a": "a", "b": "b", "lt": "lt_out", "eq": "eq_out", "gt": "gt_out" }
+    },
+    {
+      "type": "display",
+      "name": "lt_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "lt_out" }
+    },
+    {
+      "type": "display",
+      "name": "eq_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "eq_out" }
+    },
+    {
+      "type": "display",
+      "name": "gt_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "gt_out" }
+    }
+  ]
+}

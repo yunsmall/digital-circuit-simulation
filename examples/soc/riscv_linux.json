@@ -418,7 +418,8 @@
       "type": "virtio_blk",
       "name": "virtio_blk",
       "params": {
-        "path": "images/disk.img"
+        "backend": "file",
+        "backend_opts": { "path": "../../images/disk.img" }
       },
       "connections": {
         "clk": "clk",

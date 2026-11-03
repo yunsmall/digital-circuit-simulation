@@ -13,8 +13,8 @@ TEST(CompositeTest, UniqueIds) {
     def.components = {
             {"and", "iand", {{"inputs", "2"}, {"bit_width", "8"}}, {{"in0", "ia"}, {"in1", "ib"}, {"out", "iy"}}},
     };
-    def.input_expose = {{"a", "ia"}, {"b", "ib"}};
-    def.output_expose = {{"y", "iy"}};
+    def.input_expose = {{"a", {"ia", ""}}, {"b", {"ib", ""}}};
+    def.output_expose = {{"y", {"iy", ""}}};
     dsc::CircuitLibrary::instance().add(std::move(def));
 
     dsc::CircuitDefinition outer;
@@ -24,8 +24,8 @@ TEST(CompositeTest, UniqueIds) {
             {"composite", "inner", {{"definition", "inner_and"}}, {{"a", "a"}, {"b", "b"}, {"y", "mid"}}},
             {"not", "not_g", {{"bit_width", "8"}}, {{"in", "mid"}, {"out", "y"}}},
     };
-    outer.input_expose = {{"a", "a"}, {"b", "b"}};
-    outer.output_expose = {{"y", "y"}};
+    outer.input_expose = {{"a", {"a", ""}}, {"b", {"b", ""}}};
+    outer.output_expose = {{"y", {"y", ""}}};
     dsc::CircuitLibrary::instance().add(std::move(outer));
 
     dsc::Circuit c;

@@ -35,7 +35,7 @@ CLINT::CLINT(const std::string &name) : SequentialComponent(name, "clint") {
     addOutput("msi", 1, false, true);
 }
 
-bool CLINT::prepare(std::string &) { _prepared = true; return true; }
+bool CLINT::prepare(Context &, std::string &) { _prepared = true; return true; }
 
 std::vector<Component::JitSymbol> CLINT::extraJitSymbols() const {
     return {}; // 逻辑全部在生成代码里展开

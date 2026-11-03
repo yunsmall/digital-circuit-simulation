@@ -13,8 +13,8 @@ TEST(JsonRoundTrip, Composite) {
             {"xor", "xor", {{"inputs", "2"}, {"bit_width", "1"}}, {{"in0", "a"}, {"in1", "b"}, {"out", "sum"}}},
             {"and", "and", {{"inputs", "2"}, {"bit_width", "1"}}, {{"in0", "a"}, {"in1", "b"}, {"out", "carry"}}},
     };
-    def.input_expose = {{"a", "a"}, {"b", "b"}};
-    def.output_expose = {{"sum", "sum"}, {"carry", "carry"}};
+    def.input_expose = {{"a", {"a", ""}}, {"b", {"b", ""}}};
+    def.output_expose = {{"sum", {"sum", ""}}, {"carry", {"carry", ""}}};
     CircuitLibrary::instance().add(std::move(def));
 
     Circuit c;

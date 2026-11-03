@@ -1,0 +1,39 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "comparator4",
+    "author": "dcs",
+    "description": "N 位无符号数值比较器：位宽由 bit_width 参数决定，默认 4"
+  },
+  "params": { "bit_width": "4" },
+  "nets": ["a", "b", "lt_out", "eq_out", "gt_out"],
+  "components": [
+    {
+      "type": "lt",
+      "name": "less",
+      "params": { "bit_width": "${bit_width}", "signed": "0" },
+      "connections": { "a": "a", "b": "b", "out": "lt_out" }
+    },
+    {
+      "type": "eq",
+      "name": "equal",
+      "params": { "bit_width": "${bit_width}", "signed": "0" },
+      "connections": { "a": "a", "b": "b", "out": "eq_out" }
+    },
+    {
+      "type": "gt",
+      "name": "greater",
+      "params": { "bit_width": "${bit_width}", "signed": "0" },
+      "connections": { "a": "a", "b": "b", "out": "gt_out" }
+    }
+  ],
+  "expose": {
+    "inputs": {
+      "a": { "net": "a", "width": "${bit_width}" },
+      "b": { "net": "b", "width": "${bit_width}" }
+    },
+    "outputs": { "lt": "lt_out", "eq": "eq_out", "gt": "gt_out" }
+  }
+}

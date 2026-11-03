@@ -1,0 +1,40 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "8 位移位寄存器：串行输入交替 0/1，观察 q 里的比特迁移"
+  },
+  "nets": ["clk", "t1", "sin", "q"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "toggle_en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "t1" }
+    },
+    {
+      "type": "tff",
+      "name": "pattern",
+      "params": { "bit_width": "1" },
+      "connections": { "t": "t1", "clk": "clk", "q": "sin" }
+    },
+    {
+      "type": "shift",
+      "name": "shift8",
+      "params": { "length": "8" },
+      "connections": { "sin": "sin", "clk": "clk", "q": "q" }
+    },
+    {
+      "type": "display",
+      "name": "q_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "q" }
+    }
+  ]
+}

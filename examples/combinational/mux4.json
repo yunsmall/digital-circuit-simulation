@@ -1,0 +1,78 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "多路选择器演示：计数器选通 library/mux4 蓝图的四路输入"
+  },
+  "definitions": {
+    "mux4": "../../library/mux4.json"
+  },
+  "nets": ["clk", "sel", "sel0", "sel1", "in0", "in1", "in2", "in3", "out", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "sel_counter",
+      "params": { "bit_width": "2", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "sel" }
+    },
+    {
+      "type": "split",
+      "name": "split_sel",
+      "params": { "num_bits": "2" },
+      "connections": { "in": "sel", "out0": "sel0", "out1": "sel1" }
+    },
+    {
+      "type": "constant",
+      "name": "c0",
+      "params": { "bit_width": "8", "value": "10" },
+      "connections": { "out": "in0" }
+    },
+    {
+      "type": "constant",
+      "name": "c1",
+      "params": { "bit_width": "8", "value": "20" },
+      "connections": { "out": "in1" }
+    },
+    {
+      "type": "constant",
+      "name": "c2",
+      "params": { "bit_width": "8", "value": "30" },
+      "connections": { "out": "in2" }
+    },
+    {
+      "type": "constant",
+      "name": "c3",
+      "params": { "bit_width": "8", "value": "40" },
+      "connections": { "out": "in3" }
+    },
+    {
+      "type": "composite",
+      "name": "u_mux",
+      "params": { "definition": "mux4" },
+      "connections": {
+        "sel0": "sel0", "sel1": "sel1",
+        "in0": "in0", "in1": "in1", "in2": "in2", "in3": "in3",
+        "out": "out"
+      }
+    },
+    {
+      "type": "display",
+      "name": "out_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "2" },
+      "connections": { "in": "out" }
+    }
+  ]
+}

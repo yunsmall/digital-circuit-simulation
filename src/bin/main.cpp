@@ -4,6 +4,7 @@
 //   dcs circuit.json -t 10 -m       仿真运行
 //   dcs --json-to-c circuit.json    输出 C 代码
 //   dcs --list-types                列出元件类型
+//   dcs --pins <type> [--param k=v] 查指定参数下元件的真实引脚
 //   dcs --dll-info <path>           查看 DLL 元件引脚信息
 //   dcs --help                      帮助
 #include <algorithm>
@@ -17,6 +18,7 @@
 #include <dcs/Context.h>
 #include <dcs/CircuitCheck.h>
 #include <dcs/SchemaGen.h>
+#include <dcs/util/MemDump.h>
 #include <dcs/util/PathList.h>
 #include <dcs/TruthTable.h>
 #include <dcs/components/memory/WishboneMemory.h>
@@ -106,6 +108,109 @@ void listTypesJson() {
     std::cout << root.dump(2) << "\n";
 }
 
+// ---- --pins：按指定参数实例化元件，打印真实引脚 ----
+// --list-types 里的引脚来自注册元数据，动态引脚（sel0..、in0..、out0..）只能标成
+// "(动态)"，位宽也看不到。这里直接走工厂构造一次，输出的就是接线时能用的名字。
+int printPins(const std::string &type, const std::vector<std::string> &raw_params, bool as_json) {
+    std::unordered_map<std::string, std::string> params;
+    for (auto &kv: raw_params) {
+        auto eq = kv.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            std::cerr << std::format("参数格式错误: \"{}\"，应为 key=value\n", kv);
+            return 1;
+        }
+        params[kv.substr(0, eq)] = kv.substr(eq + 1);
+    }
+
+    auto &f = dsc::ComponentFactory::instance();
+    std::string err;
+    auto comp = f.create(type, "__pins__", params, err);
+    if (!comp) {
+        std::cerr << err << "\n";
+        return 1;
+    }
+
+    auto mit = f.metas().find(type);
+    const dsc::ComponentFactory::Meta *meta = mit == f.metas().end() ? nullptr : &mit->second;
+    std::string category = meta ? f.categoryDisplayName(meta->category) : "";
+    std::string description = meta ? meta->description : "";
+
+    // 工厂对没声明过的参数是静默忽略的；查引脚时这样会把拼错的参数当成默认值，
+    // 结果看起来"能用"实际是另一个元件形态，必须提醒
+    if (meta) {
+        for (auto &[k, v]: params) {
+            bool known = std::any_of(meta->params.begin(), meta->params.end(),
+                                     [&](const dsc::ComponentFactory::ParamMeta &pm) { return pm.name == k; });
+            if (!known) std::cerr << std::format("警告: 类型 {} 没有参数 {}（已忽略）\n", type, k);
+        }
+    }
+
+    // 参数按注册顺序显示；构造函数通过 setParam 记录的是实际生效的值，
+    // 没记录的（有的元件参数不影响结构）退回默认值
+    auto exported = comp->exportParams();
+    std::vector<std::pair<std::string, std::string>> shown_params;
+    if (meta) {
+        for (auto &pm: meta->params) {
+            auto it = exported.find(pm.name);
+            shown_params.emplace_back(pm.name, it == exported.end() ? pm.default_val : it->second);
+        }
+    }
+    else {
+        for (auto &[k, v]: exported) shown_params.emplace_back(k, v);
+    }
+
+    if (as_json) {
+        nlohmann::json j;
+        j["type"] = type;
+        j["category"] = category;
+        j["description"] = description;
+        j["params"] = nlohmann::json::object();
+        for (auto &[k, v]: shown_params) j["params"][k] = v;
+        auto pin_json = [](const auto &pins, bool output) {
+            nlohmann::json arr = nlohmann::json::array();
+            for (auto &p: pins) {
+                nlohmann::json pin{{"name", p->name()}, {"width", p->bit_width()}};
+                if (output) {
+                    pin["sequential"] = p->isSequential();
+                    if (p->isTriState()) pin["tri_state"] = true;
+                }
+                arr.push_back(std::move(pin));
+            }
+            return arr;
+        };
+        j["inputs"] = pin_json(comp->inputs(), false);
+        j["outputs"] = pin_json(comp->outputs(), true);
+        std::cout << j.dump(2) << "\n";
+        return 0;
+    }
+
+    std::cout << std::format("{}  ({})\n", type, category);
+    if (!description.empty()) std::cout << std::format("  {}\n", description);
+    if (!shown_params.empty()) {
+        std::cout << "参数:\n";
+        for (auto &[k, v]: shown_params) std::cout << std::format("  {} = {}\n", k, v);
+    }
+    // 引脚名按创建顺序排，位宽右对齐，方便一眼扫出哪根是总线
+    auto print_pins = [](const char *title, const auto &pins, bool output) {
+        std::cout << std::format("{}:\n", title);
+        if (pins.empty()) {
+            std::cout << "  (无)\n";
+            return;
+        }
+        size_t w = 0;
+        for (auto &p: pins) w = std::max<size_t>(w, p->name().size());
+        for (auto &p: pins) {
+            std::cout << std::format("  {:<{}}  {:>3}", p->name(), w, p->bit_width());
+            if (output && p->isSequential()) std::cout << "  [sequential]";
+            if (output && p->isTriState()) std::cout << "  [tri-state]";
+            std::cout << "\n";
+        }
+    };
+    print_pins("输入引脚", comp->inputs(), false);
+    print_pins("输出引脚", comp->outputs(), true);
+    return 0;
+}
+
 // ---- dll-info ----
 int dllInfo(const std::string &path) {
 #ifdef _WIN32
@@ -180,6 +285,7 @@ int jsonToC(const std::string &path, dsc::Context &ctx) {
         std::cerr << std::format("JSON 错误: {}\n", error);
         return 1;
     }
+    // 必须真正编译一次：生成器拼错的 C 只有过编译器才能发现，只做网表校验会漏掉
     auto err = circuit->compile();
     if (err.code != dsc::ErrorCode::OK)
         std::cerr << std::format("// 编译错误: {}\n", err.message);
@@ -356,26 +462,11 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             std::cerr << "错误: --dump-mem 格式应为 addr:len（十六进制）\n";
             return 1;
         }
-        size_t addr = std::stoull(spec.substr(0, colon), nullptr, 0);
-        size_t len = std::stoull(spec.substr(colon + 1), nullptr, 0);
+        const size_t addr = std::stoull(spec.substr(0, colon), nullptr, 0);
+        const size_t len = std::stoull(spec.substr(colon + 1), nullptr, 0);
         const size_t cap = dm->memSize();
         const uint8_t *p = dm->writableMemPtr();
-        for (size_t row = 0; row < len; row += 16) {
-            const size_t off = (addr + row) & (cap - 1);
-            std::cout << std::format("0x{:08X}  ", addr + row);
-            for (size_t k = 0; k < 16; ++k) {
-                if (row + k < len)
-                    std::cout << std::format("{:02X} ", p[(off + k) & (cap - 1)]);
-                else
-                    std::cout << "   ";
-            }
-            std::cout << " ";
-            for (size_t k = 0; k < 16 && row + k < len; ++k) {
-                const char ch = (char) p[(off + k) & (cap - 1)];
-                std::cout << (ch >= 0x20 && ch < 0x7F ? ch : '.');
-            }
-            std::cout << "\n";
-        }
+        dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
     }
 
     circuit->deinit();
@@ -453,8 +544,10 @@ int main(int argc, char *argv[]) {
 
     // 工具选项
     opts.add_options("工具")("l,list-types", "列出所有已注册的元件类型")(
-            "json", "配合 --list-types：输出机器可读的 JSON 描述")("j,json-to-c", "JSON 电路转为 C 代码输出",
+            "json", "配合 --list-types / --pins：输出机器可读的 JSON 描述")("j,json-to-c", "JSON 电路转为 C 代码输出",
                                                                     cxxopts::value<std::string>())(
+            "pins", "按参数实例化元件并打印真实引脚名和位宽", cxxopts::value<std::string>())(
+            "param", "配合 --pins：参数 key=value（可重复）", cxxopts::value<std::vector<std::string>>())(
             "dll-info", "查看 DLL 元件引脚信息", cxxopts::value<std::string>())(
             "truth-table", "导出组合电路的真值表和卡诺图（需 --inputs 和 --output）")(
             "inputs", "真值表的输入网名，逗号分隔（第一个是最高位）", cxxopts::value<std::string>())(
@@ -495,6 +588,8 @@ int main(int argc, char *argv[]) {
   dcs circuit.json --truth-table --inputs a,b --output y
                                     导出真值表和卡诺图
   dcs --list-types                  列出元件类型
+  dcs --pins counter --param has_en=1
+                                    查该参数下元件的真实引脚名和位宽
   dcs --dll-info adder8_dll.dll    查看 DLL 引脚信息
 )";
         return 0;
@@ -517,6 +612,15 @@ int main(int argc, char *argv[]) {
     if (result.count("list-definitions"))
         return listDefinitions(result["list-definitions"].as<std::string>(), ctx);
 
+    if (result.count("pins")) {
+        std::vector<std::string> ps;
+        if (result.count("param")) ps = result["param"].as<std::vector<std::string>>();
+        return printPins(result["pins"].as<std::string>(), ps, result.count("json") != 0);
+    }
+    if (result.count("param")) {
+        std::cerr << "--param 只能配合 --pins 使用\n";
+        return 1;
+    }
     if (result.count("list-types")) {
         if (result.count("json"))
             listTypesJson();

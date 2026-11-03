@@ -1,0 +1,40 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "D 触发器：T 触发器产生翻转信号，D 触发器在时钟沿采样"
+  },
+  "nets": ["clk", "t1", "tq", "q"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "toggle_en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "t1" }
+    },
+    {
+      "type": "tff",
+      "name": "src_tff",
+      "params": { "bit_width": "1" },
+      "connections": { "t": "t1", "clk": "clk", "q": "tq" }
+    },
+    {
+      "type": "dff",
+      "name": "sample_dff",
+      "params": { "bit_width": "1" },
+      "connections": { "d": "tq", "clk": "clk", "q": "q" }
+    },
+    {
+      "type": "display",
+      "name": "q_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "q" }
+    }
+  ]
+}

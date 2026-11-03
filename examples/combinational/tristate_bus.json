@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "三态总线：多个开关分时驱动同一根 dbus，演示总线决议"
+  },
   "nets": [
     "clk", "sel", "sel0", "sel1",
     "en0", "en1", "en2", "en3",

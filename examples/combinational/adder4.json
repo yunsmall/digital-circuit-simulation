@@ -1,0 +1,89 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "4 位加法器演示：计数器 + 常量 1 接到 library/adder4 蓝图，观察和与进位"
+  },
+  "definitions": {
+    "adder4": "../../library/adder4.json"
+  },
+  "nets": [
+    "clk", "cnt", "one", "zero", "en1",
+    "a0", "a1", "a2", "a3", "b0", "b1", "b2", "b3",
+    "s0", "s1", "s2", "s3", "sum4", "cout"
+  ],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "cnt_a",
+      "params": { "bit_width": "4", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "cnt" }
+    },
+    {
+      "type": "split",
+      "name": "split_a",
+      "params": { "num_bits": "4" },
+      "connections": { "in": "cnt", "out0": "a0", "out1": "a1", "out2": "a2", "out3": "a3" }
+    },
+    {
+      "type": "constant",
+      "name": "const_one",
+      "params": { "bit_width": "4", "value": "1" },
+      "connections": { "out": "one" }
+    },
+    {
+      "type": "split",
+      "name": "split_b",
+      "params": { "num_bits": "4" },
+      "connections": { "in": "one", "out0": "b0", "out1": "b1", "out2": "b2", "out3": "b3" }
+    },
+    {
+      "type": "constant",
+      "name": "const_zero",
+      "params": { "bit_width": "1", "value": "0" },
+      "connections": { "out": "zero" }
+    },
+    {
+      "type": "composite",
+      "name": "u_adder",
+      "params": { "definition": "adder4" },
+      "connections": {
+        "a0": "a0", "a1": "a1", "a2": "a2", "a3": "a3",
+        "b0": "b0", "b1": "b1", "b2": "b2", "b3": "b3",
+        "cin": "zero",
+        "s0": "s0", "s1": "s1", "s2": "s2", "s3": "s3", "cout": "cout"
+      }
+    },
+    {
+      "type": "merge",
+      "name": "join_sum",
+      "params": { "num_bits": "4" },
+      "connections": { "in0": "s0", "in1": "s1", "in2": "s2", "in3": "s3", "out": "sum4" }
+    },
+    {
+      "type": "display",
+      "name": "sum_display",
+      "params": { "bit_width": "4", "kind": "text", "digits": "1" },
+      "connections": { "in": "sum4" }
+    },
+    {
+      "type": "display",
+      "name": "cout_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "cout" }
+    }
+  ]
+}

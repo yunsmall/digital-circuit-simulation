@@ -1,5 +1,7 @@
 // DllComponent — 加载外部 DLL 实现的自定义元件
 #include "dcs/ComponentFactory.h"
+#include "dcs/CodeGenNames.h"
+#include "dcs/Context.h"
 #include "dcs/components/platform/Dll.h"
 
 #ifdef _WIN32
@@ -131,7 +133,10 @@ bool DllComponent::loadSymbols(std::string &error) {
     return true;
 }
 
-bool DllComponent::prepare(std::string &error) {
+bool DllComponent::prepare(Context &ctx, std::string &error) {
+    // 解析后的绝对路径要留住：simInit/simDeinit 重新加载时还要用
+    if (!_loaded && !_dll_path.empty())
+        _dll_path = ctx.resolvePath(_dll_path);
     if (_loaded)
         return true;
 
@@ -250,7 +255,7 @@ std::string DllComponent::genTickFunc(const char *phase) const {
         // DLL 接口没有动态控制三态使能的手段，所以输出一律视为常驱动；
         // 不写这一行的话，声明为三态的输出 _c_oe 会一直是初始的 false，
         // 生成的总线决议会把它当高阻，下游永远读不到值
-        writes += std::format("    _c_oe_{}_{} = true;\n", id, i);
+        writes += std::format("    {} = true;\n", cgen::cOe(id, i));
     }
 
     int in_count = ni > 0 ? ni : 1;
@@ -262,7 +267,8 @@ std::string DllComponent::genTickFunc(const char *phase) const {
     code += std::format("extern void  _dcs_dll_tick_{0}_{1}(void*, const uint8_t*, uint8_t*);\n", phase, id);
     code += std::format("extern void  _dcs_dll_reset_{0}(void*, uint8_t*);\n", id);
     code += std::format("\nstatic void* _dcs_dll_state_{0};\n\n", id);
-    code += std::format("static void _update_{}_{}(void) {{\n", id, phase);
+    // 函数名必须和基类 genFuncDecl_comb/seq 生成的前向声明一致
+    code += std::format("static void {}(void) {{\n", std::string_view(phase) == "comb" ? funcName_comb() : funcName_seq());
     code += reads;
     code += out_decls;
     code += std::format("    uint8_t _dll_in[{}][16];\n", in_count);

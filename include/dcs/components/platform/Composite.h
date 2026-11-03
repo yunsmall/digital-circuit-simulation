@@ -9,6 +9,7 @@
 //   3. 或通过 JSON: 顶层 definitions 中放蓝图，实例用 "definition" 字段引用
 #pragma once
 #include <functional>
+#include <map>
 #include <unordered_map>
 #include "dcs/Circuit.h"
 #include "dcs/Component.h"
@@ -21,7 +22,9 @@ class CircuitLibrary;
 class CompositeComponent : public Component {
 public:
     // definition_name: CircuitLibrary 中注册的定义名
-    CompositeComponent(const std::string &name, const std::string &definition_name);
+    // params: 实例覆盖的蓝图参数（未给的用定义里的默认值）
+    CompositeComponent(const std::string &name, const std::string &definition_name,
+                       std::map<std::string, std::string> params = {});
 
     // 定义来自哪个库。Circuit::addComponent 会设置成它所在上下文的库；
     // 不设置时退回进程默认库（兼容直接 new 出来用的老代码）
@@ -47,7 +50,7 @@ public:
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
     // 编译前准备：加载定义、创建引脚
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
 
     // 导出构造参数
     std::unordered_map<std::string, std::string> exportParams() const override;
@@ -65,13 +68,16 @@ public:
 
 private:
     std::string _def_name;
+    // 实例覆盖的蓝图参数；默认值在定义里
+    std::map<std::string, std::string> _params;
     bool _prepared = false;
     const CircuitLibrary *_lib = nullptr;
 
     const CircuitLibrary &lib() const;
 
-    // 从定义加载引脚
-    void loadPinsFromDef();
+    // 从定义加载引脚（width 表达式按有效参数解析）
+    bool loadPinsFromDef(const std::map<std::string, std::string> &params, std::string &error);
+    std::map<std::string, std::string> effectiveParams(const CircuitDefinition &def) const;
 };
 
 } // namespace dsc

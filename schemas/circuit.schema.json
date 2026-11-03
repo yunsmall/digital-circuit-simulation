@@ -62,8 +62,13 @@
     },
     "definition": {
       "type": "object",
-      "description": "一个复合元件的蓝图：{ nets, components, expose }",
+      "description": "一个复合元件的蓝图：{ params, nets, components, expose }",
       "properties": {
+        "params": {
+          "type": "object",
+          "description": "蓝图参数默认值；实例用同名参数覆盖，配方/端口里用 ${name} 引用",
+          "additionalProperties": { "type": "string" }
+        },
         "nets": { "type": "array", "items": { "type": "string" } },
         "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
         "expose": {
@@ -72,17 +77,32 @@
           "properties": {
             "inputs": {
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "$ref": "#/$defs/exposed_pin" }
             },
             "outputs": {
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": { "$ref": "#/$defs/exposed_pin" }
             }
           },
           "additionalProperties": true
         }
       },
       "additionalProperties": true
+    },
+    "exposed_pin": {
+      "description": "线网名，或 {net,width}；width 为位宽表达式，支持 ${参数}",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["net"],
+          "properties": {
+            "net": { "type": "string" },
+            "width": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      ]
     }
   }
 }

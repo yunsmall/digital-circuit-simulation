@@ -55,7 +55,7 @@ bash <本目录>/build-boot.sh initrd.cpio.gz
 
 # 4. 跑
 cd <项目根>
-./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+./build/RelWithDebInfo/dcs_soc examples/soc/riscv_linux.json --elf images/boot.elf --disk images/disk.img --forever
 ```
 
 `dcs-init.S` 会打开 `/dev/console` 写一句横幅再 `exit`，看到
@@ -78,7 +78,7 @@ curl -LO https://musl.libc.org/releases/musl-1.2.5.tar.gz
 
 bash <本目录>/build-busybox.sh        # 产物 /tmp/initrd-busybox.cpio.gz
 bash <本目录>/build-boot.sh /tmp/initrd-busybox.cpio.gz
-./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+./build/RelWithDebInfo/dcs_soc examples/soc/riscv_linux.json --elf images/boot.elf --disk images/disk.img --forever
 ```
 
 进到 `~ #` 提示符就能敲命令了。
@@ -94,7 +94,7 @@ ls /
 cat /proc/tty/drivers
 uname -a
 EOF
-./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf \
+./build/RelWithDebInfo/dcs_soc examples/soc/riscv_linux.json --elf images/boot.elf --disk images/disk.img \
     -t 4000000000 --feed /tmp/cmds.txt --feed-after 3500000000
 ```
 
@@ -131,7 +131,7 @@ bash <本目录>/make-disk.sh                 # 16 MB 空镜像
 # 可选：在宿主上格式化
 mke2fs -t ext4 -F images/disk.img
 
-./build_clang/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever --watch tmp/cmds.txt
+./build_clang/dcs_soc examples/soc/riscv_linux.json --elf images/boot.elf --disk images/disk.img --forever --watch tmp/cmds.txt
 # guest 里
 ls -l /dev/vda /dev/hwrng
 ip link set eth0 up && udhcpc -i eth0

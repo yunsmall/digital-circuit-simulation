@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "浮点加法 + 锁存器：展示组合结果与跨拍保持的时序信号"
+  },
   "nets": ["a", "b", "clk", "pi", "sum", "latched", "result"],
   "components": [
     {

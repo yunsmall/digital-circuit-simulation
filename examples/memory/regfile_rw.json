@@ -1,0 +1,56 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "寄存器堆读写：计数器给地址，写入该地址值，两个读口同时读回验证"
+  },
+  "nets": ["clk", "addr", "we", "r0", "r1", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "addr_counter",
+      "params": { "bit_width": "5", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "addr" }
+    },
+    {
+      "type": "clkdiv",
+      "name": "write_pulse",
+      "params": { "divisor": "2" },
+      "connections": { "clk": "clk", "out": "we" }
+    },
+    {
+      "type": "regfile",
+      "name": "regs",
+      "params": { "bit_width": "8", "depth": "32", "num_read_ports": "2", "num_write_ports": "1" },
+      "connections": {
+        "clk": "clk", "we0": "we", "waddr0": "addr", "wdata0": "addr",
+        "raddr0": "addr", "raddr1": "addr",
+        "rdata0": "r0", "rdata1": "r1"
+      }
+    },
+    {
+      "type": "display",
+      "name": "r0_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "r0" }
+    },
+    {
+      "type": "display",
+      "name": "r1_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "r1" }
+    }
+  ]
+}

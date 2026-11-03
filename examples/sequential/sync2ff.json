@@ -1,0 +1,46 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "两级同步器：异步输入 q 比源信号晚两个时钟沿"
+  },
+  "nets": ["clk", "t1", "async_d", "q"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "toggle_en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "t1" }
+    },
+    {
+      "type": "tff",
+      "name": "async_src",
+      "params": { "bit_width": "1" },
+      "connections": { "t": "t1", "clk": "clk", "q": "async_d" }
+    },
+    {
+      "type": "sync2ff",
+      "name": "sync_stage",
+      "params": { "bit_width": "1" },
+      "connections": { "clk": "clk", "d": "async_d", "q": "q" }
+    },
+    {
+      "type": "display",
+      "name": "src_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "async_d" }
+    },
+    {
+      "type": "display",
+      "name": "sync_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "q" }
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 // 多个 CompositeComponent 实例可共享同一个 CircuitDefinition，
 // JSON 导出时定义只出现一次，实例引用定义名即可。
 #pragma once
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -18,19 +19,34 @@ struct ComponentRecipe {
     std::unordered_map<std::string, std::string> connections; // pin_name → net_name
 };
 
+// 蓝图暴露的端口：net 是内部线网名，width 是位宽表达式（支持 ${参数}）。
+// width 为空表示沿用旧规则（1 位，实际宽度由外部连接推断）
+struct ExposedPin {
+    std::string net;
+    std::string width;
+};
+
 // 复合元件蓝图定义
 struct CircuitDefinition {
     std::string name;
     // 这个定义从哪来：内联定义的来源标签，或蓝图文件的路径。只用于诊断输出
     std::string source;
+    // 定义所在目录：展开子元件时作为 Context 的当前目录，元件自己解析相对路径
+    std::string base_dir;
+    // 蓝图参数默认值；实例可以用同名参数覆盖，配方/端口里的 ${name} 会被替换
+    std::map<std::string, std::string> params;
     // 每次登记时库分配的递增编号。用来判断"这次导入覆盖了哪些定义"：
     // 内容相同的定义被重新导入时 source 不变，只有编号能反映覆盖
     std::size_t import_serial = 0;
     std::vector<std::string> nets; // 内部线网名
     std::vector<ComponentRecipe> components; // 子元件配方
-    std::unordered_map<std::string, std::string> input_expose; // pin_name → net_name
-    std::unordered_map<std::string, std::string> output_expose; // pin_name → net_name
+    std::map<std::string, ExposedPin> input_expose; // pin_name → 内部端口
+    std::map<std::string, ExposedPin> output_expose; // pin_name → 内部端口
 };
+
+// 替换字符串里的 ${name}。遇到未定义的参数返回 false，missing 里写参数名
+bool resolveTemplate(const std::string &src, const std::map<std::string, std::string> &params, std::string &out,
+                     std::string &missing);
 
 // 全局定义库
 class CircuitLibrary {
@@ -53,8 +69,10 @@ public:
 
     // JSON 支持
     std::string exportJson() const;
-    // source 只是记录在定义上，供 --list-definitions 之类的诊断用
-    void importJson(const std::string &json, std::string &error, const std::string &source = "");
+    // source 只是记录在定义上，供 --list-definitions 之类的诊断用；
+    // base_dir 用于展开时解析元件参数里的相对路径
+    void importJson(const std::string &json, std::string &error, const std::string &source = "",
+                    const std::string &base_dir = "");
 
     const auto &definitions() const {
         return _defs;

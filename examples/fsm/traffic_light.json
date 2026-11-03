@@ -1,0 +1,82 @@
+{
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "交通灯状态机：2 位计数器走 红→绿→黄→红，译码器输出接三色灯"
+  },
+  "nets": [
+    "clk", "st", "s0", "s1", "en1",
+    "state0", "state1", "state2", "state3", "red", "green", "yellow"
+  ],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "enable",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "state_counter",
+      "params": { "bit_width": "2", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "st" }
+    },
+    {
+      "type": "split",
+      "name": "split_state",
+      "params": { "num_bits": "2" },
+      "connections": { "in": "st", "out0": "s0", "out1": "s1" }
+    },
+    {
+      "type": "decoder",
+      "name": "state_decode",
+      "params": { "n_selects": "2" },
+      "connections": {
+        "sel0": "s0", "sel1": "s1",
+        "out0": "state0", "out1": "state1", "out2": "state2", "out3": "state3"
+      }
+    },
+    {
+      "type": "or",
+      "name": "red_or",
+      "params": { "inputs": "2", "bit_width": "1" },
+      "connections": { "in0": "state0", "in1": "state3", "out": "red" }
+    },
+    {
+      "type": "buf",
+      "name": "green_buf",
+      "params": { "bit_width": "1" },
+      "connections": { "in": "state1", "out": "green" }
+    },
+    {
+      "type": "buf",
+      "name": "yellow_buf",
+      "params": { "bit_width": "1" },
+      "connections": { "in": "state2", "out": "yellow" }
+    },
+    {
+      "type": "display",
+      "name": "red_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "red" }
+    },
+    {
+      "type": "display",
+      "name": "green_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "green" }
+    },
+    {
+      "type": "display",
+      "name": "yellow_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "yellow" }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 // ROM — 只读存储器实现（内存 / 文件 双模式，字节寻址）
 #include "dcs/ComponentFactory.h"
+#include "dcs/Context.h"
 #include "dcs/components/memory/ROM.h"
 #include "dcs/util/MemoryDepth.h"
 #include <cstring>
@@ -143,11 +144,11 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, const std::fil
 
 ROM::~ROM() = default;
 
-bool ROM::prepare(std::string &error) {
+bool ROM::prepare(Context &ctx, std::string &error) {
     if (_filepath.empty())
         return true; // 内存模式，已分配好
     try {
-        loadFile(_filepath);
+        loadFile(ctx.resolvePath(_filepath.string()));
         return true;
     } catch (const std::exception &e) {
         error = e.what();

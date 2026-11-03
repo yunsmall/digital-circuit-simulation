@@ -1,0 +1,44 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "半加器演示：顶层电路只负责给 library/half_adder 蓝图接常量并观察输出"
+  },
+  "definitions": {
+    "half_adder": "../../library/half_adder.json"
+  },
+  "nets": ["a", "b", "sum", "carry"],
+  "components": [
+    {
+      "type": "constant",
+      "name": "in_a",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "a" }
+    },
+    {
+      "type": "constant",
+      "name": "in_b",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "b" }
+    },
+    {
+      "type": "composite",
+      "name": "u_ha",
+      "params": { "definition": "half_adder" },
+      "connections": { "a": "a", "b": "b", "sum": "sum", "carry": "carry" }
+    },
+    {
+      "type": "display",
+      "name": "sum_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "sum" }
+    },
+    {
+      "type": "display",
+      "name": "carry_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "carry" }
+    }
+  ]
+}

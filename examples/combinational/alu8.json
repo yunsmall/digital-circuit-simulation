@@ -1,0 +1,59 @@
+{
+  "$schema": "../../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "8 位 ALU 演示：计数器循环切换 op=0..15，观察 42 与 15 的加/减/逻辑/移位/比较结果"
+  },
+  "nets": ["clk", "op", "a", "b", "out", "zero", "en1"],
+  "components": [
+    {
+      "type": "clkgen",
+      "name": "clock",
+      "params": { "high_ticks": "1", "low_ticks": "1" },
+      "connections": { "clk": "clk" }
+    },
+    {
+      "type": "constant",
+      "name": "en",
+      "params": { "bit_width": "1", "value": "1" },
+      "connections": { "out": "en1" }
+    },
+    {
+      "type": "counter",
+      "name": "op_counter",
+      "params": { "bit_width": "4", "has_en": "1" },
+      "connections": { "clk": "clk", "en": "en1", "q": "op" }
+    },
+    {
+      "type": "constant",
+      "name": "operand_a",
+      "params": { "bit_width": "8", "value": "42" },
+      "connections": { "out": "a" }
+    },
+    {
+      "type": "constant",
+      "name": "operand_b",
+      "params": { "bit_width": "8", "value": "15" },
+      "connections": { "out": "b" }
+    },
+    {
+      "type": "alu",
+      "name": "alu8",
+      "params": { "bit_width": "8" },
+      "connections": { "a": "a", "b": "b", "op": "op", "out": "out", "zero": "zero" }
+    },
+    {
+      "type": "display",
+      "name": "out_display",
+      "params": { "bit_width": "8", "kind": "text", "digits": "3" },
+      "connections": { "in": "out" }
+    },
+    {
+      "type": "display",
+      "name": "zero_led",
+      "params": { "bit_width": "1", "kind": "led", "digits": "1" },
+      "connections": { "in": "zero" }
+    }
+  ]
+}

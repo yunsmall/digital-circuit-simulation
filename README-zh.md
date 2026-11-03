@@ -317,7 +317,7 @@ initramfs 打包成**单个 ELF**，由 dcs 的 RISC-V CPU 直接启动到用户
 
 ```bash
 bash linux/build-boot.sh /tmp/initrd-busybox.cpio.gz
-./build/RelWithDebInfo/dcs_soc examples/jsons/riscv_linux.json --elf images/boot.elf --forever
+./build/RelWithDebInfo/dcs_soc examples/soc/riscv_linux.json --elf images/boot.elf --disk images/disk.img --forever
 ```
 
 整机仿真用单独的 `dcs_soc` 入口：加载 ELF、串口接宿主键盘、按 tohost 判定结果
@@ -384,7 +384,12 @@ JSON 往返后会保留。
 蓝图文件用 `"$meta": {"kind": "blueprint"}` 标记，内容可以是 `definitions` 映射，
 也可以把单个定义直接写在根上（名字取 `$meta.name`，没写就用引用处的键）。顶层文件里的
 内联定义优先于文件里的同名定义；蓝图之间循环引用会被拒绝。示例见
-`examples/jsons/composite_library.json` 和 `examples/jsons/library/`。
+`examples/combinational/composite_library.json` 和项目根的 `library/`。
+
+蓝图可以带参数：定义里写 `"params": {"bit_width": "8"}` 给默认值，实例用同名参数覆盖，
+配方参数、实例名、线网名和端口位宽里的 `${name}` 会在展开时做字符串替换。端口位宽写成
+`{"net": "a", "width": "${bit_width}"}`；只支持字符串替换，没有循环展开，端口数量随位宽
+变化的结构请用总线端口或内置的 `adder`/`register` 这类带 `bit_width` 的元件。
 
 `schemas/circuit.schema.json`、`schemas/blueprint.schema.json` 只给编辑器提示用，
 不参与任何校验，文件里不引用它们也没关系。`schemas/component.schema.json` 由元件

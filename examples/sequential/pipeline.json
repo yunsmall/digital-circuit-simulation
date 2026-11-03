@@ -1,4 +1,9 @@
 {
+  "$meta": {
+    "kind": "circuit",
+    "format": 1,
+    "description": "浮点流水线：加法结果打拍后再乘，比较组合直通与流水延迟"
+  },
   "nets": ["a", "b", "sum", "diff", "prod", "clk", "latched"],
   "components": [
     {

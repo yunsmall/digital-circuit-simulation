@@ -1,0 +1,30 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "name": "decoder3to8",
+    "author": "dcs",
+    "description": "3-8 译码器：包装 decoder 元件，输出独热码"
+  },
+  "nets": ["sel0", "sel1", "sel2", "out0", "out1", "out2", "out3", "out4", "out5", "out6", "out7"],
+  "components": [
+    {
+      "type": "decoder",
+      "name": "dec3to8",
+      "params": { "n_selects": "3" },
+      "connections": {
+        "sel0": "sel0", "sel1": "sel1", "sel2": "sel2",
+        "out0": "out0", "out1": "out1", "out2": "out2", "out3": "out3",
+        "out4": "out4", "out5": "out5", "out6": "out6", "out7": "out7"
+      }
+    }
+  ],
+  "expose": {
+    "inputs": { "sel0": "sel0", "sel1": "sel1", "sel2": "sel2" },
+    "outputs": {
+      "out0": "out0", "out1": "out1", "out2": "out2", "out3": "out3",
+      "out4": "out4", "out5": "out5", "out6": "out6", "out7": "out7"
+    }
+  }
+}

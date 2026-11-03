@@ -29,7 +29,7 @@ public:
                             uint32_t size = 0x10000000u);
     ~WishboneDcache() override;
 
-    bool prepare(std::string &error) override;
+    bool prepare(Context &ctx, std::string &error) override;
     [[nodiscard]] std::vector<JitSymbol> extraJitSymbols() const override {
         return {};
     }

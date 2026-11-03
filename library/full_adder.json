@@ -1,0 +1,38 @@
+{
+  "$schema": "../schemas/circuit.schema.json",
+  "$meta": {
+    "kind": "blueprint",
+    "format": 1,
+    "description": "1 位全加器：两个 half_adder 蓝图实例 + 进位或门，演示蓝图嵌套引用"
+  },
+  "definitions": {
+    "half_adder": "half_adder.json",
+    "full_adder": {
+      "nets": ["a", "b", "cin", "s1", "c1", "c2", "sum", "cout"],
+      "components": [
+        {
+          "type": "composite",
+          "name": "ha1",
+          "params": { "definition": "half_adder" },
+          "connections": { "a": "a", "b": "b", "sum": "s1", "carry": "c1" }
+        },
+        {
+          "type": "composite",
+          "name": "ha2",
+          "params": { "definition": "half_adder" },
+          "connections": { "a": "s1", "b": "cin", "sum": "sum", "carry": "c2" }
+        },
+        {
+          "type": "or",
+          "name": "carry_or",
+          "params": { "inputs": "2", "bit_width": "1" },
+          "connections": { "in0": "c1", "in1": "c2", "out": "cout" }
+        }
+      ],
+      "expose": {
+        "inputs": { "a": "a", "b": "b", "cin": "cin" },
+        "outputs": { "sum": "sum", "cout": "cout" }
+      }
+    }
+  }
+}
