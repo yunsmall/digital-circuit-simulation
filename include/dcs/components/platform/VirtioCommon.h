@@ -5,6 +5,7 @@
 // 设备元件只提供四段生成期片段（唤醒 / desc 决策 / 设备阶段启动 / 阶段推进）。
 // 产出的代码在 JIT 里就是普通函数，没有中间层。
 #pragma once
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -15,9 +16,11 @@ extern "C" void dcs_virtio_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_
 
 namespace dsc::virtio_gen {
 
-// 从端口 / 主端口引脚顺序，和设备元件的 addInput/addOutput 顺序一致
+// 从端口 / 主端口引脚顺序，和设备元件的 addInput/addOutput 顺序一致。
+// 用固定长度数组存线网 id，长度不对时编译期就报，不用等运行期读错线网
 enum InIdx { I_CLK = 0, I_ADR, I_DAT, I_WE, I_SEL, I_STB, I_CYC, I_M_DAT, I_M_ACK };
 enum OutIdx { O_DAT = 0, O_ACK, O_IRQ, O_M_ADR, O_M_DAT, O_M_WE, O_M_SEL, O_M_STB, O_M_CYC };
+inline constexpr int IN_COUNT = I_M_ACK + 1;
 
 // virtqueue 公共阶段；设备特有阶段从 Q_DEV 起自己分配。
 // 用 int 常量而不是 enum：这些值要直接当 std::format 的参数拼进生成代码
@@ -58,7 +61,7 @@ struct DeviceSpec {
     uint32_t dev_id = 0;
     uint32_t nq = 1;
     uint32_t features = 0;
-    std::vector<int> in_nets; // 9 个输入引脚的线网 id
+    std::array<int, IN_COUNT> in_nets{}; // 9 个输入引脚的线网 id，下标用 InIdx
     std::string state_decl;   // 设备私有 static 变量（含换行）
     std::string init_code;    // 设备私有初始化（含缩进和换行）
     std::string config_read;  // 0x100 起的读分支，形如 "case 0x100: ...; break;\n"
@@ -83,7 +86,7 @@ struct BlkParams {
     std::string node_name;
     // 复位回调符号名：各设备类必须不同，原因见 DeviceSpec::reset_symbol
     std::string reset_symbol;
-    std::vector<int> in_nets;
+    std::array<int, IN_COUNT> in_nets{};
     uint32_t features = 0;
     uint64_t size_bytes = 0;
     std::string state_decl; // 设备私有变量，必须含 _vio_type_<id>/_vio_sec_<id>/_vio_status_byte_<id>

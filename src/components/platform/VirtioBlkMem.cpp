@@ -57,8 +57,8 @@ virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
     p.func_name = funcName_seq();
     p.node_name = std::format("VirtioBlkMem {}", name());
     p.reset_symbol = kResetSymbol;
-    for (int i = 0; i < 9; i++)
-        p.in_nets.push_back((int) inputs()[i]->netId());
+    for (int i = 0; i < virtio_gen::IN_COUNT; i++)
+        p.in_nets[i] = (int) inputs()[i]->netId();
     p.features = 0;
     p.size_bytes = _mem.size();
     p.state_decl = std::format(

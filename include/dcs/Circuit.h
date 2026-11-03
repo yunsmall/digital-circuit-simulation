@@ -98,7 +98,9 @@ public:
     // （结构已变，不能再用），tick() 在重新 compile() 前直接返回。
     // 拓扑告警只写进 warnings，不直接打印；CLI 层决定怎么呈现
     CircuitError validate(std::vector<std::string> *warnings = nullptr);
-    CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）
+    // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）。
+    // warnings 非空时收集拓扑告警，由调用方决定怎么呈现；为空时保持老行为打到 stderr
+    CircuitError compile(std::vector<std::string> *warnings = nullptr);
     bool isCompiled() const {
         return _compiled;
     }

@@ -135,8 +135,8 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     // probe 直接以 -ENOENT 失败
     s.nq = 2;
     s.features = 0;
-    for (int i = 0; i < 9; i++)
-        s.in_nets.push_back((int) inputs()[i]->netId());
+    for (int i = 0; i < virtio_gen::IN_COUNT; i++)
+        s.in_nets[i] = (int) inputs()[i]->netId();
 
     const unsigned long long head_off = offsetof(State, evt_head);
     const unsigned long long tail_off = offsetof(State, evt_tail);

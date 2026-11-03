@@ -57,6 +57,9 @@ public:
     Net *net() const {
         return _net;
     }
+    // 直接改连接不会维护 Circuit 的位宽、总线驱动表，也不会把电路标记为需重编译。
+    // 只给 Circuit/Composite 内部和"故意绕过 connect 检查"的测试用；
+    // 外部改接线请走 Circuit::connect / disconnect
     void setNet(Net *n) {
         _net = n;
     }

@@ -205,8 +205,8 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
     s.dev_id = 1;
     s.nq = 2;
     s.features = 0;
-    for (int i = 0; i < 9; i++)
-        s.in_nets.push_back((int) inputs()[i]->netId());
+    for (int i = 0; i < virtio_gen::IN_COUNT; i++)
+        s.in_nets[i] = (int) inputs()[i]->netId();
     s.state_decl = "extern void dcs_vnet_kick(void *);\n";
     s.config_read = "";
     s.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };

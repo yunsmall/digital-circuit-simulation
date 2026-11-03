@@ -73,8 +73,8 @@ virtio_gen::DeviceSpec VirtioRng::makeSpec() const {
     s.dev_id = 4;
     s.nq = 1;
     s.features = 0;
-    for (int i = 0; i < 9; i++)
-        s.in_nets.push_back((int) inputs()[i]->netId());
+    for (int i = 0; i < virtio_gen::IN_COUNT; i++)
+        s.in_nets[i] = (int) inputs()[i]->netId();
     s.state_decl = std::format("static uint64_t _vio_rng_{} = 0x9E3779B97F4A7C15ULL;\n", s.id);
     s.config_read = "";
     s.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };

@@ -49,7 +49,6 @@ public:
     // symbols 是元件通过 extraJitSymbols() 暴露给生成代码的函数指针/地址
     JitCompileResult compile(const std::string &c_code,
                              const std::string &shim_path,
-                             void *circuit_ptr,
                              const std::vector<std::pair<std::string, void *>> &symbols);
 
     // 释放后端持有的编译产物（不卸载 DLL）

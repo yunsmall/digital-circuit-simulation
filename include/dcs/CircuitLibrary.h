@@ -82,7 +82,9 @@ public:
     }
 
     // 导入失败回滚：把定义表整体拷出来，失败时恢复。导入会覆盖同名定义，
-    // 没有快照就没法区分"本次新增"和"调用方原有"
+    // 没有快照就没法区分"本次新增"和"调用方原有"。
+    // _import_counter 故意不回滚：import_serial 必须保持单调，否则回滚后重新导入
+    // 可能拿到与回滚前相同的编号，"本次导入覆盖了哪些定义"的判断会漏
     std::unordered_map<std::string, CircuitDefinition> snapshot() const {
         return _defs;
     }

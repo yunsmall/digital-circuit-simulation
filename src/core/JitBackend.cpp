@@ -160,7 +160,6 @@ void JitBackend::cleanup() {
 
 JitCompileResult JitBackend::compile(const std::string &c_code,
                                      const std::string &shim_path,
-                                     void *circuit_ptr,
                                      const std::vector<std::pair<std::string, void *>> &symbols) {
     cleanup();
 
@@ -277,6 +276,13 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         cleanup();
         return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 没有返回 IR 模块"};
     }
+    // module 里的类型属于 llvm_ctx，cleanup() 会销毁 ctx，所以每个失败点都必须
+    // 先放掉 module。把顺序固定在一个地方，避免新增失败分支时漏掉
+    auto fail = [&](ErrorCode code, std::string msg) {
+        module.reset();
+        cleanup();
+        return JitCompileResult{code, -1, std::move(msg)};
+    };
     runJitPasses(*module);
 
     // 调试用：把 JIT 实际拿去编译的 IR 落到文件里。JIT 出来的机器码没有符号表，
@@ -289,22 +295,14 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     }
 
     auto jtmb = llvm::orc::JITTargetMachineBuilder::detectHost();
-    if (!jtmb) {
-        // module 析构要碰它所属的 LLVMContext，必须先放掉 module 再 cleanup
-        module.reset();
-        cleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, "检测目标机失败: " + llvm::toString(jtmb.takeError())};
-    }
+    if (!jtmb)
+        return fail(ErrorCode::JIT_LINK_FAILED, "检测目标机失败: " + llvm::toString(jtmb.takeError()));
     // detectHost 会按宿主 CPU 填 CPU；显式清空改成该架构的通用基线，
     // 否则 A 机器编出来的代码到 B 机器上可能用不了
     jtmb->setCPU("");
     auto jit_or_err = llvm::orc::LLJITBuilder().setJITTargetMachineBuilder(std::move(*jtmb)).create();
-    if (!jit_or_err) {
-        auto llvm_err = "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError());
-        module.reset();
-        cleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, llvm_err};
-    }
+    if (!jit_or_err)
+        return fail(ErrorCode::JIT_LINK_FAILED, "创建 LLJIT 失败: " + llvm::toString(jit_or_err.takeError()));
     _impl->jit = std::move(*jit_or_err);
 #if defined(__linux__)
     // JIT 出来的代码没有符号表，perf 只能看到一串地址。这个插件把每次链接的
@@ -329,23 +327,16 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         add("dcs_bus_conflict", reinterpret_cast<void *>(&dcsBusConflictThunk));
         for (auto &[name, ptr]: symbols)
             add(name, ptr);
-        if (auto err = _impl->jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(syms)))) {
-            auto sym_err = "注入 JIT 符号失败: " + llvm::toString(std::move(err));
-            // module 还没交给 ThreadSafeModule，cleanup 会销毁它依赖的 LLVMContext
-            module.reset();
-            cleanup();
-            return {ErrorCode::JIT_SYMBOL_FAILED, -1, sym_err};
-        }
+        if (auto err = _impl->jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(syms))))
+            return fail(ErrorCode::JIT_SYMBOL_FAILED,
+                        "注入 JIT 符号失败: " + llvm::toString(std::move(err)));
     }
 
     // module 里的类型都在 _impl->llvm_ctx 里 uniqued，ThreadSafeModule 必须拿同一个 context，
     // 否则违反 LLVM 契约（单线程下侥幸能跑，并发或升级后会 UAF）
     auto tsm = llvm::orc::ThreadSafeModule(std::move(module), std::move(_impl->llvm_ctx));
-    if (auto err = _impl->jit->addIRModule(std::move(tsm))) {
-        auto mod_err = "添加 IR 模块失败: " + llvm::toString(std::move(err));
-        cleanup();
-        return {ErrorCode::JIT_LINK_FAILED, -1, mod_err};
-    }
+    if (auto err = _impl->jit->addIRModule(std::move(tsm)))
+        return fail(ErrorCode::JIT_LINK_FAILED, "添加 IR 模块失败: " + llvm::toString(std::move(err)));
 
     auto sym = [this](const char *name) -> void * {
         auto s = _impl->jit->lookup(name);
@@ -357,7 +348,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     };
     auto r = resolveEntries(sym);
     if (r.code != ErrorCode::OK)
-        cleanup();
+        return fail(r.code, r.message);
     return r;
 #endif
 }

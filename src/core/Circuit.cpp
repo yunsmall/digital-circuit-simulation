@@ -521,18 +521,21 @@ std::string Circuit::generateC() const {
     return generateCircuitC(const_cast<Circuit *>(this), _nets, _components, _bus_nets);
 }
 
-CircuitError Circuit::compile() {
+CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     // 先把入口指针全部置空再清理后端：cleanup() 会释放已编译的代码，
     // 若本次编译失败，残留的旧函数指针就成了悬空指针
     jitCleanup();
     // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
     _tick_error = {};
 
-    std::vector<std::string> warnings;
-    if (auto err = prepareNetlist(&warnings); err.code != ErrorCode::OK)
+    std::vector<std::string> local_warnings;
+    if (auto err = prepareNetlist(&local_warnings); err.code != ErrorCode::OK)
         return err;
-    for (auto &w: warnings)
-        std::cerr << std::format("[dcs] 警告: {}\n", w);
+    if (warnings)
+        warnings->insert(warnings->end(), local_warnings.begin(), local_warnings.end());
+    else
+        for (auto &w: local_warnings)
+            std::cerr << std::format("[dcs] 警告: {}\n", w);
 
     std::string c_code = generateC();
 
@@ -574,7 +577,7 @@ CircuitError Circuit::compile() {
                     std::format("JIT 符号名冲突: '{}' 被注册成不同地址", name)};
     }
 
-    auto res = _backend.compile(c_code, shim_path, this, symbols);
+    auto res = _backend.compile(c_code, shim_path, symbols);
     if (res.code != ErrorCode::OK)
         return {res.code, -1, {}, res.message};
 
