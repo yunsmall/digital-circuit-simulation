@@ -60,3 +60,21 @@ TEST(Width128, TsBufDrivesBus) {
     c.tick();
     EXPECT_EQ(c.getWire(bus->id()), v);
 }
+
+// >64 位且不是 8 的倍数的引脚：按字节拷贝后最后一个字节里超出的位是线网值，
+// 必须按字节掩掉，否则元件会读到线网高位的脏数据
+TEST(Width128, NonByteAlignedReadMasksTailBits) {
+    dsc::Circuit c;
+    auto *in = c.createNet("in");
+    auto *out = c.createNet("out");
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 100, false));
+    c.connect(g, "in", in);
+    c.connect(g, "out", out);
+
+    auto err = c.validate();
+    ASSERT_EQ(err.code, dsc::ErrorCode::OK) << err.message;
+    const std::string code = c.generateC();
+    // 100 位 = 13 字节，第 13 个字节只有低 4 位有效
+    EXPECT_NE(code.find("((uint8_t *)&_in)[12] &= 0x0F;"), std::string::npos)
+            << "100 位输入没有清掉最后一个字节的高 4 位";
+}

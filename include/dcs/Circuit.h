@@ -211,6 +211,9 @@ private:
 
     // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
     std::map<int, std::vector<BusDriver>> _bus_nets;
+    // JIT 死循环的停止标志：地址通过 JIT 符号表注入，总线冲突/振荡时由
+    // onBusConflict 置 1，circuit_tick_forever 每拍检查后返回
+    volatile int _stop_flag = 0;
 
     bool _compiled = false;
 

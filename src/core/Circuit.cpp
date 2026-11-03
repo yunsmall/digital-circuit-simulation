@@ -96,6 +96,7 @@ void Circuit::clear() {
 
 void Circuit::reset() {
     _tick_error = {};
+    _stop_flag = 0;
     if (_jit.reset)
         _jit.reset();
 }
@@ -467,7 +468,10 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
                 oss << "检测到组合逻辑环路: ";
                 bool in_cycle = false;
                 int cycle_start = path.back();
-                for (int nid: path) {
+                // dfsCycle 把闭环起点又压了一次，最后一个是重复节点；
+                // 打印到倒数第二个为止，结尾再补一次起点，避免出现 a -> b -> a -> a
+                for (size_t pi = 0; pi + 1 < path.size(); pi++) {
+                    int nid = path[pi];
                     if (nid == cycle_start)
                         in_cycle = true;
                     if (in_cycle)
@@ -562,7 +566,8 @@ CircuitError Circuit::expandComposites() {
 // ============================================================
 
 std::string Circuit::generateC() const {
-    return generateCircuitC(const_cast<Circuit *>(this), _nets, _components, _bus_nets);
+    return generateCircuitC(const_cast<Circuit *>(this), const_cast<volatile int *>(&_stop_flag), _nets,
+                            _components, _bus_nets);
 }
 
 CircuitError Circuit::compile(std::vector<std::string> *warnings) {
@@ -571,6 +576,7 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     jitCleanup();
     // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
     _tick_error = {};
+    _stop_flag = 0;
 
     // deinit() 可能释放了元件持有的外部资源（DLL 句柄、磁盘文件），重新编译前
     // 必须重新绑定。必须在静态检查之前做：Dll 的 hasCombinational/hasSequential
@@ -651,6 +657,7 @@ void Circuit::init() {
         return;
     // 初始化等于一次冷启动，上一个电路残留的运行期错误不能带进新状态
     _tick_error = {};
+    _stop_flag = 0;
     // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）
     for (auto &comp: _components)
         comp->simInit();
@@ -676,7 +683,10 @@ void Circuit::tickCycle(int clk_net_id) {
     // id 直接变成 JIT 里 _w[] 的下标，越界会静默踩内存
     if (clk_net_id < 0 || clk_net_id >= (int) _nets.size())
         return;
-    if (_jit.tick_cycle) {
+    // JIT 快路径只写 _w[clk][0]。时钟理应是 1 位线网，高字节从 init 起一直是 0；
+    // 一旦调用方把宽线网当 clk 用，就和 setWire 的回退路径（会清零高字节）不一致，
+    // 所以宽线网必须走回退路径
+    if (_jit.tick_cycle && _nets[clk_net_id]->bit_width() == 1) {
         _jit.tick_cycle(clk_net_id);
         return;
     }
@@ -693,7 +703,7 @@ void Circuit::tickCycles(int clk_net_id, uint64_t n) {
         return;
     if (clk_net_id < 0 || clk_net_id >= (int) _nets.size())
         return;
-    if (_jit.tick_cycles) {
+    if (_jit.tick_cycles && _nets[clk_net_id]->bit_width() == 1) {
         _jit.tick_cycles(clk_net_id, n);
         return;
     }
@@ -722,11 +732,17 @@ void Circuit::tickForever() {
         return;
     if (_jit.tick_forever)
         _jit.tick_forever();
-    for (;;)
+    // 回退路径的 tick() 遇到错误会立即返回，不检查的话外层就变成忙循环
+    for (;;) {
         tick();
+        if (_tick_error.code != ErrorCode::OK)
+            return;
+    }
 }
 
 void Circuit::onBusConflict(int net_id) {
+    // 死循环入口每拍检查它；先置位，保证 circuit_tick_forever 能返回
+    _stop_flag = 1;
     if (_tick_error.code != ErrorCode::OK)
         return;
     // net_id < 0 是阶段 2b 迭代到上限仍未收敛的信号：三态总线绕成的组合环查不出来，

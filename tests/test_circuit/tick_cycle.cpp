@@ -77,3 +77,27 @@ TEST(TickCycle, EquivalentToTwoTicksPerCycle) {
     t.c->tickCycles(t.clk->id(), 3);
     EXPECT_EQ(t.c->getWire(t.clk->id())[0], 1u) << "一个周期结束时钟应停在高电平";
 }
+
+// JIT 快路径只写 _w[clk][0]；宽时钟线网必须和 setWire 的语义一致，
+// 高字节不能留着上一次的脏值
+TEST(TickCycle, WideClockNetHighBytesAreCleared) {
+    dsc::Circuit c;
+    auto *clk = c.createNet("clk");
+    auto *sink = c.createNet("sink");
+    auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 128, false));
+    c.connect(g, "in", clk);
+    c.connect(g, "out", sink);
+    auto err = c.compile();
+    ASSERT_EQ(err.code, dsc::ErrorCode::OK) << err.message;
+    c.init();
+
+    std::vector<uint8_t> garbage(16, 0xFF);
+    garbage[0] = 0;
+    c.setWire(clk->id(), garbage);
+    c.tickCycles(clk->id(), 2);
+
+    auto v = c.getWire(clk->id());
+    EXPECT_EQ(v[0], 1u) << "一个周期结束时钟应停在高电平";
+    for (int i = 1; i < 16; i++)
+        EXPECT_EQ(v[i], 0) << "第 " << i << " 字节的脏值没有清掉";
+}

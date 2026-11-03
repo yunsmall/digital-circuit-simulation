@@ -10,7 +10,11 @@ TEST(CircuitCheckTest, CombinationalLoopDetected) {
     auto *g = c.addComponent(std::make_unique<dsc::UnaryGate>("g", 8, true));
     c.connect(g, "in", w);
     c.connect(g, "out", w);
-    EXPECT_NE(c.check().code, dsc::ErrorCode::OK);
+    auto err = c.check();
+    EXPECT_NE(err.code, dsc::ErrorCode::OK);
+    // 闭环起点只应出现两次（进入环、绕回起点），不能在结尾再多拼一个
+    EXPECT_EQ(err.message.find("w -> w -> w"), std::string::npos) << err.message;
+    EXPECT_NE(err.message.find("w -> w"), std::string::npos) << err.message;
 }
 
 TEST(CircuitCheckTest, NoLoopWithSequential) {

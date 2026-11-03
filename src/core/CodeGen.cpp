@@ -139,6 +139,50 @@ void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
     }
 }
 
+// 单条总线的决议：多驱动冲突检测 + 把选中驱动源的 _c_out 拷到 _w。
+// track_change 为真时比对旧值，把"有没有变化"记到 _bus_changed（阶段 2b 用）
+void emitBusResolution(std::ostream &oss, int net_id, const std::vector<BusDriver> &drivers, bool track_change) {
+    oss << "\n    // 总线 " << net_id << "（" << drivers.size() << " 个三态驱动）\n";
+    oss << "    {\n";
+    // 旧值必须在冲突检测之前取：冲突时下面的分支会跳过初始化，
+    // 让它之后的比对读到未初始化的栈内存
+    if (track_change)
+        oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, {}, 16);\n", net_id, net_id,
+                           cgen::wire(net_id));
+    oss << "        int _active = -1, _conflict = 0;\n";
+    for (int di = 0; di < (int) drivers.size(); di++) {
+        int cid = drivers[di].comp->id();
+        int oi = drivers[di].out_idx;
+        if (di == 0)
+            oss << std::format("        if ({}) _active = {};\n", cgen::cOe(cid, oi), di);
+        else
+            // 多驱动冲突只置标志，不跳转：跳转会绕过下面所有语句（包括旧值快照的初始化）
+            oss << std::format(
+                    "        if ({}) {{\n"
+                    "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); _conflict = 1; }}\n"
+                    "            else _active = {};\n"
+                    "        }}\n",
+                    cgen::cOe(cid, oi), net_id, di);
+    }
+    oss << "        if (!_conflict) {\n";
+    oss << "        if (_active >= 0) {\n";
+    for (int di = 0; di < (int) drivers.size(); di++) {
+        int cid = drivers[di].comp->id();
+        int oi = drivers[di].out_idx;
+        oss << std::format("            {}if (_active == {}) dcs_memcpy({}, {}, 16);\n", di == 0 ? "" : "else ",
+                           di, cgen::wire(net_id), cgen::cOut(cid, oi));
+    }
+    oss << "        } else {\n";
+    oss << std::format("            dcs_memset({}, 0, 16);  // Hi-Z\n", cgen::wire(net_id));
+    oss << "        }\n";
+    oss << "        }\n";
+    if (track_change)
+        oss << std::format(
+                "    for (int _i=0;_i<16;_i++) if (_old_{}[_i] != {}[_i]) {{ _bus_changed=1; break; }}\n",
+                net_id, cgen::wire(net_id));
+    oss << "    }\n";
+}
+
 // 总线决议 + 所有输出的 _c_out → _w。
 // track_change 为真时，每写一条总线都比对旧值，把"有没有变化"记到 _bus_changed，
 // 阶段 2b 靠它判断级联是否已经到达不动点
@@ -146,47 +190,8 @@ void emitPropagation(std::ostream &oss, const std::vector<std::unique_ptr<Compon
                      const std::map<int, std::vector<BusDriver>> &bus_nets, bool track_change) {
     std::set<int> bus_nets_handled;
 
-    // 总线决议
     for (auto &[net_id, drivers]: bus_nets) {
-        oss << "\n    // 总线 " << net_id << "（" << drivers.size() << " 个三态驱动）\n";
-        oss << "    {\n";
-        // 旧值必须在冲突检测之前取：冲突时下面的 goto 会跳过初始化，
-        // 让它之后的比对读到未初始化的栈内存
-        if (track_change)
-            oss << std::format("        uint8_t _old_{}[16]; dcs_memcpy(_old_{}, {}, 16);\n", net_id, net_id,
-                               cgen::wire(net_id));
-        oss << "        int _active = -1, _conflict = 0;\n";
-        for (int di = 0; di < (int) drivers.size(); di++) {
-            int cid = drivers[di].comp->id();
-            int oi = drivers[di].out_idx;
-            if (di == 0)
-                oss << std::format("        if ({}) _active = {};\n", cgen::cOe(cid, oi), di);
-            else
-                // 多驱动冲突只置标志，不跳转：跳转会绕过下面所有语句（包括旧值快照的初始化）
-                oss << std::format(
-                        "        if ({}) {{\n"
-                        "            if (_active >= 0) {{ dcs_bus_conflict(_circuit_ptr, {}); _conflict = 1; }}\n"
-                        "            else _active = {};\n"
-                        "        }}\n",
-                        cgen::cOe(cid, oi), net_id, di);
-        }
-        oss << "        if (!_conflict) {\n";
-        oss << "        if (_active >= 0) {\n";
-        for (int di = 0; di < (int) drivers.size(); di++) {
-            int cid = drivers[di].comp->id();
-            int oi = drivers[di].out_idx;
-            oss << std::format("            {}if (_active == {}) dcs_memcpy({}, {}, 16);\n",
-                               di == 0 ? "" : "else ", di, cgen::wire(net_id), cgen::cOut(cid, oi));
-        }
-        oss << "        } else {\n";
-        oss << std::format("            dcs_memset({}, 0, 16);  // Hi-Z\n", cgen::wire(net_id));
-        oss << "        }\n";
-        oss << "        }\n";
-        if (track_change)
-            oss << std::format(
-                    "    for (int _i=0;_i<16;_i++) if (_old_{}[_i] != {}[_i]) {{ _bus_changed=1; break; }}\n",
-                    net_id, cgen::wire(net_id));
-        oss << "    }\n";
+        emitBusResolution(oss, net_id, drivers, track_change);
         bus_nets_handled.insert(net_id);
     }
 
@@ -211,9 +216,45 @@ void emitPropagation(std::ostream &oss, const std::vector<std::unique_ptr<Compon
     }
 }
 
+// 阶段 3 之后：时序元件此时才写 _c_out/_c_oe，必须在同一拍内传播到 _w，
+// 否则下一拍阶段 1 读到的是再上一拍的值（组合驱动的总线在阶段 2 已决议过）。
+// 只处理"有时序驱动的总线"和非总线上的时序三态输出：没有这些的电路
+// 生成阶段 4 为空，不给热路径加任何开销
+void emitSeqTriPropagation(std::ostream &oss, const std::vector<std::unique_ptr<Component>> &components,
+                           const std::map<int, std::vector<BusDriver>> &bus_nets) {
+    std::set<int> buses_done;
+    for (auto &[net_id, drivers]: bus_nets) {
+        bool seq_driven = false;
+        for (auto &d: drivers)
+            if (d.comp->hasSequential()) {
+                seq_driven = true;
+                break;
+            }
+        if (!seq_driven)
+            continue;
+        emitBusResolution(oss, net_id, drivers, false);
+        buses_done.insert(net_id);
+    }
+    for (auto &c: components) {
+        if (!c->hasSequential())
+            continue;
+        for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
+            Net *n = c->outputs()[oi]->net();
+            if (!n || !c->outputs()[oi]->isTriState() || buses_done.count(n->id()))
+                continue;
+            oss << std::format("    if ({}) {{\n", cgen::cOe(c->id(), oi));
+            oss << std::format("        dcs_memcpy({}, {}, 16);\n", cgen::wire(n->id()), cgen::cOut(c->id(), oi));
+            oss << "    } else {\n";
+            oss << std::format("        dcs_memset({}, 0, 16);  // Hi-Z\n", cgen::wire(n->id()));
+            oss << "    }\n";
+        }
+    }
+}
+
 } // namespace
 
-std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_ptr<Net>> &nets,
+std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
+                             const std::vector<std::unique_ptr<Net>> &nets,
                              const std::vector<std::unique_ptr<Component>> &components,
                              const std::map<int, std::vector<BusDriver>> &bus_nets) {
     // 生成代码把 id 直接当下标用（_c_out_<id>、_w[<id>]），前提是
@@ -235,7 +276,10 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     oss << "static uint8_t _w_all[NET_COUNT + 1][16];\n";
     oss << "#define _w (_w_all + 1)\n";
     oss << std::format("static void* _circuit_ptr = (void*)0x{:X};\n", reinterpret_cast<uintptr_t>(circuit_ptr));
-    oss << "extern void dcs_bus_conflict(void*, int);\n\n";
+    oss << "extern void dcs_bus_conflict(void*, int);\n";
+    // tickForever 的停止标志：地址直接编进代码，元件状态指针也是这个做法
+    oss << std::format("static volatile int *_dcs_stop_flag = (volatile int*)0x{:X};\n\n",
+                       reinterpret_cast<uintptr_t>(stop_flag_ptr));
 
     // 每个元件的每个输出：_c_out_<comp_id>_<out_idx>[16] + _c_oe_<comp_id>_<out_idx>
     for (auto &c: components) {
@@ -327,6 +371,8 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
         if (s->hasSequential())
             oss << "    " << s->funcName_seq() << "();\n";
     }
+    oss << "    // 阶段4: 时序三态输出传播（本拍写、本拍可见）\n";
+    emitSeqTriPropagation(oss, components, bus_nets);
     oss << "}\n\n";
 
     // 时钟线网只有 1 位，直接写第一个字节即可；其余字节在 init 时清零且无人写过。
@@ -350,9 +396,11 @@ void circuit_tick_cycles(int clk_id, uint64_t n) {
 void circuit_tick_batch(uint64_t n) {
     for (uint64_t _i = 0; _i < n; _i++) circuit_tick();
 }
-// 死循环放在 JIT 里：C++ 不再每拍跨模块调用，--forever 模式一直跑，Ctrl+C 退出
+// 死循环放在 JIT 里：C++ 不再每拍跨模块调用，--forever 模式一直跑，Ctrl+C 退出。
+// 运行期出现总线冲突/振荡时 onBusConflict 置停止标志，这里必须返回，
+// 否则调用方永远无法观察到错误
 void circuit_tick_forever(void) {
-    for (;;) circuit_tick();
+    for (;;) { circuit_tick(); if (*_dcs_stop_flag) return; }
 }
 // 一直跑下去不返回：C++ 侧调用一次就停在这里，靠 Ctrl+C 结束进程。
 // 循环体在 JIT 里，没有每拍跨模块调用的开销

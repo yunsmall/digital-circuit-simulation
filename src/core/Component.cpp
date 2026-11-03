@@ -43,9 +43,14 @@ std::string gen_read_wire(int net_id, int pin_w, int net_w, std::string_view var
     std::string s = std::format(R"({} {} = {};
     dcs_memcpy(&{}, {}, {});)",
                                 c_int_type(pin_w), var, init, var, cgen::wire(net_id), b);
-    // 宽引脚按字节数拷贝时已经截掉了高位，不需要再掩码
-    if (net_w > pin_w && pin_w <= 64)
+    // 引脚位宽不是 8 的倍数时，最后一个字节里超出 pin_w 的位是线网上的值。
+    // >64 位没有整数类型可用，按字节把最后一段的高位清掉；<=64 位直接用掩码
+    if (pin_w > 64) {
+        if (int rem = pin_w % 8)
+            s += std::format("\n    ((uint8_t *)&{})[{}] &= 0x{:02X};", var, b - 1, (1u << rem) - 1u);
+    } else if (net_w > pin_w) {
         s += std::format("\n    {} &= {};", var, gen_mask(pin_w));
+    }
     return s;
 }
 
