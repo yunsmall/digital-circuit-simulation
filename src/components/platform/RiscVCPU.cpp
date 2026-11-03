@@ -247,7 +247,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
     // 没有外部中断、mip 里这几位的旧值也是 0 时，这次读改写什么都不改，直接跳过
     if (ext_irq || (s.mip & EXT_MASK))
         s.mip = (s.mip & ~EXT_MASK) | ext_irq;
-    // 定时器中断委托给 S 态时（mideleg.STIP=1），硬件把 MTI 反映成 STIP：
+    // 规范 3.1.8：mideleg[5] 把 STI 委托给 S 态。硬件把 MTI 反映成 STIP：
     // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起。
     // 除了 CLINT 的 MTI，SBI set_timer 到期的那个时刻也要并进 STIP——
     // 之前这里无条件 else 清除，会把 SBI 设起来的 STIP 下一拍就抹掉
@@ -979,7 +979,7 @@ inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
 
     const double x = a / ulp;
     // roundByRm 按"数值本身"向下/向上舍入，而这里喂的是绝对值：负数的 RDN 要往
-    // 更负的方向走（绝对值变大），RUP 反之。把负数下的 RDN/RUP 互换再交给正数逻辑
+    // 更负的方向走（绝对值变大），RUP 反之。规范 6.1.2 表 26：RDN=向 -∞，RUP=向 +∞
     const uint32_t rm_abs = (neg && (rm == 2 || rm == 3)) ? (5u - rm) : rm;
     double n = roundByRm(x, rm_abs);
     if (n != x) fflags |= 0x01;                                   // NX
@@ -1433,7 +1433,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             // 0x3B 上 funct7=0x04 的一组：add.uw(f3=0)、zext.h 与 packw(f3=4，靠 rs2 区分)
             if (f7 == RV::F7_ZUW) {
                 if (f3 == 4) {
-                    if (lo2 == 0) { s.regs[rd] = (XLen)(v1 & 0xFFFF); break; }   // zext.h（rs2=0）
+                    // 规范 8.9.28：RV64 下 "PACKW with rs2=x0 is the ZEXT.H instruction"，
+                    // 判据是 rs2 编码字段为 x0，不是 rs2 寄存器的值
+                    if (rs2 == 0) { s.regs[rd] = (XLen)(v1 & 0xFFFF); break; }   // zext.h（rs2=0）
                     uint32_t r = (lo1 & 0xFFFF) | ((lo2 & 0xFFFF) << 16);         // packw
                     s.regs[rd] = (XLen)(SXLen)(int32_t) r;
                     break;
@@ -1595,9 +1597,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         wb_adr=pa&~(XLen)3; wb_we=true;
         wb_sel=(uint8_t)(((1u<<first)-1u)<<p); wb_dat=v2<<(8*p);
         s.acc_va=pa; s.acc_raw=v2; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((n>first)?1:0);
-        if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效
+        if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效（本核的实现选择）
+            // 规范 5.2 只强制"其他 hart/设备的写"让保留失效；同 hart 写是否失效由实现决定，
+            // 这里按保守策略一律失效。覆盖范围要按实际跨的字算：8 字节非对齐写跨 3 个字
+            // （p+n>8 时第三段在 WAIT_MEM 里补），只查前两个字会漏掉第三段
             XLen w0 = pa & ~(XLen)3;
-            if (s.lr_addr == w0 || (s.acc_stage == 1 && s.lr_addr == w0 + 4)) s.lr_valid = false;
+            const uint32_t words = (p + n + 3) / 4;
+            for (uint32_t k = 0; k < words; k++)
+                if (s.lr_addr == w0 + (XLen)4 * k) { s.lr_valid = false; break; }
         }
         wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~(XLen)3; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
@@ -1611,8 +1618,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // RV32 的 f 寄存器同样是 64 位，fld/fsd 一样可用
         if (f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
-        // A 扩展的 AMO.D 只在 RV64 存在；RV32 上同一编码是保留的，必须报非法指令，
-        // 不能按 64 位原子操作执行（rs2 会被零扩展、旧值回写被截断）
+        // 规范 5.6（Zaamo）：双字 AMO 只在 RV64 存在；RV32 上同一编码是保留的，
+        // 必须报非法指令，不能按 64 位原子操作执行（rs2 会被零扩展、旧值回写被截断）
         if constexpr (XLEN == 32) {
             if (f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
         }
@@ -1638,6 +1645,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // LR 属于 load 类，SC/其余 AMO 属于 store 类
         if (triggerMatch(s, va, amo_is_load ? RV::TRIG_LOAD : RV::TRIG_STORE)) [[unlikely]]
         { takeTrap(s, RV::EXC_BP, va); return; }
+        // 同 hart 的 AMO 也是写：覆盖保留地址所在的字时让保留失效，和 STORE 策略一致。
+        // 规范 5.2 只强制其他 hart/设备的写，本核按保守策略一律失效；
+        // LR 不写、SC 自己按 lr_addr 判定并清保留，两者都排除
+        const uint32_t amo_f5 = (inst >> 27) & 0x1F;
+        if (s.lr_valid && amo_f5 != RV::F5_LR && amo_f5 != RV::F5_SC) {
+            XLen w0 = pa & ~(XLen)3;
+            if (s.lr_addr == w0 || (is_d && s.lr_addr == w0 + 4)) s.lr_valid = false;
+        }
         // AMO: 先发起读请求，WAIT_MEM 中完成修改后自动回写
         wb_adr=pa&~(XLen)3; wb_dat=v2; wb_we=false; wb_sel=0x0F;
         wb_stb=wb_cyc=true; need_mem=true;
@@ -1662,7 +1677,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         XLen va=v1+(XLen)(SXLen)ii, pa;
         if (!mmuTranslate(s, va, pa, false, false)) [[unlikely]] return;
         if (triggerMatch(s, va, RV::TRIG_LOAD)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
-        // FLH 只要求 2 字节对齐，其余要求 4 字节
+        // FLH 只要求 2 字节对齐，其余要求 4 字节（总线字对齐）。
+        // 规范 2.1.6 允许非自然对齐的访存在不触发异常的情况下完成，所以 4n+4 的
+        // FLD 走下面两段读，不按 8 字节对齐报错
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_LAM, va); return; }
         // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
         // 地址要抹掉低两位，具体取哪半由 acc_va 在读回时移位决定
@@ -1684,8 +1701,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         XLen va=v1+(XLen)(SXLen)is, pa;
         if (!mmuTranslate(s, va, pa, true, false)) [[unlikely]] return;
         if (triggerMatch(s, va, RV::TRIG_STORE)) [[unlikely]] { takeTrap(s, RV::EXC_BP, va); return; }
+        // 与 LOAD_FP 同：只要求总线字对齐；规范 2.1.6 允许 4n+4 的 FSD 拆段完成
         if (pa & ((f3 == 1) ? (XLen)1 : (XLen)3)) [[unlikely]] { takeTrap(s, RV::EXC_SAM, va); return; }
-        if (s.lr_valid && s.lr_addr == (pa & ~(XLen)3)) s.lr_valid = false;
+        // 同 hart 写覆盖保留地址所在的字即失效（规范 5.2 的保守实现）；
+        // FSD 跨两个字（4 字节对齐时也一样），两个字都要查
+        if (s.lr_valid) {
+            XLen w0 = pa & ~(XLen)3;
+            if (s.lr_addr == w0 || (f3 == 3 && s.lr_addr == w0 + 4)) s.lr_valid = false;
+        }
         // 总线只接受字对齐地址：FSH/FSW 按字内偏移搬字节，FSD 走拆段机制
         uint32_t p = (uint32_t)(pa & 3);
         uint32_t wdat = (f3 == 1) ? ((uint32_t)(uint16_t) s.fregs[rs2] << (8 * p))
@@ -1721,6 +1744,13 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     return std::numeric_limits<double>::quiet_NaN();
                 return halfToDouble((uint16_t) s.fregs[idx]);
             };
+            // 只有 NaN-boxed 的 half 才可能是 signaling NaN；非 boxed 按 canonical qNaN 处理
+            auto snan_h = [&](int idx) {
+                const uint64_t v = s.fregs[idx];
+                if ((v >> 16) != 0xFFFFFFFFFFFFULL) return false;
+                const uint16_t h = (uint16_t) v;
+                return ((h >> 10) & 0x1F) == 0x1F && (h & 0x3FF) != 0 && !(h & 0x200);
+            };
             double a = readH(rs1), b = readH(rs2), c = readH(rs3h);
             double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
                                                   : std::fma(-a, b, (op == 0x4B) ? c : -c);
@@ -1732,7 +1762,17 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 double se = (p - (sp - bb)) + (c - bb);
                 if (std::isfinite(m) && (pe + se) != 0.0) s.fcsr |= 0x01;   // NX
             }
-            if (std::isnan(m)) { s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL; s.fcsr |= 0x10; }
+            if (std::isnan(m)) {
+                s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL;
+                // 规范 6.1.3：运算结果是 NaN 时一律写 canonical NaN。
+                // 规范 6.1.6：FMA 的乘数是 ∞ 和 0 时必须置 NV，即使加数是 qNaN。
+                // IEEE 754-2008：sNaN 输入置 NV；纯 qNaN 输入只传播不置 NV。
+                // 规范 6.2.2：非 NaN-boxed 的 half 按 canonical qNaN 处理，不能按低 16 位判 sNaN
+                const bool mul_invalid = (a == 0.0 && std::isinf(b)) || (std::isinf(a) && b == 0.0);
+                const bool any_nan = std::isnan(a) || std::isnan(b) || std::isnan(c);
+                if (snan_h(rs1) || snan_h(rs2) || snan_h(rs3h) || mul_invalid || !any_nan)
+                    s.fcsr |= 0x10;
+            }
             else s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t) doubleToHalf(m, rmv, s.fcsr);
             s.mstatus |= (3u << 13); // 写 freg，FS 置 Dirty
             break;
@@ -1745,6 +1785,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 auto u2d = [](uint64_t u) { double d; std::memcpy(&d, &u, 8); return d; };
                 auto d2u = [](double d) { uint64_t u; std::memcpy(&u, &d, 8); return u; };
                 double a = u2d(s.fregs[rs1]), b = u2d(s.fregs[rs2]), c = u2d(s.fregs[rs3d]);
+                auto is_snan_d = [](uint64_t u) {
+                    return ((u >> 52) & 0x7FF) == 0x7FF && (u & 0xFFFFFFFFFFFFFULL) != 0
+                        && !(u & 0x8000000000000ULL);
+                };
                 // 按 op 决定是 a*b±c 还是 -(a*b)±c
                 double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
                                                       : std::fma(-a, b, (op == 0x4B) ? c : -c);
@@ -1758,7 +1802,16 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     double se = (p - (sp - bb)) + (c - bb);
                     if (std::isfinite(m) && (pe + se) != 0.0) s.fcsr |= 0x01;   // NX
                 }
-                if (std::isnan(m)) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
+                if (std::isnan(m)) {
+                    s.fregs[rd] = 0x7FF8000000000000ULL;
+                    // 规范 6.1.6：∞×0 必须置 NV，即使加数是 qNaN；
+                    // IEEE 754-2008：sNaN 输入置 NV，qNaN 输入只传播（规范 6.1.3 要求 canonical NaN）
+                    const bool mul_invalid = (a == 0.0 && std::isinf(b)) || (std::isinf(a) && b == 0.0);
+                    const bool any_nan = std::isnan(a) || std::isnan(b) || std::isnan(c);
+                    if (is_snan_d(s.fregs[rs1]) || is_snan_d(s.fregs[rs2]) || is_snan_d(s.fregs[rs3d])
+                        || mul_invalid || !any_nan)
+                        s.fcsr |= 0x10;
+                }
                 else s.fregs[rd] = d2u(m);
                 // 写了 freg 就必须把 FS 置 Dirty，否则上下文切换不会保存浮点寄存器；
                 // 这里的 break 跳过了单精度路径末尾的同一句，不能漏
@@ -1797,10 +1850,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                               || (op == 0x43 || op == 0x4F ? !same_sign : same_sign));
         float r = round_to_float(exact, (f3 == 7) ? (int) ((s.fcsr >> 5) & 7u) : (int) f3, fma_cancel);
         s.fregs[rd] = std::isnan(r) ? 0x7FC00000u : f2u(r); // 同样规范化 NaN
-        // sNaN 参与任何浮点运算都要报 NV，不只是"输入全不是 NaN"的非法运算
-        bool fma_snan = ((s.fregs[rs1] >> 23) & 0xFF) == 0xFF && (s.fregs[rs1] & 0x7FFFFFu) && !(s.fregs[rs1] & 0x400000u)
-                        || ((s.fregs[rs2] >> 23) & 0xFF) == 0xFF && (s.fregs[rs2] & 0x7FFFFFu) && !(s.fregs[rs2] & 0x400000u)
-                        || ((s.fregs[rs3] >> 23) & 0xFF) == 0xFF && (s.fregs[rs3] & 0x7FFFFFu) && !(s.fregs[rs3] & 0x400000u);
+        // sNaN 参与任何浮点运算都要报 NV（IEEE 754-2008），不只是"输入全不是 NaN"的非法运算。
+        // 规范 6.2.2：非 NaN-boxed 寄存器整体按 canonical qNaN 处理，低 32 位不参与 sNaN 判定
+        auto boxed_snan = [](uint64_t v) {
+            if ((v >> 32) != 0xFFFFFFFFu) return false;
+            const uint32_t u = (uint32_t) v;
+            return ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0 && !(u & 0x400000u);
+        };
+        bool fma_snan = boxed_snan(s.fregs[rs1]) || boxed_snan(s.fregs[rs2]) || boxed_snan(s.fregs[rs3]);
         if (std::isnan(r)) {
             // 0*inf 无论加数是什么（含 qNaN）都是无效运算
             bool mul_invalid = (a == 0.0f && std::isinf(b)) || (std::isinf(a) && b == 0.0f);
@@ -1899,6 +1956,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         if ((double) fv != dv) {
                             // 相邻的两个 float 夹住 dv。不能沿"数值更大/更小"猜方向：
                             // 负数下"朝零"和"数值更大"是同一个方向，混用会让 RDN/RUP 反过来
+                            // （规范 6.1.2 表 26：RDN 向 -∞、RUP 向 +∞）
                             float lower = fv, upper = fv;
                             if ((double) fv < dv) upper = std::nextafter(fv, INFINITY);
                             else lower = std::nextafter(fv, -INFINITY);
@@ -1921,10 +1979,20 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     std::memcpy(&s.fregs[rd], &fv, 4);
                 }
             } else if (dst == 1 && src == 0) {
-                // FCVT.D.S：单精度 -> 双精度。float 的每个值 double 都能精确表示，不会丢精度
-                float fv; uint32_t u = (uint32_t) s.fregs[rs1];
+                // FCVT.D.S：单精度 -> 双精度。float 的每个值 double 都能精确表示，不会丢精度。
+                // 规范 6.2.2：窄格式操作数必须 NaN-boxed，否则整体当作 canonical NaN
+                const bool boxed = (s.fregs[rs1] >> 32) == 0xFFFFFFFFu;
+                float fv;
+                uint32_t u = boxed ? (uint32_t) s.fregs[rs1] : 0x7FC00000u;
                 std::memcpy(&fv, &u, 4);
-                if (std::isnan(fv)) { s.fregs[rd] = 0x7FF8000000000000ULL; break; }
+                if (std::isnan(fv)) {
+                    s.fregs[rd] = 0x7FF8000000000000ULL;
+                    // sNaN 输入报 NV；非 boxed 的 canonical qNaN 不报
+                    if (boxed && ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0
+                        && !(u & 0x400000u))
+                        s.fcsr |= 0x10;
+                    break;
+                }
                 double dv = (double) fv;
                 std::memcpy(&s.fregs[rd], &dv, 8);
             } else {
@@ -2184,7 +2252,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FDIV:
-                if (db == 0.0) {
+                // 规范 6.1.3：NaN 参与运算时结果一律是 canonical NaN；IEEE 754-2008 的 DZ
+                // 只针对"有限非零被除数 / 零"，NaN/0 不能走 DZ 分支返回 inf
+                if (std::isnan(da) || std::isnan(db)) {
+                    s.fregs[rd] = 0x7FF8000000000000ULL;
+                    if (dsnan) s.fcsr |= 0x10;
+                } else if (db == 0.0) {
                     if (da == 0.0) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
                     else { setd(std::signbit(da) != std::signbit(db) ? -INFINITY : INFINITY); s.fcsr |= 0x08; }
                 } else {
@@ -2264,7 +2337,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FCVT_W_S: {
-                // rs2 选目标宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有，RV32 上保留）
+                // rs2 选目标宽度：0=W 1=WU 2=L 3=LU（规范 6.2.5：L/LU 只有 RV64 有，RV32 上保留）
                 if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 double r = round_to_int(da);   // FCVT 是舍入成整数，不是舍入到 double
@@ -2292,7 +2365,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FCVT_S_W: {
-                // rs2 选源宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有，RV32 上保留）
+                // rs2 选源宽度：0=W 1=WU 2=L 3=LU（规范 6.2.5：L/LU 只有 RV64 有，RV32 上保留）
                 if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 // 整数可能超出 double 的精确整数范围（2^53）。余项必须用整数减法算，
@@ -2357,8 +2430,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         };
         auto f2u = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; };
         float a = u2f(s.fregs[rs1]), b = u2f(s.fregs[rs2]);
-        // qNaN 是静默的，只有 signaling NaN 才触发无效运算
-        auto is_snan = [](uint32_t u) {
+        // qNaN 是静默的，只有 signaling NaN 才触发无效运算（规范 6.1.8 对比较/运算的说明，
+        // 算术部分按 IEEE 754-2008）。规范 6.2.2：非 NaN-boxed 的寄存器按 canonical qNaN 处理
+        auto is_snan = [](uint64_t v) {
+            if ((v >> 32) != 0xFFFFFFFFu) return false;
+            const uint32_t u = (uint32_t) v;
             return ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0 && !(u & 0x400000u);
         };
         // FSQRT 的 rs2 固定为 0，f0 不是它的输入，拿来判 sNaN 会误报 NV

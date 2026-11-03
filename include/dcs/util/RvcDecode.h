@@ -55,7 +55,8 @@ constexpr uint32_t S(int f3, int rs1, int rs2, int32_t imm) {
          | ((uint32_t)rs1 << 15) | ((uint32_t)f3 << 12)
          | ((uint32_t)(imm & 0x1F) << 7) | 0x23u;
 }
-// 浮点存储（FSD）：与整数存储的位段一致，只有 opcode 不同（0x27 而不是 0x23）
+// 浮点存储（FSD）：与整数存储的位段一致，只有 opcode 不同（0x27 而不是 0x23）。
+// 规范 7.2.2：C.FSW 展开为 FSW（浮点存储），不能误用整数的 S()
 constexpr uint32_t SF(int f3, int rs1, int rs2, int32_t imm) {
     return ((uint32_t)((imm >> 5) & 0x7F) << 25) | ((uint32_t)rs2 << 20)
          | ((uint32_t)rs1 << 15) | ((uint32_t)f3 << 12)
@@ -146,7 +147,7 @@ uint32_t expand(uint16_t c) {
         }
         case 1: {    // RV32: C.JAL   RV64: C.ADDIW
             if constexpr (XLEN == 32) return J(1, imm_j(c));
-            // C.ADDIW 的 rd=x0 是保留编码（与 C.LUI 的 rd=x0 HINT 不同）
+            // 规范 7.1.4：C.ADDIW 的 rd=x0 是保留编码（与 C.LUI 的 rd=x0 HINT 不同）
             if (rd == 0) return ILLEGAL;
             return I(0x1B, rd, 0, rd, imm_ci(c));
         }
@@ -165,6 +166,7 @@ uint32_t expand(uint16_t c) {
                 return I(0x13, 2, 0, 2, simm);
             }
             if (imm == 0) return ILLEGAL;
+            // 规范 7.1.4：rd=x0 且 imm≠0 的码点是 HINT，展开成 lui x0 正好是空操作
             // C.LUI 的立即数是 6 位有符号，左移 12 位后进 lui 的 imm[17:12]；
             // 符号必须先扩到 6 位，否则 0x3F 这类会变成负的 lui 而不是正的
             // C.LUI 的立即数位段与 CI 型相同（imm[17] 在 bit12、imm[16:12] 在 bit6:2），

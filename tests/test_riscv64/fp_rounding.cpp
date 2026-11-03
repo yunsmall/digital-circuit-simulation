@@ -19,6 +19,14 @@ constexpr uint32_t enc_fp(int rd, int f3, int rs1, int rs2, uint32_t op, int fmt
 constexpr uint32_t OP_FADD = 0x00, OP_FSUB = 0x01, OP_FMUL = 0x02, OP_FDIV = 0x03;
 constexpr uint32_t OP_FSQRT = 0x0B, OP_FSGNJ = 0x04, OP_FMIN = 0x05;
 constexpr uint32_t OP_FMV_W_X = 0x1E, OP_FCVT_W_S = 0x18, OP_FCVT_S_W = 0x1A;
+
+// FMA：opcode 就是 FMADD/FMSUB/FNMSUB/FNMADD（0x43/0x47/0x4B/0x4F），
+// fmt 在 bit26:25，rs3 在 bit31:27
+constexpr uint32_t enc_fma(int rd, int rs1, int rs2, int rs3, int rm, uint32_t opcode, int fmt) {
+    return opcode | ((uint32_t)(rs3 & 0x1F) << 27) | ((uint32_t)(fmt & 3) << 25)
+         | ((uint32_t)(rs2 & 0x1F) << 20) | ((uint32_t)(rs1 & 0x1F) << 15)
+         | ((uint32_t)(rm & 7) << 12) | ((uint32_t)(rd & 0x1F) << 7);
+}
 constexpr uint32_t ld(int rd, int rs1, int32_t imm) { return enc_i(0x03, rd, 3, rs1, imm); }
 
 constexpr int RM_RNE = 0, RM_RTZ = 1, RM_RDN = 2, RM_RUP = 3, RM_RMM = 4;
@@ -268,4 +276,52 @@ TEST(FpRounding, FcvtHdNegativeRespectsRm) {
     EXPECT_EQ(f.cpu->freg64(2) & 0xFFFFu, 0xBC01u) << "RDN 应朝负无穷取 -1.0009765625";
     EXPECT_EQ(f.cpu->freg64(3) & 0xFFFFu, 0xBC00u) << "RUP 应朝正无穷取 -1.0";
     EXPECT_TRUE(f.nx());
+}
+
+// NaN/0 只传播 canonical NaN（规范 6.1.3），不能走 DZ 分支返回 inf（IEEE 754 的 DZ
+// 只针对有限非零被除数）
+TEST(FpRounding, FdivDNaNByZeroDoesNotSetDz) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0x7FF8000000000000ULL),   // qNaN
+        f.loadImm(2, 0x0000000000000000ULL),   // +0
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),
+        enc_fp(2, 0, 2, 0, OP_FMV_W_X, 1),
+        enc_fp(3, RM_RNE, 1, 2, OP_FDIV, 1),
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ(f.cpu->freg64(3), 0x7FF8000000000000ULL) << "结果应是 canonical NaN";
+    EXPECT_EQ(f.cpu->fcsr() & 0x08u, 0u) << "NaN 参与除法不能置 DZ";
+}
+
+// qNaN 加数只传播 NaN，不置 NV；规范 6.1.6 的 NV 只针对 ∞×0（哪怕加数是 qNaN）
+TEST(FpRounding, FmaddDQuietNanAddendDoesNotSetNv) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0x3FF0000000000000ULL),   // 1.0
+        f.loadImm(3, 0x7FF8000000000000ULL),   // qNaN
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),
+        enc_fp(3, 0, 3, 0, OP_FMV_W_X, 1),
+        enc_fma(4, 1, 1, 3, RM_RNE, 0x43, 1),  // fmadd.d f4, f1, f1, f3
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ(f.cpu->freg64(4), 0x7FF8000000000000ULL);
+    EXPECT_FALSE(f.nv()) << "qNaN 加数只传播，不置 NV";
+}
+
+// 规范 6.2.2：FCVT.D.S 的源必须是 NaN-boxed，否则按 canonical NaN；不能把低 32 位
+// 当合法 float 转换
+TEST(FpRounding, FcvtDsNonBoxedSourceIsCanonicalNan) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0x000000003F800000ULL),   // 高半不是全 1
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),
+        enc_fp(2, RM_RNE, 1, 0, 0x08, 1),       // fcvt.d.s f2, f1
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ(f.cpu->freg64(2), 0x7FF8000000000000ULL) << "非 boxed 源应得 canonical NaN";
+    EXPECT_FALSE(f.nv()) << "canonical qNaN 不置 NV";
 }

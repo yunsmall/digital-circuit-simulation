@@ -312,8 +312,10 @@ private:
         uint32_t mcounteren;
         uint32_t scounteren;
         // PMP 配置与地址：本核不做保护，但必须能原样存回。
-        // 软件靠"写 0 再读回验证"判断 PMP 是否已关闭，恒返回 0 会让它误判
-        uint32_t pmpcfg[4], pmpaddr[16];
+        // 软件靠"写 0 再读回验证"判断 PMP 是否已关闭，恒返回 0 会让它误判。
+        // 规范 3.7.1：PMP CSR 是 XLEN 宽——RV64 的 pmpcfg0/2/…/14 各含 8 个 8 位项，
+        // pmpaddr 是 64 位。用 uint32_t 存会把写进去的高半丢掉，读回验证就对不上
+        XLen pmpcfg[4], pmpaddr[16];
         uint32_t medeleg, mideleg;
 
         // S-mode CSR
