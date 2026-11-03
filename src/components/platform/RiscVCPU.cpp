@@ -3061,7 +3061,14 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_FCSR:    s.fcsr = val & 0xFFu; break;
     // 本核没有额外扩展状态、也不支持非字节序：
     //   XS(15:16) 恒 0、UBE(6) 恒 0、bit23 是 WPRI 保留位，都不能写
-    case RV::CSR_MSTATUS: s.mstatus = val & (XLen)0x007E79AAu; break; // UXL/SXL 只读，不在掩码里  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
+    case RV::CSR_MSTATUS: {
+        XLen v = val & (XLen)0x007E79AAu; // UXL/SXL 只读，不在掩码里  // 掩码含 SIE/MIE/SPIE/MPIE/SPP/MPP/FS/MPRV/SUM/MXR/TVM/TW/TSR；UBE 与 XS 本核恒 0，故不在掩码内
+        // MPP 是 WARL：本核只支持 U(0)/S(1)/M(3)，写保留值 2 时按 M 保存。
+        // mret 已把 2 当 M 处理，读回值也必须合法且与之一致
+        if (((v >> 11) & 3u) == 2u) v = (v & ~((XLen)3 << 11)) | ((XLen)3 << 11);
+        s.mstatus = v;
+        break;
+    }
     // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
     case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;

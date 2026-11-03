@@ -57,6 +57,20 @@ TEST(Rv32Edge, ZipWithFixedRs2Executes) {
     EXPECT_EQ(f.cpu->reg(2), 3u);
 }
 
+// MPP 是 WARL：保留值 2 不能原样读回。本核把它按 M（3）保存，
+// 和 mret 对 2 的处理保持一致
+TEST(Rv32Edge, MstatusMppReservedValueIsLegalized) {
+    PrivTestFixture f;
+    f.loadProgram({
+        lui_(1, 1),                 // x1 = 2 << 11（MPP=2，保留编码）
+        csrrw_(0, 0x300, 1),        // mstatus = x1
+        csrrs_(2, 0x300, 0),        // x2 = mstatus
+        spin_(),
+    });
+    f.compile(); f.reset(); f.runCycles(100);
+    EXPECT_EQ(((uint32_t) f.cpu->reg(2) >> 11) & 3u, 3u) << "MPP 读回必须是合法值";
+}
+
 // AMOMIN/AMOMAX 必须按有符号比较：INT32_MIN 和 1 比，signed min 是 INT32_MIN
 TEST(Rv32Edge, AmoMinMaxUseSignedCompareAtInt32Min) {    PrivTestFixture f;
     f.loadProgram({
