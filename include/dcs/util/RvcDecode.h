@@ -28,7 +28,8 @@ constexpr int32_t imm_b(uint32_t i) {
     int32_t v = (int32_t)((((i >> 12) & 1u) << 8) | (((i >> 5) & 3u) << 6)
                         | (((i >> 2) & 1u) << 5) | (((i >> 10) & 3u) << 3)
                         | (((i >> 3) & 3u) << 1));
-    return (v << 23) >> 23;   // 符号扩展到 9 位再回推
+    // 转成无符号再左移：v 的符号位还没扩展，有符号左移可能溢出（UB）
+    return ((int32_t)((uint32_t)v << 23)) >> 23;   // 符号扩展到 9 位再回推
 }
 
 // J 型：imm[11|4|9:8|10|6|7|3:1|5]
@@ -37,7 +38,7 @@ constexpr int32_t imm_j(uint32_t i) {
                         | (((i >> 9) & 3u) << 8) | (((i >> 6) & 1u) << 7)
                         | (((i >> 7) & 1u) << 6) | (((i >> 2) & 1u) << 5)
                         | (((i >> 11) & 1u) << 4) | (((i >> 3) & 7u) << 1));
-    return (v << 20) >> 20;
+    return ((int32_t)((uint32_t)v << 20)) >> 20;   // 同 imm_b：无符号左移再算术右移
 }
 
 // 组装常见格式
@@ -118,7 +119,7 @@ uint32_t expand(uint16_t c) {
         case 7: {    // RV32: C.FSW   RV64: C.SD（位段差别同 C.FLW/C.LD）
             if constexpr (XLEN == 32) {
                 uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 6) & 1u) << 2) | (((c >> 5) & 1u) << 6);
-                return S(2, rs1_p, rs2_p, (int32_t)u);   // fsw
+                return SF(2, rs1_p, rs2_p, (int32_t)u);   // fsw
             } else {
                 uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 5) & 3u) << 6);
                 return S(3, rs1_p, rs2_p, (int32_t)u);   // sd
@@ -145,7 +146,9 @@ uint32_t expand(uint16_t c) {
         }
         case 1: {    // RV32: C.JAL   RV64: C.ADDIW
             if constexpr (XLEN == 32) return J(1, imm_j(c));
-            else return I(0x1B, rd, 0, rd, imm_ci(c));
+            // C.ADDIW 的 rd=x0 是保留编码（与 C.LUI 的 rd=x0 HINT 不同）
+            if (rd == 0) return ILLEGAL;
+            return I(0x1B, rd, 0, rd, imm_ci(c));
         }
         case 2:      // C.LI -> addi rd, x0, imm
             return I(0x13, rd, 0, 0, imm_ci(c));
@@ -257,7 +260,7 @@ uint32_t expand(uint16_t c) {
         // 与 C.FLWSP/C.LDSP 同理：RV32 用 C.SWSP 的位段，RV64 才是 uimm[8:6] 在 c[9:7]
         if constexpr (XLEN == 32) {
             uint32_t u = (((c >> 9) & 0xFu) << 2) | (((c >> 7) & 3u) << 6);
-            return S(2, 2, rs2, (int32_t)u);   // fsw
+            return SF(2, 2, rs2, (int32_t)u);   // fsw
         } else {
             uint32_t u = (((c >> 10) & 7u) << 3) | (((c >> 7) & 7u) << 6);
             return S(3, 2, rs2, (int32_t)u);   // sd

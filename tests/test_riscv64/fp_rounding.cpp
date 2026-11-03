@@ -233,3 +233,39 @@ TEST(FpRounding, FdivZeroByFiniteSetsNoFlags) {
     EXPECT_EQ(f.cpu->freg64(3), 0x0000000000000000ULL) << "0/5 应得精确的 +0";
     EXPECT_EQ(f.cpu->fcsr() & 0x1Fu, 0u) << "0/5 不应置任何标志（UF/NX/NV/DZ/OF）";
 }
+
+// FCVT.S.D 对负数也要按 rm 选对相邻值：-16777217 正好落在两个 float 中间
+// RTZ/RUP 取 -16777216，RDN 取 -16777218
+TEST(FpRounding, FcvtSdNegativeRespectsRm) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0xC170000010000000ULL),   // -16777217.0
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),      // fmv.d.x f1, x1
+        enc_fp(2, RM_RTZ, 1, 1, 0x08, 0),       // fcvt.s.d f2, f1, RTZ
+        enc_fp(3, RM_RDN, 1, 1, 0x08, 0),
+        enc_fp(4, RM_RUP, 1, 1, 0x08, 0),
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ((uint32_t) f.cpu->freg64(2), 0xCB800000u) << "RTZ 应朝零取 -16777216";
+    EXPECT_EQ((uint32_t) f.cpu->freg64(3), 0xCB800001u) << "RDN 应朝负无穷取 -16777218";
+    EXPECT_EQ((uint32_t) f.cpu->freg64(4), 0xCB800000u) << "RUP 应朝正无穷取 -16777216";
+    EXPECT_TRUE(f.nx());
+}
+
+// FCVT.H.D 对负数也必须按 rm 选对方向：-1.0003 靠近 -1.0
+// RDN 应取更负的 -1.0009765625（0xBC01），RUP/RTZ 取 -1.0（0xBC00）
+TEST(FpRounding, FcvtHdNegativeRespectsRm) {
+    FpFixture f;
+    f.loadFp({
+        f.loadImm(1, 0xBFF0013A92A30553ULL),   // -1.0003
+        enc_fp(1, 0, 1, 0, OP_FMV_W_X, 1),
+        enc_fp(2, RM_RDN, 1, 1, 0x08, 2),       // fcvt.h.d f2, f1, RDN
+        enc_fp(3, RM_RUP, 1, 1, 0x08, 2),
+        spin(),
+    });
+    f.run(60);
+    EXPECT_EQ(f.cpu->freg64(2) & 0xFFFFu, 0xBC01u) << "RDN 应朝负无穷取 -1.0009765625";
+    EXPECT_EQ(f.cpu->freg64(3) & 0xFFFFu, 0xBC00u) << "RUP 应朝正无穷取 -1.0";
+    EXPECT_TRUE(f.nx());
+}

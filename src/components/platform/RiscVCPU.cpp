@@ -1,4 +1,5 @@
 #include "dcs/ComponentFactory.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <cstdlib>
@@ -241,7 +242,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
     // 线没变、定时器 STIP 也没在跟踪时，本拍不可能产生任何其他状态变化，
     // 直接返回——省掉中断合并、相位 switch 和 packOut
     if (s.phase == Phase::WAIT_MEM && s.acc_stage <= 1 && !in.ack && !ext_irq && !(s.mip & EXT_MASK) &&
-        !(s.mideleg & RV::IRQ_STI) && !s.wfi_halted)
+        !(s.mideleg & RV::IRQ_STI) && !(s.mip & RV::IRQ_STI) && !s.wfi_halted)
         return;
     // 没有外部中断、mip 里这几位的旧值也是 0 时，这次读改写什么都不改，直接跳过
     if (ext_irq || (s.mip & EXT_MASK))
@@ -253,6 +254,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
     if (s.mideleg & RV::IRQ_STI) {
         if (in.mti || s.cycles >= s.timer_deadline) s.mip |= RV::IRQ_STI;
         else s.mip &= ~RV::IRQ_STI;
+    } else {
+        // 撤销委托后镜像不再更新；不清掉残留的 STIP，一旦软件再打开 mie.STIP
+        // 就会收到一个与定时器状态无关的假中断
+        s.mip &= ~RV::IRQ_STI;
     }
     // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
     // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动。
@@ -547,7 +552,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                 if (s.bus_we) {
                     uint32_t n = (s.acc_f3==RV::F3_SB)?1:(s.acc_f3==RV::F3_SH)?2:(s.acc_f3==3)?8:4;
                     uint32_t first = 4 - p;
-                    uint32_t rest = n - first;
+                    // 第二段只有 4 字节的空间，剩下的字节由第三段补写。
+                    // sel 超出 4 位时 bit4 会占用打包 flags 里 stb 的位置（sel<<1），
+                    // 眼下这些拍 stb 本来就是高，还是按字段宽度钳住，免得以后改时序踩到
+                    uint32_t rest = std::min(n - first, 4u);
                     dat = (uint32_t)(s.acc_raw >> (8 * first));
                     sel = (uint8_t)((1u << rest) - 1u);
                 }
@@ -970,7 +978,10 @@ inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
     }
 
     const double x = a / ulp;
-    double n = roundByRm(x, rm);
+    // roundByRm 按"数值本身"向下/向上舍入，而这里喂的是绝对值：负数的 RDN 要往
+    // 更负的方向走（绝对值变大），RUP 反之。把负数下的 RDN/RUP 互换再交给正数逻辑
+    const uint32_t rm_abs = (neg && (rm == 2 || rm == 3)) ? (5u - rm) : rm;
+    double n = roundByRm(x, rm_abs);
     if (n != x) fflags |= 0x01;                                   // NX
     if (n == 0.0) return sign;
 
@@ -1600,6 +1611,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         // RV32 的 f 寄存器同样是 64 位，fld/fsd 一样可用
         if (f3 != 2 && f3 != 3) [[unlikely]]
         { takeTrap(s, RV::EXC_II, inst); return; }
+        // A 扩展的 AMO.D 只在 RV64 存在；RV32 上同一编码是保留的，必须报非法指令，
+        // 不能按 64 位原子操作执行（rs2 会被零扩展、旧值回写被截断）
+        if constexpr (XLEN == 32) {
+            if (f3 == 3) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
+        }
         switch ((inst >> 27) & 0x1F) { // 未实现的 AMO 编码必须报非法指令，不能静默完成
         case RV::F5_LR: case RV::F5_SC: case RV::F5_AMOSWAP: case RV::F5_AMOADD:
         case RV::F5_AMOXOR: case RV::F5_AMOAND: case RV::F5_AMOOR:
@@ -1881,18 +1897,23 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     } else {
                         fv = (float) dv;   // 宿主 RNE
                         if ((double) fv != dv) {
-                            // 非 RNE：先截到目标方向的相邻值
-                            double lo = (double) fv;
-                            double hi = lo;
-                            if (lo > dv) { hi = lo; lo = std::nextafter(lo, 0.0); }
-                            else { lo = lo; hi = std::nextafter(lo, neg ? -INFINITY : INFINITY); }
-                            double pick = (xrm == 1) ? (neg ? hi : lo)     // RTZ
-                                        : (xrm == 2) ? lo                  // RDN
-                                        : (xrm == 3) ? hi                  // RUP
-                                        : std::fabs(dv - lo) < std::fabs(hi - dv) ? lo
-                                          : std::fabs(dv - lo) > std::fabs(hi - dv) ? hi
-                                          : (std::fmod(lo, 2.0) == 0.0 ? lo : hi);   // RNE 中点取偶
-                            fv = (float) pick;
+                            // 相邻的两个 float 夹住 dv。不能沿"数值更大/更小"猜方向：
+                            // 负数下"朝零"和"数值更大"是同一个方向，混用会让 RDN/RUP 反过来
+                            float lower = fv, upper = fv;
+                            if ((double) fv < dv) upper = std::nextafter(fv, INFINITY);
+                            else lower = std::nextafter(fv, -INFINITY);
+                            const double dl = dv - (double) lower;
+                            const double du = (double) upper - dv;
+                            float pick;
+                            if (xrm == 1) pick = neg ? upper : lower;        // RTZ
+                            else if (xrm == 2) pick = lower;                 // RDN
+                            else if (xrm == 3) pick = upper;                 // RUP
+                            else if (xrm == 4)                               // RMM：中点远离零
+                                pick = dl < du ? lower : dl > du ? upper : (neg ? lower : upper);
+                            else                                             // RNE：中点取偶
+                                pick = dl < du ? lower : dl > du ? upper
+                                     : (std::fmod((double) lower, 2.0) == 0.0 ? lower : upper);
+                            fv = pick;
                             s.fcsr |= 0x01;   // NX
                         }
                     }
@@ -2243,8 +2264,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FCVT_W_S: {
-                // rs2 选目标宽度：0=W 1=WU 2=L 3=LU
-                if (rs2 >= 4) { takeTrap(s, RV::EXC_II, inst); return; }
+                // rs2 选目标宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有，RV32 上保留）
+                if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 double r = round_to_int(da);   // FCVT 是舍入成整数，不是舍入到 double
                 if (rs2 == 0) {   // FCVT.W.D：32 位有符号，RV64 下符号扩展到 XLEN
@@ -2271,8 +2292,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             case RV::F7_FCVT_S_W: {
-                // rs2 选源宽度：0=W 1=WU 2=L 3=LU
-                if (rs2 >= 4) { takeTrap(s, RV::EXC_II, inst); return; }
+                // rs2 选源宽度：0=W 1=WU 2=L 3=LU（L/LU 只有 RV64 有，RV32 上保留）
+                if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
                 if (eff_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
                 // 整数可能超出 double 的精确整数范围（2^53）。余项必须用整数减法算，
                 // 拿 (double)v1 和自己比恒相等，NX 与舍入都无从判断
@@ -3005,11 +3026,10 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
 
     // 全局使能位只约束本级：当前特权级低于目标级时，中断总是使能
     bool m_on = (s.priv < RV::PRIV_M) || (s.mstatus & RV::MSTATUS_MIE);
-    // M 态不会被更低优先级的 S 中断打断
-    // M 态里挂起的委托中断按 M 态中断处理：直接丢弃的话，M 态常驻时
-    // 已委托给 S 的中断永远得不到响应
-    bool s_deleg_in_m = (s.priv == RV::PRIV_M);
-    bool s_on = s_deleg_in_m || (s.priv < RV::PRIV_S) || (s.mstatus & RV::MSTATUS_SIE);
+    // S 级中断在 M 态一律不取：规范 3.1.8 明确"委托给 S 的 STI 不会在 M 态被接走"。
+    // 未委托的 S 级中断本来就落在 pend_m 那一路，不需要在这里特殊照顾
+    bool s_on = (s.priv != RV::PRIV_M)
+             && ((s.priv < RV::PRIV_S) || (s.mstatus & RV::MSTATUS_SIE));
 
     // 优先级: MEI > MSI > MTI > SEI > SSI > STI
     if (m_on && pend_m) {
@@ -3020,7 +3040,7 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
         if (pend_m & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
         if (pend_m & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }
     }
-    if ((s_deleg_in_m ? m_on : s_on) && pend_s) {
+    if (s_on && pend_s) {
         if (pend_s & RV::IRQ_SEI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 9; return true; }
         if (pend_s & RV::IRQ_SSI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 1; return true; }
         if (pend_s & RV::IRQ_STI) { trap_cause = ((XLen)1 << (XLEN - 1)) | 5; return true; }

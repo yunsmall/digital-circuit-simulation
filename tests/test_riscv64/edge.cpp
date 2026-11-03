@@ -36,6 +36,39 @@ TEST(Rv64Edge, UnalignedLdReadsAllEightBytes) {
         << "非对齐 LD 没读满 8 字节";
 }
 
+// 非对齐 SD 拆成三段写事务，段与段之间 stb 必须真的拉低。
+// sel 在打包的 flags 里紧挨着 stb（sel<<1），一旦 sel 超出 4 位就会污染 stb 位，
+// 这条用例把"写入恰好三次"钉住
+TEST(Rv64Edge, UnalignedSdHasExactlyThreeWritePulses) {
+    Rv64Fixture f;
+    f.load({
+        lui(1, 0x1), addi(1, 1, 0x100),
+        addi(2, 0, 7),
+        enc_s(3, 1, 2, 1),          // sd x2, 1(x1)
+        spin(),
+    });
+    auto err = f.circuit->compile();
+    ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
+    f.circuit->init();
+    f.circuit->setWire(f.rst->id(), 1); f.circuit->tick();
+    f.circuit->setWire(f.rst->id(), 0);
+
+    // 取指也走同一条总线、也会拉 stb，所以只看 we=1 的写事务
+    int pulses = 0, prev = 0;
+    auto sample = [&]() {
+        int stb = f.circuit->getWire(f.wb_stb->id())[0] & 1;
+        int we = f.circuit->getWire(f.wb_we->id())[0] & 1;
+        const int now = stb && we;
+        if (now && !prev) pulses++;
+        prev = now;
+    };
+    for (int i = 0; i < 300; i++) {
+        f.circuit->setWire(f.clk->id(), 0); f.circuit->tick(); sample();
+        f.circuit->setWire(f.clk->id(), 1); f.circuit->tick(); sample();
+    }
+    EXPECT_EQ(pulses, 3) << "非对齐 sd 出现了多余的总线写事务（sel 位串到 stb）";
+}
+
 // CSR 只读位写不进去：misa 的 MXL、mstatus 的 UXL/SXL
 TEST(Rv64Edge, ReadOnlyBitsRejectWrites) {
     Rv64Fixture f;

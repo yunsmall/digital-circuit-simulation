@@ -55,6 +55,86 @@ TEST(Rv32Edge, UnimplementedCsrTraps) {
     EXPECT_EQ((uint32_t) f.cpu->reg(1), 0u) << "非法 CSR 不该写回 rd";
 }
 
+// AMO.D 是 RV64 专用指令，RV32 上执行必须报非法指令而不是按 64 位原子操作执行
+TEST(Rv32Edge, AmoDOnRv32Traps) {
+    PrivTestFixture f;
+    const uint32_t amoswap_d = (1u << 27) | (2u << 20) | (1u << 15)
+                             | (3u << 12) | (4u << 7) | 0x2Fu;   // amoswap.d x4, x2, (x1)
+    f.loadProgram({
+        lui_(1, 0x1), addi_(1, 1, 0x100),
+        addi_(2, 0, 7),
+        amoswap_d,
+        addi_(5, 0, 1),             // 只有没 trap 才会执行到
+        spin_(),
+    });
+    f.compile(); f.reset(); f.runCycles(80);
+    EXPECT_EQ((uint32_t) f.cpu->reg(5), 0u) << "RV32 上的 AMO.D 没有 trap";
+    EXPECT_EQ((uint32_t) f.cpu->reg(4), 0u) << "非法 AMO.D 不该写回 rd";
+}
+
+// FCVT.L.D / FCVT.LU.D 是 RV64 专用指令，RV32 上必须报非法指令
+TEST(Rv32Edge, FcvtLdOnRv32Traps) {
+    PrivTestFixture f;
+    const uint32_t fcvt_l_d = (0x61u << 25) | (2u << 20) | (1u << 15)
+                            | (2u << 7) | 0x53u;              // fcvt.l.d x2, f1（rs2=2 选 L）
+    f.loadProgram({
+        lui_(1, 2),                       // x1 = 0x2000：mstatus.FS = Initial
+        csrrw_(0, 0x300, 1),
+        fcvt_l_d,
+        addi_(3, 0, 1),                   // 只有没 trap 才会执行到
+        spin_(),
+    });
+    f.compile(); f.reset(); f.runCycles(80);
+    EXPECT_EQ((uint32_t) f.cpu->reg(3), 0u) << "RV32 上的 FCVT.L.D 没有 trap";
+    EXPECT_EQ((uint32_t) f.cpu->reg(2), 0u) << "非法 FCVT.L.D 不该写回 rd";
+}
+
+// 清掉 mideleg.STIP 后不能残留上一次镜像出来的 mip.STIP：
+// 那个位反映的是"是否委托"，委托撤销后继续挂起会让 M 态收到假的 S 级中断
+TEST(Rv32Edge, StipClearsWhenDelegationRemoved) {
+    PrivTestFixture f;
+    f.loadProgram({
+        addi_(2, 0, 0x20),          // STIP
+        csrrw_(0, 0x303, 2),        // mideleg.STIP = 1
+        addi_(0, 0, 0), addi_(0, 0, 0),
+        csrrw_(0, 0x303, 0),        // 撤销委托
+        addi_(0, 0, 0), addi_(0, 0, 0),
+        csrrs_(3, 0x344, 0),        // x3 = mip
+        spin_(),
+    });
+    f.compile(); f.reset();
+    f.circuit->setWire(f.mti_net->id(), 1);   // 定时器中断源：委托时会被镜像成 STIP
+    f.runCycles(120);
+    EXPECT_EQ((uint32_t) f.cpu->reg(3) & 0x20u, 0u)
+        << "撤销 mideleg.STIP 后 mip.STIP 仍然挂起";
+}
+
+// 规范 3.1.8：STI 委托给 S 后，M 态执行时不得接走它（要等回到 S 态再处理）。
+// 这里 M 态开 MIE、开 mie.STIP，STIP 已挂起；正确行为是一直跑到末尾的自旋，
+// 而不是 trap 到 0x100
+TEST(Rv32Edge, MModeIgnoresDelegatedSInterrupt) {
+    PrivTestFixture f;
+    f.loadProgram({
+        addi_(1, 0, 0x100),         // 0x00
+        csrrw_(0, 0x305, 1),        // mtvec = 0x100
+        addi_(2, 0, 8),             // mstatus.MIE
+        csrrw_(0, 0x300, 2),
+        addi_(2, 0, 0x20),          // mideleg.STIP | mie.STIP
+        csrrw_(0, 0x303, 2),
+        csrrw_(0, 0x304, 2),
+        addi_(0, 0, 0), addi_(0, 0, 0), addi_(0, 0, 0), addi_(0, 0, 0),
+        spin_(),                    // 0x28
+    });
+    f.compile(); f.reset();
+    f.circuit->setWire(f.mti_net->id(), 1);   // 定时器中断源
+    f.runCycles(160);
+    EXPECT_EQ(f.cpu->pc(), 0x2Cu) << "M 态接走了已委托给 S 的定时器中断";
+}
+
+// RV32 非对齐 8 字节存储会拆成三段总线事务，段与段之间 stb 必须真的拉低；
+// 第二段的 sel 若保留 5 位，bit4 会串到 stb 位上，产生一个多余的事务
+// （RV32 的 SD 是非法指令，这条用例放在 test_riscv64/edge.cpp）
+
 // CSR 只读字段写不进去：misa 的 MXL 必须恒为 1（RV32）
 TEST(Rv32Edge, MisaMxlStaysOne) {
     PrivTestFixture f;

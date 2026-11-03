@@ -88,3 +88,40 @@ TEST(RvcDecode, CFsdsp) {
     EXPECT_EQ(opOf(e), 0x27u) << "C.FSDSP 应解成 fsd";
     EXPECT_EQ((e >> 15) & 0x1Fu, 2u);
 }
+
+// RV32 的 C.FSW 是浮点存储，opcode 必须是 0x27；以前误用了整数的 S()
+TEST(RvcDecode, CFswRv32IsFloatStore) {
+    // f3=111, rs1'=x8, rs2'=x8, uimm=0 -> c.fsw fs0, 0(s0)
+    const uint32_t e = expand<32>(0xE000);
+    EXPECT_EQ(opOf(e), 0x27u) << "C.FSW 应解成 fsw（opcode 0x27）";
+    EXPECT_EQ((e >> 12) & 7u, 2u) << "fsw 的 funct3 必须是 2（单精度）";
+    EXPECT_EQ((e >> 20) & 0x1Fu, 8u) << "rs2' 在 rs2 字段";
+    EXPECT_EQ(rs1Of(e), 8u);
+    // RV64 同一编码是 C.SD，仍应是整数存储
+    EXPECT_EQ(opOf(expand<64>(0xE000)), 0x23u) << "RV64 的 C.SD 是整数存储";
+}
+
+TEST(RvcDecode, CFswspRv32IsFloatStore) {
+    // f3=111, rs2=x8 -> c.fswsp fs0, 0(sp)
+    const uint32_t e = expand<32>(0xE022);
+    EXPECT_EQ(opOf(e), 0x27u) << "C.FSWSP 应解成 fsw（opcode 0x27）";
+    EXPECT_EQ((e >> 12) & 7u, 2u);
+    EXPECT_EQ(rs1Of(e), 2u) << "基址固定是 sp";
+    EXPECT_EQ((e >> 20) & 0x1Fu, 8u) << "rs2 在 rs2 字段";
+    EXPECT_EQ(opOf(expand<64>(0xE022)), 0x23u) << "RV64 的 C.SDSP 是整数存储";
+}
+
+// C.LUI rd=x0 是 HINT（合法空操作），不能报非法；规范明确 rd=x0 的码点按 HINT 处理
+TEST(RvcDecode, CLuiZeroRdIsHint) {
+    // f3=011, rd=0, imm=1 -> c.lui x0, 1
+    const uint32_t e = expand<64>(0x6005);
+    EXPECT_EQ(opOf(e), 0x37u) << "C.LUI 的 HINT 码点应按 lui 展开";
+    EXPECT_EQ(rdOf(e), 0u);
+}
+
+// RV64 的 C.ADDIW rd=x0 是保留编码；同一编码在 RV32 是 C.JAL，仍然合法
+TEST(RvcDecode, CAddiwZeroRdIsIllegal) {
+    // f3=001, rd=0, imm=1 -> c.addiw x0, 1（保留）
+    EXPECT_EQ(expand<64>(0x2005), ILLEGAL);
+    EXPECT_EQ(opOf(expand<32>(0x2005)), 0x6Fu) << "RV32 同一编码是 C.JAL";
+}
