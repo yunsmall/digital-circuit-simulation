@@ -4,6 +4,7 @@
 // tick 走的是编译后解析出的函数指针，所以本类的方法只在 Circuit::compile() 里调用一次，
 // 不会给每 tick 的路径增加任何间接层。
 #include "dcs/JitBackend.h"
+#include "dcs/CodeGenNames.h"
 
 #include <atomic>
 #include <cstring>
@@ -53,17 +54,17 @@ namespace {
 JitCompileResult resolveEntries(const std::function<void *(const char *)> &sym) {
     JitCompileResult r;
     auto load = [&](const char *n) { return sym(n); };
-    r.tick = reinterpret_cast<void (*)()>(load("circuit_tick"));
-    r.tick_cycle = reinterpret_cast<void (*)(int)>(load("circuit_tick_cycle"));
-    r.tick_cycles = reinterpret_cast<void (*)(int, uint64_t)>(load("circuit_tick_cycles"));
-    r.tick_batch = reinterpret_cast<void (*)(uint64_t)>(load("circuit_tick_batch"));
-    r.tick_forever = reinterpret_cast<void (*)()>(load("circuit_tick_forever"));
-    r.init = reinterpret_cast<void (*)()>(load("circuit_init"));
-    r.deinit = reinterpret_cast<void (*)()>(load("circuit_deinit"));
-    r.reset = reinterpret_cast<void (*)()>(load("circuit_reset"));
-    r.set_wire = reinterpret_cast<void (*)(int, const uint8_t *)>(load("circuit_set_wire"));
-    r.set_wire_u64 = reinterpret_cast<void (*)(int, uint64_t)>(load("circuit_set_wire_u64"));
-    r.get_wire = reinterpret_cast<void (*)(int, uint8_t *)>(load("circuit_get_wire"));
+    r.tick = reinterpret_cast<void (*)()>(load(cgen::kTickFn));
+    r.tick_cycle = reinterpret_cast<void (*)(int)>(load(cgen::kTickCycleFn));
+    r.tick_cycles = reinterpret_cast<void (*)(int, uint64_t)>(load(cgen::kTickCyclesFn));
+    r.tick_batch = reinterpret_cast<void (*)(uint64_t)>(load(cgen::kTickBatchFn));
+    r.tick_forever = reinterpret_cast<void (*)()>(load(cgen::kTickForeverFn));
+    r.init = reinterpret_cast<void (*)()>(load(cgen::kInitFn));
+    r.deinit = reinterpret_cast<void (*)()>(load(cgen::kDeinitFn));
+    r.reset = reinterpret_cast<void (*)()>(load(cgen::kResetFn));
+    r.set_wire = reinterpret_cast<void (*)(int, const uint8_t *)>(load(cgen::kSetWireFn));
+    r.set_wire_u64 = reinterpret_cast<void (*)(int, uint64_t)>(load(cgen::kSetWireU64Fn));
+    r.get_wire = reinterpret_cast<void (*)(int, uint8_t *)>(load(cgen::kGetWireFn));
     if (!r.tick || !r.init || !r.set_wire || !r.get_wire)
         return {ErrorCode::JIT_SYMBOL_FAILED, -1, "查找 JIT 符号失败"};
     return r;

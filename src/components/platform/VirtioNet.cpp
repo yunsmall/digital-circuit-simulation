@@ -295,9 +295,14 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
             "            case {0}: {{ // 包体一块读回，追加进宿主环\n"
             "                uint32_t _th = dcs_load_acq((char *)_vio_state_{1} + {2});\n"
             "                uint32_t _tl = dcs_load_acq((char *)_vio_state_{1} + {3});\n"
-            "                if (_th - _tl < {4} && _qv->written + _qv->chunk <= {5})\n"
+            // 超过 PKT_MAX 的包只拷能放下的部分，长度也必须按实际拷贝量截断；
+            // 只跳过 memcpy 却继续累加 written 会让 tx_len 指向没写过的残留数据
+            "                uint32_t _c = _qv->chunk;\n"
+            "                if (_qv->written >= {5}) _c = 0;\n"
+            "                else if (_qv->written + _c > {5}) _c = {5} - _qv->written;\n"
+            "                if (_th - _tl < {4} && _c)\n"
             "                    dcs_memcpy((char *)_vio_state_{1} + {6} + (_th % {4}) * {5} + _qv->written,\n"
-            "                               _vio_mp_buf_{1}, _qv->chunk);\n"
+            "                               _vio_mp_buf_{1}, _c);\n"
             "                _qv->written += _qv->chunk;\n"
             "                _qv->off += _qv->chunk;\n"
             "                if (_qv->off >= _qv->dlen) {{\n"
@@ -306,13 +311,16 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
             // 整包收完：提交给宿主环；环满就丢弃，但 desc 一定要还回去
             "                        uint32_t _h2 = dcs_load_acq((char *)_vio_state_{1} + {2});\n"
             "                        uint32_t _l2 = dcs_load_acq((char *)_vio_state_{1} + {3});\n"
+            "                        uint32_t _n = _qv->written > {5} ? {5} : _qv->written;\n"
             "                        if (_h2 - _l2 < {4}) {{\n"
-            "                            *(uint32_t *)((char *)_vio_state_{1} + {8} + (_h2 % {4}) * 4) = _qv->written;\n"
+            "                            *(uint32_t *)((char *)_vio_state_{1} + {8} + (_h2 % {4}) * 4) = _n;\n"
             "                            dcs_store_rel((char *)_vio_state_{1} + {2}, _h2 + 1);\n"
             // 只在真的推入一个包时叫醒后端，和每拍无关
-            "                            dcs_virtio_trace({1}u, 0x306u, _h2, _l2, _qv->written, 0, 0, 0);\n"
+            "                            dcs_virtio_trace({1}u, 0x306u, _h2, _l2, _n, 0, 0, 0);\n"
             "                            dcs_vnet_kick(_vio_state_{1});\n"
             "                        }}\n"
+            // used.len 由公共 genQueue 从 _qv->written 写回，这里必须同步成实际交付量
+            "                        _qv->written = _n;\n"
             "                        _qv->phase = {9};\n"
             "                    }}\n"
             "                }}\n"

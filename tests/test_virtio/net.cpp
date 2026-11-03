@@ -189,3 +189,29 @@ TEST(VirtioNet, RxRingFull) {
     EXPECT_EQ(f.usedLen(s.used, 0), 16u);
     EXPECT_TRUE(f.dev->pushRxPacket(pkt, 4));
 }
+
+// 超过 PKT_MAX 的帧：只拷贝能放下的部分，长度必须按实际拷贝量截断。
+// 只跳过 memcpy 却继续累加 written，会把未写过的残留数据当成本帧交给后端
+TEST(VirtioNet, TransmitOversizeTruncatesConsistently) {
+    VirtioFixture<VirtioNet> f;
+    QueueAddrs s{0x100, 0x200, 0x300, 0x500}; // data 放高一点，避免 1.7KB 撞到 used 环
+    constexpr uint32_t BODY = 1700;
+    f.putDesc(s.desc, 0, s.data, 12 + BODY, 0, 0);
+    std::memset(f.mem() + s.data, 0, 12);
+    for (uint32_t i = 0; i < BODY; i++)
+        f.mem()[s.data + 12 + i] = (uint8_t) (i & 0xFF);
+    prepareQueue(f, s, 1);
+    f.put16(s.avail + 4, 0);
+    f.configureQueue(s.desc, s.avail, s.used, 8, 1); // TX 是队列 1
+    f.write(0x070, 1);
+    f.write(0x050, 1);
+
+    for (int i = 0; i < 5000; i++) f.tick();
+
+    uint8_t out[1600];
+    const uint32_t n = f.dev->popTxPacket(out, sizeof(out));
+    EXPECT_EQ(n, 1600u) << "超长帧必须截断到宿主环容量";
+    for (uint32_t i = 0; i < 1600; i++)
+        ASSERT_EQ(out[i], (uint8_t) (i & 0xFF)) << "第 " << i << " 字节";
+    EXPECT_EQ(f.usedLen(s.used, 0), 1600u) << "used.len 必须是实际交付的长度";
+}

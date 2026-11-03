@@ -54,6 +54,10 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
         }
 
     int N = (int) _segments.size();
+    // 仲裁请求位图是 32 位（_rq |= 1u << k），超过 32 个主设备会移位 UB，
+    // 且第 32 个之后无法区分。这里直接拒绝，不要生成必然错的代码
+    if (num_masters > 32)
+        throw std::invalid_argument("num_masters 不能超过 32（仲裁请求位图是 32 位）");
     _masters = num_masters < 1 ? 1 : num_masters;
     setParam("num_masters", std::to_string(_masters));
 

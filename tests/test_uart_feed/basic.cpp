@@ -3,6 +3,7 @@
 
 #include <dcs/Circuit.h>
 #include <dcs/components/io/UartFeed.h>
+#include <thread>
 
 using namespace dsc;
 
@@ -98,4 +99,20 @@ TEST(UartFeedTest, QueueFullReportsFailure) {
         n++;
     EXPECT_EQ(n, 4095u); // 容量 4096，环形队列永远留一个空位
     EXPECT_FALSE(f.feed->push(0x55));
+}
+
+// --forever --watch 下 stdin 线程和 watch 主循环会同时 push。
+// 队列本身是单生产者设计，push 必须把多生产者串行化，不能丢字节
+TEST(UartFeedTest, ConcurrentProducersDoNotLoseBytes) {
+    FeedFixture f(8);
+    constexpr int N = 2000;
+    auto producer = [&] {
+        for (int i = 0; i < N; i++)
+            while (!f.feed->push((uint8_t) i))
+                std::this_thread::yield();
+    };
+    std::thread a(producer), b(producer);
+    a.join();
+    b.join();
+    EXPECT_EQ(f.feed->pending(), 2u * N);
 }

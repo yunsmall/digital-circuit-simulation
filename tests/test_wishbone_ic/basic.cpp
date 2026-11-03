@@ -101,3 +101,9 @@ TEST(WishboneIc, IdleBusDoesNotAssertAnySlaveStb) {
     EXPECT_EQ(f.sStb(1), 0);
     EXPECT_EQ(f.mAck(0), 0);
 }
+
+// 仲裁请求是 32 位位图，第 32 个主设备起 1u << k 是 UB；超限必须直接拒绝
+TEST(WishboneIc, RejectsMoreThan32Masters) {
+    EXPECT_THROW(WishboneInterconnect("ic", "0:65536", 33), std::invalid_argument);
+    EXPECT_NO_THROW(WishboneInterconnect("ic", "0:65536", 32));
+}

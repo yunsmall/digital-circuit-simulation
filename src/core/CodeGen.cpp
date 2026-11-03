@@ -295,7 +295,7 @@ std::string generateCircuitC(void *circuit_ptr, const std::vector<std::unique_pt
     }
 
     // === circuit_tick ===
-    oss << "void circuit_tick(void) {\n";
+    oss << std::format("void {}(void) {{\n", cgen::kTickFn);
     // 先算出哪些组合元件要重跑：输入直接或间接挂在总线网上的那些。
     // 没有总线网的电路集合为空，阶段2b 就是零开销
     std::set<Component *> bus_affected = computeBusAffected(sorted, bus_nets);

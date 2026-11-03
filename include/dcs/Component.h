@@ -233,9 +233,7 @@ public:
     bool hasSequential() const final {
         return false;
     }
-    std::string genFuncDef_comb() const override {
-        return "";
-    } // 组合子类必须重写
+    std::string genFuncDef_comb() const override = 0; // 组合子类必须实现
     std::string genStructDef() const final {
         return "";
     }
@@ -257,9 +255,7 @@ public:
     bool hasSequential() const final {
         return true;
     }
-    std::string genFuncDef_seq() const override {
-        return "";
-    } // 时序子类必须重写
+    std::string genFuncDef_seq() const override = 0; // 时序子类必须实现
     std::vector<int> getCombinationalDeps(int) const final {
         return {};
     }

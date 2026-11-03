@@ -71,6 +71,9 @@ std::unique_ptr<Component> UartFeed::clone(const std::string &new_name) const {
 }
 
 bool UartFeed::push(uint8_t b) {
+    // 允许两个宿主线程同时喂（stdin + --watch 文件），队列的 head/tail
+    // 本身是 SPSC，多生产者必须在这里串行化
+    std::lock_guard<std::mutex> lock(_push_mutex);
     const uint32_t h = _state.head.load(std::memory_order_relaxed);
     const uint32_t next = (h + 1) % CAP;
     // 队列满：返回 false 让生产者自己决定重试/丢弃，不能悄悄覆盖还没发出去的数据

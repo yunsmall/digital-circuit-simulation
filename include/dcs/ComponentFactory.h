@@ -160,45 +160,14 @@ public:
     std::unique_ptr<Component> create(const std::string &type_name, const std::string &name,
                                       const std::unordered_map<std::string, std::string> &params,
                                       std::string &error) const {
-        auto it = _creators.find(type_name);
-        if (it == _creators.end()) {
-            error = std::format("未知元件类型: {}", type_name);
-            return nullptr;
-        }
-        auto mi = _metas.find(type_name);
-        if (mi != _metas.end()) {
-            error = validateParams(mi->second, params);
-            if (!error.empty())
-                return nullptr;
-        }
-        // 元件构造函数的参数校验会抛 std::invalid_argument。对直接 new 的 C++ 用户
-        // 那是开发期错误，保留；但 JSON/UI 传进来的参数是用户输入，必须转成 error，
-        // 不能让异常一路穿到 main 打掉进程
-        try {
-            return it->second(name, params);
-        } catch (const std::exception &e) {
-            error = std::format("创建元件 '{}' 失败: {}", name, e.what());
-            return nullptr;
-        }
+        return createImpl(type_name, name, params, true, &error);
     }
 
     // 无校验版本（C++ API 直接调用，跳过 valid_values 检查）
     std::unique_ptr<Component> createUnchecked(const std::string &type_name, const std::string &name,
                                                const std::unordered_map<std::string, std::string> &params,
                                                std::string *error = nullptr) const {
-        auto it = _creators.find(type_name);
-        if (it == _creators.end()) {
-            if (error)
-                *error = std::format("未知元件类型: {}", type_name);
-            return nullptr;
-        }
-        try {
-            return it->second(name, params);
-        } catch (const std::exception &e) {
-            if (error)
-                *error = std::format("创建元件 '{}' 失败: {}", name, e.what());
-            return nullptr;
-        }
+        return createImpl(type_name, name, params, false, error);
     }
 
     const auto &metas() const {
@@ -209,6 +178,43 @@ public:
     }
 
 private:
+    // create/createUnchecked 共用：一次查找、一次异常转换；validate=false 时跳过
+    // valid_values（C++ API 直接构造的元件允许传内部值）
+    std::unique_ptr<Component> createImpl(const std::string &type_name, const std::string &name,
+                                          const std::unordered_map<std::string, std::string> &params,
+                                          bool validate, std::string *error) const {
+        // 成功时也要把调用方传进来的旧错误清掉（调用方常复用同一个字符串）
+        if (error)
+            error->clear();
+        auto it = _creators.find(type_name);
+        if (it == _creators.end()) {
+            if (error)
+                *error = std::format("未知元件类型: {}", type_name);
+            return nullptr;
+        }
+        if (validate) {
+            auto mi = _metas.find(type_name);
+            if (mi != _metas.end()) {
+                std::string err = validateParams(mi->second, params);
+                if (!err.empty()) {
+                    if (error)
+                        *error = std::move(err);
+                    return nullptr;
+                }
+            }
+        }
+        // 元件构造函数的参数校验会抛 std::invalid_argument。对直接 new 的 C++ 用户
+        // 那是开发期错误，保留；但 JSON/UI 传进来的参数是用户输入，必须转成 error，
+        // 不能让异常一路穿到 main 打掉进程
+        try {
+            return it->second(name, params);
+        } catch (const std::exception &e) {
+            if (error)
+                *error = std::format("创建元件 '{}' 失败: {}", name, e.what());
+            return nullptr;
+        }
+    }
+
     std::unordered_map<std::string, Creator> _creators;
     std::unordered_map<std::string, Meta> _metas;
     std::map<std::string, std::string> _categories;

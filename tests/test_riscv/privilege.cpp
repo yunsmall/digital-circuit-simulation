@@ -135,3 +135,33 @@ TEST(PrivTest, SretBasic) {
     // 不管怎样，确保 sret 不会 halt
     EXPECT_FALSE(f.cpu->halted());
 }
+
+// SBI set_timer 的 u64 参数在 RV32 上拆成 a0(低)/a1(高)。
+// 只读 a0 会让 deadline 高 32 位归零，ns 超过 2^32 后定时器立刻过期
+TEST(PrivTest, SbiSetTimerUsesHighWordOnRv32) {
+    PrivTestFixture f;
+    f.loadProgram({
+        0x01800093, // 0x00: addi x1,x0,0x18        (S 态入口)
+        0x34109073, // 0x04: csrrw x0,mepc,x1
+        0x000010B7, // 0x08: lui x1,0x1
+        0x80008093, // 0x0C: addi x1,x1,-2048      (mstatus.MPP=S)
+        0x30009073, // 0x10: csrrw x0,mstatus,x1
+        0x30200073, // 0x14: mret
+        // 0x18: S 态调用 SBI set_timer(0x1FFFFFFFF)
+        0x544958B7, // 0x18: lui x17,0x54495        (a7 = SBI_EXT_TIME)
+        0xD4588893, // 0x1C: addi x17,x17,-699
+        0x00000813, // 0x20: addi x16,x0,0          (a6 = set_timer)
+        0xFFF00513, // 0x24: addi x10,x0,-1         (a0 = 0xFFFFFFFF)
+        0x00100593, // 0x28: addi x11,x0,1          (a1 = 1)
+        0x00000073, // 0x2C: ecall
+        0x0000006F, // 0x30: jal x0,0
+    });
+    f.compile();
+    f.reset();
+    f.runCycles(200);
+
+    EXPECT_EQ(f.cpu->priv(), 1) << "应进入 S 态执行 SBI 调用";
+    EXPECT_EQ((uint32_t) f.cpu->pc(), 0x30u) << "PC 应停在 jal x0,0";
+    EXPECT_EQ(f.cpu->timerDeadline(), 0x1FFFFFFFFull)
+        << "RV32 的 set_timer 必须合并 a0/a1，否则高 32 位被丢掉";
+}

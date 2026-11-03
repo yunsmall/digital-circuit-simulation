@@ -9,6 +9,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include "dcs/Component.h"
 
@@ -55,6 +56,9 @@ private:
     };
     FeedState _state{};
     int _baud_div = 16;
+    // head 只由生产者写，但 --forever --watch 下 stdin 线程和 watch 主循环
+    // 会同时 push；串行化生产者，消费者（JIT）仍然只读原子 head/tail
+    std::mutex _push_mutex;
 
     static int feedPop(void *state_ptr);
 };

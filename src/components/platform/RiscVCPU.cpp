@@ -1868,8 +1868,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             // OF：有限结果舍入成 inf；UF：非零结果落入非规格化数（0 < |r| < FLT_MIN），
             // 或直接舍入成 0 而精确结果非 0
             // UF 的定义是"tiny 且不精确"：精确的次正规数结果不能置 UF
-            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到，
-            // 但按 IEEE 754 只要无界指数下的结果超出 Fmax 就要报 OF
+            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到。
+            // IEEE 的判据是"无界指数下的舍入结果是否超过 Fmax"：这几个方向都是
+            // 向零舍入，exact 要到 2^128 才会越过 Fmax（Fmax 之后的下一格就是 2^128）；
+            // 反方向（RUP 正、RDN 负）会先舍入到 inf，由 isinf 接住。
+            // 所以这里用 >= 2^128 是刻意的，不要改成 RNE 的中点 2^128-2^103
             if (std::isinf(r) || std::fabs(exact) >= 0x1p128) s.fcsr |= 0x04;
             else if ((r == 0.0f ? exact != 0.0
                                 : std::fabs((double) r) < (double) std::numeric_limits<float>::min())
@@ -2460,8 +2463,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if (!std::isfinite(exact)) return;
             if ((double) r != exact || extra_inexact) s.fcsr |= 0x01; // NX
             // OF：舍入成 inf；UF：结果是非规格化数，或舍入成 0 而精确值非 0
-            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到，
-            // 但按 IEEE 754 只要无界指数下的结果超出 Fmax 就要报 OF
+            // RTZ/RDN(正)/RUP(负) 在溢出时返回的是 Fmax，isinf 盖不到。
+            // IEEE 的判据是"无界指数下的舍入结果是否超过 Fmax"：这几个方向都是
+            // 向零舍入，exact 要到 2^128 才会越过 Fmax（Fmax 之后的下一格就是 2^128）；
+            // 反方向（RUP 正、RDN 负）会先舍入到 inf，由 isinf 接住。
+            // 所以这里用 >= 2^128 是刻意的，不要改成 RNE 的中点 2^128-2^103
             if (std::isinf(r) || std::fabs(exact) >= 0x1p128) s.fcsr |= 0x04;
             else if ((r == 0.0f ? exact != 0.0
                                 : std::fabs((double) r) < (double) std::numeric_limits<float>::min())
@@ -2749,8 +2755,16 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         s.regs[11] = 0;
                         break;
                     case RV::SBI_EXT_TIME: // set_timer(deadline)：到期时刻记下来，
-                                           // 由 cpuTick 逐拍比较并产生 STIP
-                        if (fid == RV::SBI_FID_SET_TIMER) s.timer_deadline = s.regs[10];
+                                           // 由 cpuTick 逐拍比较并产生 STIP。
+                                           // SBI 的 u64 参数在 RV32 上拆成 a0(低)/a1(高)，
+                                           // 只读 a0 会让高 32 位归零，ns 超过 2^32 后
+                                           // deadline 立刻过期，表现为定时器中断风暴
+                        if (fid == RV::SBI_FID_SET_TIMER) {
+                            uint64_t deadline = s.regs[10];
+                            if constexpr (sizeof(XLen) == 4)
+                                deadline |= (uint64_t) s.regs[11] << 32;
+                            s.timer_deadline = deadline;
+                        }
                         s.regs[10] = 0;
                         s.regs[11] = 0;
                         break;

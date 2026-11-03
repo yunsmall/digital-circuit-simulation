@@ -220,6 +220,10 @@ public:
             _state.regs[idx] = v;
     }
     bool halted() const;
+    // SBI set_timer 记录的到期时刻（调试/测试用）
+    uint64_t timerDeadline() const {
+        return _state.timer_deadline;
+    }
     uint32_t freg(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }
     // 双精度寄存器是 64 位的，freg() 只给低 32 位，浮点测试要用完整位模式
     uint64_t freg64(int idx) const { return (idx >= 0 && idx < 32) ? _state.fregs[idx] : 0; }

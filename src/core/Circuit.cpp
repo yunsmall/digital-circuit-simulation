@@ -226,6 +226,7 @@ void Circuit::disconnect(Component *comp, const std::string &pin_name) {
     }
 
     pin->setNet(nullptr);
+    recomputeNetWidths();
     _compiled = false;
 }
 
@@ -243,6 +244,7 @@ void Circuit::removeComponent(Component *comp) {
                            [comp](const auto &uptr) { return uptr.get() == comp; });
     if (it != _components.end())
         _components.erase(it);
+    recomputeNetWidths();
     _compiled = false;
 }
 
@@ -285,6 +287,7 @@ void Circuit::removeNet(Net *net) {
             _bus_nets[(int) i] = std::move(bit->second);
     }
 
+    recomputeNetWidths();
     _compiled = false;
 }
 
@@ -295,6 +298,21 @@ void Circuit::removeAllNets() {
     _nets.clear();
     _bus_nets.clear();
     _compiled = false;
+}
+
+// 连接时只做增量取最大（O(1)）；断开/删除后位宽必须能回退，这里统一重算。
+// 构建期操作，O(线网数 × 引脚数) 可接受
+void Circuit::recomputeNetWidths() {
+    for (auto &n: _nets)
+        n->resetBitWidth();
+    for (auto &c: _components) {
+        for (auto &p: c->inputs())
+            if (p->net())
+                p->net()->updateBitWidth(p->bit_width());
+        for (auto &p: c->outputs())
+            if (p->net())
+                p->net()->updateBitWidth(p->bit_width());
+    }
 }
 
 Net *Circuit::findNet(const std::string &name) const {

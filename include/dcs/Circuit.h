@@ -230,6 +230,8 @@ private:
     Context *_context = nullptr;
 
     Pin *findPin(Component *comp, const std::string &name);
+    // 断开/删除后按当前连接重算所有线网位宽（连接时只做增量取最大）
+    void recomputeNetWidths();
     void jitCleanup();
     // expandComposites + 重编号 + check，两个入口共用的网表准备步骤
     CircuitError prepareNetlist(std::vector<std::string> *warnings = nullptr);

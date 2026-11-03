@@ -43,6 +43,11 @@ public:
     void updateBitWidth(int pw) {
         _bit_width = std::max(_bit_width, pw);
     }
+    // 只由 Circuit 在断开/删除后重算位宽时调用：位宽必须能随连接减少而回退，
+    // 否则改接更窄的引脚后生成代码仍按旧宽度处理
+    void resetBitWidth() {
+        _bit_width = 0;
+    }
 
 private:
     std::string _name;
