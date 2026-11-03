@@ -1,5 +1,5 @@
 // UartFeed — 由外部喂数据的 8N1 串行发送器
-// 发送状态机展开在 JIT 里，每拍只读一个 volatile 标志决定要不要碰队列；
+// 发送状态机展开在 JIT 里，每拍只比较两个原子 head/tail 决定要不要碰队列；
 // 队列本身（SPSC 原子环形缓冲）留在 C++，只在真的有数据时才被调用。
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartFeed.h"
@@ -32,8 +32,9 @@ std::string UartFeed::genStateDecl() const {
     return std::format(
             "static uint32_t _feed_cnt_{0}, _feed_bit_{0};\n"
             "static uint8_t  _feed_busy_{0}, _feed_ch_{0};\n"
-            "static volatile uint32_t *_feed_flag_{0} = (volatile uint32_t *)0x{1:X}ULL;\n",
-            _id, reinterpret_cast<uintptr_t>(&_state.has_data));
+            "static unsigned int *_feed_head_{0} = (unsigned int *)0x{1:X}ULL;\n"
+            "static unsigned int *_feed_tail_{0} = (unsigned int *)0x{2:X}ULL;\n",
+            _id, reinterpret_cast<uintptr_t>(&_state.head), reinterpret_cast<uintptr_t>(&_state.tail));
 }
 
 std::string UartFeed::genInitCode() const {
@@ -45,9 +46,10 @@ std::string UartFeed::genFuncDef_seq() const {
     c += std::format("// UartFeed {}\n", name());
     c += "extern int _dcs_feed_pop(void *);\n";
     c += std::format("static void {}() {{\n", funcName_seq());
-    // 生产者把标志置 1，这里读一次；读不到就整拍跳过，不产生任何调用
+    // 队列非空才回调；head/tail 是原子量，生产者 push 后一定能在这里看到，
+    // 不存在"清标志"把新数据挡在外面
     c += std::format(
-            "    if (!_feed_busy_{0} && *_feed_flag_{0}) {{\n"
+            "    if (!_feed_busy_{0} && dcs_load_acq(_feed_head_{0}) != dcs_load_acq(_feed_tail_{0})) {{\n"
             "        const int _b = _dcs_feed_pop((void *)0x{1:X}ULL);\n"
             "        if (_b >= 0) {{ _feed_ch_{0} = (uint8_t)_b; _feed_busy_{0} = 1; _feed_bit_{0} = 0; _feed_cnt_{0} = 0; }}\n"
             "    }}\n"
@@ -81,8 +83,6 @@ bool UartFeed::push(uint8_t b) {
         return false;
     _state.buf[h] = b;
     _state.head.store(next, std::memory_order_release);
-    // 标志只是一个"可能有数据"的提示，晚一拍被看到不影响正确性
-    _state.has_data = 1;
     return true;
 }
 
@@ -103,14 +103,10 @@ size_t UartFeed::pending() const {
 int UartFeed::feedPop(void *state_ptr) {
     auto &s = *static_cast<FeedState *>(state_ptr);
     const uint32_t t = s.tail.load(std::memory_order_relaxed);
-    if (t == s.head.load(std::memory_order_acquire)) {
-        s.has_data = 0; // 队列见底，清掉提示，下一拍 JIT 就不用再进来
+    if (t == s.head.load(std::memory_order_acquire))
         return -1;
-    }
     const uint8_t ch = s.buf[t];
     s.tail.store((t + 1) % CAP, std::memory_order_release);
-    if ((t + 1) % CAP == s.head.load(std::memory_order_acquire))
-        s.has_data = 0;
     return ch;
 }
 

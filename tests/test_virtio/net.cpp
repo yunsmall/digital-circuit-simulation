@@ -112,6 +112,32 @@ TEST(VirtioNet, TransmitChained) {
 }
 
 // 队列没 ready 时两个队列都不动
+// init 被当"重置"重复调用时，旧后端的线程必须停掉；否则两个 slirp
+// 实例会同时消费同一个 TX 环，旧线程还会在设备析构后继续访问
+namespace {
+int g_backend_creates = 0;
+int g_backend_destroys = 0;
+void *countingCreate(void *) { return (void *) (uintptr_t) (++g_backend_creates); }
+void countingDestroy(void *) { ++g_backend_destroys; }
+} // namespace
+
+TEST(VirtioNet, RepeatedInitReleasesPreviousBackend) {
+    VirtioNet dev("net0");
+    VirtioNet::BackendOps ops;
+    ops.create = &countingCreate;
+    ops.destroy = &countingDestroy;
+    dev.setBackend(ops);
+
+    g_backend_creates = g_backend_destroys = 0;
+    dev.simInit();
+    EXPECT_EQ(g_backend_creates, 1);
+    dev.simInit();
+    EXPECT_EQ(g_backend_creates, 2);
+    EXPECT_EQ(g_backend_destroys, 1) << "第二次 init 必须先销毁旧后端";
+    dev.simDeinit();
+    EXPECT_EQ(g_backend_destroys, 2);
+}
+
 TEST(VirtioNet, IgnoresWhenNotReady) {
     VirtioFixture<VirtioNet> f;
     QueueAddrs s{0x100, 0x200, 0x300, 0x400};

@@ -6,6 +6,7 @@
 //
 // 字符来源支持两种：终端交互（_kbhit/_getch）和管道/重定向（ReadFile 非阻塞）。
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include "dcs/Component.h"
@@ -36,12 +37,12 @@ private:
     struct InState {
         uint32_t baud_div;
         uint8_t fifo[64];
-        uint8_t head, tail;
+        // 生产者（pushByte）和消费者（JIT 回调 fetch）可能在不同线程：
+        // 用原子 head/tail 比较是否为空，避免"判空后清标志"覆盖并发的 push
+        std::atomic<uint32_t> head, tail;
         // 每次去问 stdin 都要一次系统调用，逐拍问会把仿真拖慢两三个数量级。
         // 空闲时 JIT 每 POLL_INTERVAL 拍才回调一次，按 tick 折算的延迟远小于串口一位
         static constexpr uint32_t POLL_INTERVAL = 1024;
-        // "队列里可能有数据"的提示，JIT 每拍只读这一个字
-        volatile uint32_t has_data;
     };
     InState _state{};
     int _baud_div = 16;

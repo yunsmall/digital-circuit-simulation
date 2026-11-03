@@ -111,6 +111,12 @@ bool VirtioNet::prepare(Context &, std::string &error) {
 }
 
 void VirtioNet::simInit() {
+    // init 被当作"重置"重复调用时，旧后端已经起了线程并在消费同一个
+    // TX/RX 环；必须先销毁它再 create，否则旧线程失去引用、永不停止
+    if (_ops.destroy && _state->backend_ctx) {
+        _ops.destroy(_state->backend_ctx);
+        _state->backend_ctx = nullptr;
+    }
     // create 拿到设备本身，后端可以在自己的线程里直接 pushRxPacket/popTxPacket
     if (_ops.create)
         _state->backend_ctx = _ops.create(this);

@@ -64,8 +64,8 @@ UartIn::UartIn(const std::string &name, int baud_div) :
     setParam("baud_div", std::to_string(_baud_div));
     addInput("clk", 1);
     addOutput("rx", 1, false, true);
-    _state.head = _state.tail = 0;
-    _state.has_data = 0;
+    _state.head.store(0, std::memory_order_relaxed);
+    _state.tail.store(0, std::memory_order_relaxed);
 }
 
 UartIn::~UartIn() = default;
@@ -80,8 +80,9 @@ std::string UartIn::genStateDecl() const {
     return std::format(
             "static uint32_t _uin_cnt_{0}, _uin_bit_{0}, _uin_poll_{0}, _uin_ch_{0};\n"
             "static uint8_t  _uin_busy_{0};\n"
-            "static volatile uint32_t *_uin_flag_{0} = (volatile uint32_t *)0x{1:X}ULL;\n",
-            _id, reinterpret_cast<uintptr_t>(&_state.has_data));
+            "static unsigned int *_uin_head_{0} = (unsigned int *)0x{1:X}ULL;\n"
+            "static unsigned int *_uin_tail_{0} = (unsigned int *)0x{2:X}ULL;\n",
+            _id, reinterpret_cast<uintptr_t>(&_state.head), reinterpret_cast<uintptr_t>(&_state.tail));
 }
 
 std::string UartIn::genInitCode() const {
@@ -99,8 +100,9 @@ std::string UartIn::genFuncDef_seq() const {
     c += std::format(
             "    if (!_uin_busy_{0}) {{\n"
             "        int _c = -1;\n"
-            // 队列里有数据（外部 push）就走这条路，不必等轮询周期
-            "        if (*_uin_flag_{0}) {{\n"
+            // 队列里有数据（外部 push）就走这条路，不必等轮询周期。
+            // 直接比较原子 head/tail，不用易丢的"有数据"标志
+            "        if (dcs_load_acq(_uin_head_{0}) != dcs_load_acq(_uin_tail_{0})) {{\n"
             "            _c = _dcs_uart_in_fetch((void *)0x{1:X}ULL, 0);\n"
             "            _uin_poll_{0} = 0;\n"
             "        }} else if (++_uin_poll_{0} >= {2}u) {{\n"
@@ -133,27 +135,29 @@ std::unique_ptr<Component> UartIn::clone(const std::string &new_name) const {
 }
 
 void UartIn::pushByte(uint8_t b) {
-    const uint8_t next = (uint8_t) ((_state.head + 1) & 63);
-    if (next == _state.tail)
+    const uint32_t head = _state.head.load(std::memory_order_relaxed);
+    const uint32_t next = (head + 1) & 63;
+    if (next == _state.tail.load(std::memory_order_acquire))
         return; // 队列满，丢弃
-    _state.fifo[_state.head & 63] = b;
-    _state.head = next;
-    _state.has_data = 1;
+    _state.fifo[head & 63] = b;
+    _state.head.store(next, std::memory_order_release);
 }
 
-size_t UartIn::pending() const { return (uint8_t) (_state.head - _state.tail); }
+size_t UartIn::pending() const {
+    const uint32_t h = _state.head.load(std::memory_order_acquire);
+    const uint32_t t = _state.tail.load(std::memory_order_acquire);
+    return (h + 64 - t) & 63;
+}
 
 // 返回下一个要发送的字节，没有则 -1。do_poll=1 时才允许去碰 stdin
 int UartIn::fetch(void *state_ptr, int do_poll) {
     auto &s = *static_cast<InState *>(state_ptr);
-    if (s.head != s.tail) {
-        const uint8_t b = s.fifo[s.tail & 63];
-        s.tail = (uint8_t) ((s.tail + 1) & 63);
-        if (s.head == s.tail)
-            s.has_data = 0; // 队列空了，JIT 下一拍就不必再进来
+    const uint32_t t = s.tail.load(std::memory_order_relaxed);
+    if (t != s.head.load(std::memory_order_acquire)) {
+        const uint8_t b = s.fifo[t & 63];
+        s.tail.store((t + 1) & 63, std::memory_order_release);
         return b;
     }
-    s.has_data = 0;
     return do_poll ? pollStdin() : -1;
 }
 

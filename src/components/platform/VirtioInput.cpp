@@ -2,6 +2,7 @@
 
 #include "dcs/ComponentFactory.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <format>
@@ -110,21 +111,28 @@ bool VirtioInput::pushInputEvent(const InputEvent &ev) {
     auto &s = *_state;
     // head/tail 都用实际增长值，只在索引时取模。若 head 写成模值而 tail 单调增长，
     // tail 越过 RING 后 (head+1)%RING == tail 永远不成立，环满检测失效，
-    // q.start 里的 _h - _t 也会下溢成巨值
-    const uint32_t next = s.evt_head + 1;
-    if (next % State::EVT_RING == s.evt_tail % State::EVT_RING)
+    // q.start 里的 _h - _t 也会下溢成巨值。
+    // 宿主线程写、JIT 线程读，必须走原子：先写事件再 release 发布 head，
+    // 否则弱内存序下 JIT 可能先看到 head 前进、读到还没写完的事件
+    const uint32_t head = std::atomic_ref<uint32_t>(s.evt_head).load(std::memory_order_relaxed);
+    const uint32_t tail = std::atomic_ref<uint32_t>(s.evt_tail).load(std::memory_order_acquire);
+    const uint32_t next = head + 1;
+    if (next % State::EVT_RING == tail % State::EVT_RING)
         return false; // 环满
-    s.events[s.evt_head % State::EVT_RING] = ev;
-    s.evt_head = next;
+    s.events[head % State::EVT_RING] = ev;
+    std::atomic_ref<uint32_t>(s.evt_head).store(next, std::memory_order_release);
     return true;
 }
 
 bool VirtioInput::popStatusEvent(InputEvent &ev) {
     auto &s = *_state;
-    if (s.status_head == s.status_tail)
+    // guest 侧先写 status 槽再 release 发布 status_head，这里 acquire 后读才安全
+    const uint32_t head = std::atomic_ref<uint32_t>(s.status_head).load(std::memory_order_acquire);
+    const uint32_t tail = std::atomic_ref<uint32_t>(s.status_tail).load(std::memory_order_relaxed);
+    if (head == tail)
         return false;
-    ev = s.status[s.status_tail % State::EVT_RING];
-    s.status_tail++;
+    ev = s.status[tail % State::EVT_RING];
+    std::atomic_ref<uint32_t>(s.status_tail).store(tail + 1, std::memory_order_release);
     return true;
 }
 
@@ -218,16 +226,16 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
 
     QueueSpec q;
     q.wake = std::format(
-            "        uint32_t _h = *(uint32_t *)((char *)_vio_state_{0} + {1});\n"
-            "        uint32_t _t = *(uint32_t *)((char *)_vio_state_{0} + {2});\n"
+            "        uint32_t _h = dcs_load_acq((char *)_vio_state_{0} + {1});\n"
+            "        uint32_t _t = dcs_load_acq((char *)_vio_state_{0} + {2});\n"
             "        if (_h != _t) _qv->phase = {3};\n",
             s.id, head_off, tail_off, Q_AVAIL_IDX);
     // 装不下一个事件（< 8 字节）的 buffer 直接以 len=0 完成，不能让队列卡住
     q.desc = std::format("                _qv->phase = _qv->dlen < 8 ? {0} : {1};\n", Q_USED, Q_DEV);
     q.start = std::format(
             "        case {0}: {{\n"
-            "            uint32_t _h = *(uint32_t *)((char *)_vio_state_{1} + {2});\n"
-            "            uint32_t _t = *(uint32_t *)((char *)_vio_state_{1} + {3});\n"
+            "            uint32_t _h = dcs_load_acq((char *)_vio_state_{1} + {2});\n"
+            "            uint32_t _t = dcs_load_acq((char *)_vio_state_{1} + {3});\n"
             "            uint32_t _n = _h - _t;\n"
             "            uint32_t _cap = _qv->dlen / 8;\n"
             "            if (_n > _cap) _n = _cap;\n"
@@ -242,7 +250,7 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
             Q_DEV, s.id, head_off, tail_off, copy_events);
     q.done = std::format(
             "            case {0}: {{ // 事件块写完\n"
-            "                *(uint32_t *)((char *)_vio_state_{1} + {2}) = _qv->step + _qv->chunk / 8;\n"
+            "                dcs_store_rel((char *)_vio_state_{1} + {2}, _qv->step + _qv->chunk / 8);\n"
             "                _qv->written = _qv->chunk;\n"
             "                _qv->phase = {3};\n"
             "                break;\n"
@@ -263,11 +271,11 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     st.start = std::format("        case {0}: _a = _qv->daddr; _l = 8; _wr = 0; break;\n", Q_DEV + 2);
     st.done = std::format(
             "            case {0}: {{\n"
-            "                uint32_t _sh = *(uint32_t *)((char *)_vio_state_{1} + {2});\n"
-            "                uint32_t _stt = *(uint32_t *)((char *)_vio_state_{1} + {3});\n"
+            "                uint32_t _sh = dcs_load_acq((char *)_vio_state_{1} + {2});\n"
+            "                uint32_t _stt = dcs_load_acq((char *)_vio_state_{1} + {3});\n"
             "                if (_sh - _stt < {4}) {{\n"
             "                    dcs_memcpy((char *)_vio_state_{1} + {5} + (_sh % {4}) * 8, _vio_mp_buf_{1}, 8);\n"
-            "                    *(uint32_t *)((char *)_vio_state_{1} + {2}) = _sh + 1;\n"
+            "                    dcs_store_rel((char *)_vio_state_{1} + {2}, _sh + 1);\n"
             "                }}\n"
             "                _qv->written = 0;\n"
             "                _qv->phase = {6};\n"

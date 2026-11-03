@@ -46,13 +46,12 @@ private:
         uint8_t bit;    // 0=起始位，1..8=数据位（LSB 先），9=停止位
         bool busy;
         uint8_t ch;
-        // 单生产者单消费者环形队列：head 只由生产者写，tail 只由消费者写
+        // 单生产者单消费者环形队列：head 只由生产者写，tail 只由消费者写。
+        // JIT 每拍用 dcs_load_acq 比较两者，非空才回调；不再另设"有数据"标志——
+        // 标志的"判空后清零"会被并发的 push 覆盖，导致字节永久卡在队列里
         std::atomic<uint32_t> head;
         std::atomic<uint32_t> tail;
         uint8_t buf[CAP];
-        // "队列里可能有数据"的提示。JIT 每拍只读这一个字，为 0 就完全不碰队列；
-        // 提示晚一拍被看到最多让字节晚发一拍，不影响内容
-        volatile uint32_t has_data;
     };
     FeedState _state{};
     int _baud_div = 16;
