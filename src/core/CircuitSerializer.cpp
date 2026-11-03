@@ -278,6 +278,11 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
                     return nullptr;
                 }
                 std::string name = jn.get<std::string>();
+                // 连接关系按名字索引；同名线网会让 connections 静默指到最后一个
+                if (net_map.count(name)) {
+                    error = std::format("nets 中存在重复的线网名 '{}'", name);
+                    return nullptr;
+                }
                 Net *net = circuit->createNet(name);
                 net_map[name] = net;
                 index++;

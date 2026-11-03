@@ -46,6 +46,7 @@ public:
     ~VirtioBlk() override;
 
     bool prepare(Context &ctx, std::string &error) override;
+    bool prepareForCompile(Context &ctx, std::string &error) override;
     void simInit() override;
     void simDeinit() override;
     std::vector<JitSymbol> extraJitSymbols() const override;
@@ -84,6 +85,8 @@ private:
     std::string _backend;
     std::map<std::string, std::string> _backend_opts;
     BackendOps _ops;
+    // setBackend 注入的介质由宿主维护；deinit 之后只有后端工厂这条路径能重新打开
+    bool _external_backend = false;
 };
 
 // 后端自注册：放在后端实现文件的全局作用域。

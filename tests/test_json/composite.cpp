@@ -53,3 +53,21 @@ TEST(JsonTypes, RejectsExposeAliasingInputOutputNet) {
             R"({"bad":{"nets":["n"],"components":[],"expose":{"inputs":{"a":"n"},"outputs":{"y":"n"}}}})", err);
     EXPECT_NE(err.find("同一个内部线网"), std::string::npos) << err;
 }
+
+// 同方向多个 pin 指向同一内部线网时 net_map 同样只保留最后一个，
+// 前一个外部线网会静默悬空
+TEST(JsonTypes, RejectsDuplicateExposeOutputNet) {
+    CircuitLibrary lib;
+    std::string err;
+    lib.importJson(
+            R"({"bad":{"nets":["n"],"components":[],"expose":{"outputs":{"y0":"n","y1":"n"}}}})", err);
+    EXPECT_NE(err.find("同一个内部线网"), std::string::npos) << err;
+}
+
+TEST(JsonTypes, RejectsDuplicateExposeInputNet) {
+    CircuitLibrary lib;
+    std::string err;
+    lib.importJson(
+            R"({"bad":{"nets":["n"],"components":[],"expose":{"inputs":{"a0":"n","a1":"n"}}}})", err);
+    EXPECT_NE(err.find("同一个内部线网"), std::string::npos) << err;
+}

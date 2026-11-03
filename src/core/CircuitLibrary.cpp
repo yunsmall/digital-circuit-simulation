@@ -307,17 +307,23 @@ void CircuitLibrary::importJson(const std::string &json_str, std::string &error,
                     }
                 }
                 // 输入和输出暴露到同一个内部线网时，net_map 会被后者覆盖，
-                // 输出外部线网静默悬空；导入时就拒绝
-                for (auto &[pin, ep]: def.input_expose) {
-                    for (auto &[opin, oep]: def.output_expose) {
-                        if (ep.net == oep.net) {
-                            error = std::format(
-                                    "定义 '{}' 的 expose 输入 '{}' 和输出 '{}' 指向同一个内部线网 '{}'",
-                                    name, pin, opin, ep.net);
-                            return;
+                // 先处理的引脚对应的外部线网静默悬空；同方向重复也一样，
+                // 所以两个方向的内部线网名必须整体互不相同
+                std::map<std::string, std::string> net_owner;
+                auto claim_nets = [&](const std::map<std::string, ExposedPin> &m, const char *which) -> bool {
+                    for (auto &[pin, ep]: m) {
+                        const auto full = std::format("{}.{}", which, pin);
+                        auto [it, inserted] = net_owner.emplace(ep.net, full);
+                        if (!inserted) {
+                            error = std::format("定义 '{}' 的 expose 引脚 '{}' 和 '{}' 指向同一个内部线网 '{}'",
+                                                name, it->second, full, ep.net);
+                            return false;
                         }
                     }
-                }
+                    return true;
+                };
+                if (!claim_nets(def.input_expose, "inputs") || !claim_nets(def.output_expose, "outputs"))
+                    return;
             }
 
             parsed.push_back(std::move(def));

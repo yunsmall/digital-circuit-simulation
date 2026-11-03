@@ -154,6 +154,13 @@ public:
     virtual bool prepare(Context & /*ctx*/, std::string & /*error*/) {
         return true;
     }
+    // 每次 compile() 在静态检查和生成代码之前调用。prepare() 建好的外部资源
+    // 可能被 deinit() 释放（DLL 卸载、磁盘关闭），重新编译时必须重新绑定，
+    // 否则 JIT 符号表会拿到空地址、代码生成会看不到元件的能力。
+    // 和 prepare() 的区别：不重复创建引脚
+    virtual bool prepareForCompile(Context & /*ctx*/, std::string & /*error*/) {
+        return true;
+    }
     // 需要注入 JIT 的额外符号（DLL 函数指针等），电路编译时统一注入
     struct JitSymbol {
         std::string name;

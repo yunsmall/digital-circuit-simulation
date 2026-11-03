@@ -164,6 +164,30 @@ bool DllComponent::prepare(Context &ctx, std::string &error) {
     return true;
 }
 
+// deinit() 卸载了 DLL 并把函数指针清空；重新编译时 JIT 符号表和代码生成
+// 都要求地址有效。这里只重新加载符号，引脚已经由 prepare() 建好，不能再创建
+bool DllComponent::prepareForCompile(Context &, std::string &error) {
+    if (_loaded)
+        return true;
+    _dll_handle = dll_load(_dll_path, error);
+    if (!_dll_handle)
+        return false;
+    if (!loadSymbols(error)) {
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        // 部分符号可能已经取到地址，卸载后全部失效；编译失败也不能留下悬空指针
+        _init_fn = nullptr;
+        _deinit_fn = nullptr;
+        _create_fn = nullptr;
+        _destroy_fn = nullptr;
+        _reset_fn = nullptr;
+        _tick_comb_fn = nullptr;
+        _tick_seq_fn = nullptr;
+        return false;
+    }
+    return true;
+}
+
 // ============================================================
 // 生命周期
 // ============================================================

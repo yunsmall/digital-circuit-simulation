@@ -98,9 +98,14 @@ std::string FloatBinOp::genFuncDef_comb() const {
     if (flags_nid >= 0) {
         c += std::format("    {} _bits = 0; dcs_memcpy(&_bits, &_out, {});\n", ut, bytes);
         c += "    uint8_t _flags = 0;\n";
-        // IEEE 754：有限非零 / ±0 是除零；0/0 是 invalid，两者结果都是 Inf/NaN，但标志不同
+        // IEEE 754：除零异常只针对"有限非零 / ±0"。0/0 是 invalid；
+        // Inf/0 和 NaN/0 分别返回 Inf 和 NaN，不置 DZ
         if (is_div) {
-            c += "    if (_b == 0) _flags |= (_a == 0) ? 0x01u : 0x02u;\n";
+            c += std::format("    {} _abits = 0; dcs_memcpy(&_abits, &_a, {});\n", ut, bytes);
+            c += "    if (_b == 0) {\n";
+            c += "        if (_a == 0) _flags |= 0x01u;\n";
+            c += std::format("        else if ((_abits & {}) != {}) _flags |= 0x02u;\n", exp_mask, exp_mask);
+            c += "    }\n";
         }
         c += std::format("    if ((_bits & {}) == {}) {{\n", exp_mask, exp_mask);
         c += std::format("        if (_bits & {}) _flags |= 0x20u;\n", mant_mask);

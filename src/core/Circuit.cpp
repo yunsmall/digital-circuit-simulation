@@ -112,8 +112,17 @@ void Circuit::jitCleanup() {
 // ============================================================
 
 Net *Circuit::createNet(const std::string &name) {
+    // 序列化按名字记录连接关系，同名线网在导出/导入后会指向同一个 Net。
+    // 自动加后缀保证名字唯一，调用方拿到的指针仍然互不相干
+    std::string unique = name;
+    auto taken = [this](const std::string &n) {
+        return std::any_of(_nets.begin(), _nets.end(), [&n](const auto &u) { return u->name() == n; });
+    };
+    for (int suffix = 2; taken(unique); ++suffix)
+        unique = std::format("{}_{}", name, suffix);
+
     int id = (int) _nets.size();
-    auto net = std::make_unique<Net>(name, id);
+    auto net = std::make_unique<Net>(unique, id);
     Net *ptr = net.get();
     _nets.push_back(std::move(net));
     return ptr;
@@ -140,6 +149,15 @@ Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *
 }
 
 CircuitError Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
+    if (!comp)
+        return {ErrorCode::PIN_NOT_FOUND, -1, {}, "目标元件为空指针"};
+    // 空线网和外来线网都要在动任何状态前拒绝：后面按 net->id() 写 _w[]
+    // 和 _bus_nets，外来 Net* 的 id 可能恰好撞上本电路的某根线
+    if (!net)
+        return {ErrorCode::INVALID_NET, -1, {comp->id()}, "连接目标线网为空"};
+    if (std::find_if(_nets.begin(), _nets.end(), [net](const auto &u) { return u.get() == net; }) == _nets.end())
+        return {ErrorCode::INVALID_NET, -1, {comp->id()},
+                std::format("线网 '{}' 不属于本电路", net->name())};
     Pin *pin = findPin(comp, pin_name);
     if (!pin)
         return {ErrorCode::PIN_NOT_FOUND, -1, {comp->id()},
@@ -242,6 +260,11 @@ void Circuit::disconnectAll(Component *comp) {
 }
 
 void Circuit::removeComponent(Component *comp) {
+    // 旧 JIT 的 circuit_deinit 会对即将销毁的 Dll 调用 dcs_dll_destroy，
+    // 而 Dll 的句柄引用计数只有在 simDeinit 里归还。先完整走一遍 deinit，
+    // 保证卸载顺序正确；之后结构已变，必须重新 compile 才能 tick
+    if (_jit.deinit)
+        deinit();
     disconnectAll(comp);
     auto it = std::find_if(_components.begin(), _components.end(),
                            [comp](const auto &uptr) { return uptr.get() == comp; });
@@ -549,6 +572,15 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
     _tick_error = {};
 
+    // deinit() 可能释放了元件持有的外部资源（DLL 句柄、磁盘文件），重新编译前
+    // 必须重新绑定。必须在静态检查之前做：Dll 的 hasCombinational/hasSequential
+    // 依赖函数指针，指针为空会被当成无逻辑元件而漏掉环路检测
+    for (auto &comp: _components) {
+        std::string err;
+        if (!comp->prepareForCompile(context(), err))
+            return {ErrorCode::PREPARE_FAILED, -1, {comp->id()}, err};
+    }
+
     std::vector<std::string> local_warnings;
     if (auto err = prepareNetlist(&local_warnings); err.code != ErrorCode::OK)
         return err;
@@ -641,6 +673,9 @@ void Circuit::tickCycle(int clk_net_id) {
         return;
     if (_tick_error.code != ErrorCode::OK)
         return;
+    // id 直接变成 JIT 里 _w[] 的下标，越界会静默踩内存
+    if (clk_net_id < 0 || clk_net_id >= (int) _nets.size())
+        return;
     if (_jit.tick_cycle) {
         _jit.tick_cycle(clk_net_id);
         return;
@@ -655,6 +690,8 @@ void Circuit::tickCycles(int clk_net_id, uint64_t n) {
     if (!_compiled)
         return;
     if (_tick_error.code != ErrorCode::OK)
+        return;
+    if (clk_net_id < 0 || clk_net_id >= (int) _nets.size())
         return;
     if (_jit.tick_cycles) {
         _jit.tick_cycles(clk_net_id, n);
@@ -712,6 +749,9 @@ void Circuit::onBusConflict(int net_id) {
 void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
     if (!_compiled || !_jit.set_wire)
         return;
+    // id 就是 JIT 的 _w[] 下标；外部传入越界 id 时不能静默写穿数组
+    if (id < 0 || id >= (int) _nets.size())
+        return;
     uint8_t buf[16] = {};
     for (size_t i = 0; i < value.size() && i < 16; i++)
         buf[i] = value[i];
@@ -720,6 +760,8 @@ void Circuit::setWire(int id, const std::vector<uint8_t> &value) {
 
 void Circuit::setWire(int id, uint64_t value) {
     if (!_compiled)
+        return;
+    if (id < 0 || id >= (int) _nets.size())
         return;
     if (_jit.set_wire_u64) {
         _jit.set_wire_u64(id, value);
@@ -734,7 +776,8 @@ void Circuit::setWire(int id, uint64_t value) {
 
 std::vector<uint8_t> Circuit::getWire(int id) {
     std::vector<uint8_t> val(16, 0);
-    if (_compiled && _jit.get_wire)
+    // 越界 id 在 JIT 里会读到 _w[] 之外；返回全零，和未连接线网一致
+    if (_compiled && _jit.get_wire && id >= 0 && id < (int) _nets.size())
         _jit.get_wire(id, val.data());
     return val;
 }

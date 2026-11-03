@@ -29,6 +29,22 @@ TEST(DllTest, Recompile) {
     EXPECT_FALSE(c.isCompiled());
     c.init(); // 未重新编译时 init 必须是 no-op，不能碰旧 JIT
     EXPECT_FALSE(c.isCompiled());
+
+    // deinit 卸载了 DLL，重新编译必须在生成代码前重新绑定函数指针：
+    // 只恢复 _loaded、不重新加载符号的话，JIT 符号表会拿到空地址，init 直接跳 0
+    auto err_recompile = c.compile();
+    ASSERT_TRUE(c.isCompiled()) << "重新编译失败: " << err_recompile.message;
+    c.init();
+    c.setWire(a->id(), {0x0F, 0});
+    c.setWire(b->id(), {0x0F, 0});
+    c.tick();
+    EXPECT_EQ(c.getWire(y->id())[0], 0x0F);
+
+    // 移除元件时旧 JIT 的 circuit_deinit 还会引用它的 DLL 状态；
+    // 必须先完整 deinit 再销毁，DLL 引用计数才能归还
+    c.removeComponent(dlp);
+    EXPECT_FALSE(c.isCompiled());
+
     c.clear();
     auto *a2 = c.createNet("a2"), *b2 = c.createNet("b2"), *y2 = c.createNet("y2");
     auto dl2 = std::make_unique<dsc::DllComponent>("and_gate2", path);

@@ -80,6 +80,7 @@ void VirtioBlk::setBackend(const BackendOps &ops) {
     _state->image_size = ops.size;
     // 没有写回调就是只读介质，feature 位和状态字节都要按只读处理
     _state->read_only = ops.read && !ops.write;
+    _external_backend = true;
 }
 
 bool VirtioBlk::installBackend(const std::string &name, const std::map<std::string, std::string> &opts,
@@ -100,6 +101,7 @@ bool VirtioBlk::installBackend(const std::string &name, const std::map<std::stri
     _state->ops = ops;
     _state->image_size = ops.size;
     _state->read_only = ops.read && !ops.write;
+    _external_backend = false;
     _backend = name;
     _backend_opts = opts;
 
@@ -137,6 +139,14 @@ bool VirtioBlk::prepare(Context &ctx, std::string &error) {
     _state->ops = _ops;
     _state->image_size = _ops.size;
     _state->read_only = _ops.read && !_ops.write;
+    return true;
+}
+
+// deinit 关掉了介质并把 ops.ctx 置空；重新编译必须重开，否则 JIT 的
+// dcs_virtio_io 会拿着空 ctx 调后端。外部注入的 BackendOps 由宿主负责重建
+bool VirtioBlk::prepareForCompile(Context &ctx, std::string &error) {
+    if (!_external_backend && _backend != "none" && !_state->ops.ctx)
+        return installBackend(_backend, _backend_opts, ctx, error);
     return true;
 }
 

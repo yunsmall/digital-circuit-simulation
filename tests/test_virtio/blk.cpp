@@ -49,6 +49,26 @@ TEST(VirtioTest, ReadFromBackendImage) {
     EXPECT_EQ(f.c->getWire(f.irq->id())[0], 1) << "完成请求后应拉中断";
 }
 
+// deinit 会释放后端并把 ctx 置空；重新编译必须重新打开介质，
+// 否则 JIT 里的 dcs_virtio_io 会拿着空 ctx 调后端
+TEST(VirtioTest, RecompileAfterDeinitReopensBackend) {
+    VirtioFixture<VirtioBlk> f; // 默认 mem 后端
+    f.c->deinit();
+    auto err = f.c->compile();
+    ASSERT_EQ(err.code, ErrorCode::OK) << err.message;
+    f.c->init();
+
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0 /*IN*/, 0, true);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++) f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1) << "请求完成后 used.idx 应加一";
+    EXPECT_EQ(f.mem()[status], 0) << "状态字节应为 OK";
+}
+
 // 非对齐 buffer：主端口必须按字内剩余空间拆事务，SEL 不能跨出 4 位
 TEST(VirtioTest, UnalignedDataBuffer) {
     VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
