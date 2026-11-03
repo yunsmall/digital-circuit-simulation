@@ -26,9 +26,39 @@ constexpr uint32_t spin_() { return 0x0000006Fu; }
 
 } // namespace
 
-// AMOMIN/AMOMAX 必须按有符号比较：INT32_MIN 和 1 比，signed min 是 INT32_MIN
-TEST(Rv32Edge, AmoMinMaxUseSignedCompareAtInt32Min) {
+// zip/unzip 的 rs2 是固定编码 0x0F。funct3=1/5 且 funct7=0x04 的其它 rs2
+// 是保留编码，必须触发非法指令，不能当成 zip/unzip 静默执行
+TEST(Rv32Edge, ReservedZipEncodingTraps) {
     PrivTestFixture f;
+    f.loadProgram({
+        addi_(1, 0, 0x20),                 // mtvec = 0x20
+        csrrw_(0, 0x305, 1),
+        i_type(0x13, 2, 1, 0, 0x080),      // f3=1、f7=0x04、rs2=0：保留编码
+        addi_(0, 0, 0), addi_(0, 0, 0), addi_(0, 0, 0), addi_(0, 0, 0), addi_(0, 0, 0),
+        csrrs_(3, 0x342, 0),                // mcause
+        csrrs_(4, 0x341, 0),                // mepc
+        spin_(),
+    });
+    f.compile(); f.reset(); f.runCycles(120);
+    EXPECT_EQ(f.cpu->reg(3), 2u) << "保留编码应报非法指令";
+    EXPECT_EQ(f.cpu->reg(4), 0x08u) << "mepc 应指向保留编码本身";
+    EXPECT_EQ(f.cpu->reg(2), 0u) << "保留编码不能产生 zip 结果";
+}
+
+// rs2=0x0F 的编码才是真正的 zip：RV32 下 zip(1) 把两个半区的 bit0 交错成 0b11
+TEST(Rv32Edge, ZipWithFixedRs2Executes) {
+    PrivTestFixture f;
+    f.loadProgram({
+        lui_(1, 0x10), addi_(1, 1, 1),     // x1 = 0x00010001
+        i_type(0x13, 2, 1, 1, 0x08F),      // zip x2, x1
+        spin_(),
+    });
+    f.compile(); f.reset(); f.runCycles(100);
+    EXPECT_EQ(f.cpu->reg(2), 3u);
+}
+
+// AMOMIN/AMOMAX 必须按有符号比较：INT32_MIN 和 1 比，signed min 是 INT32_MIN
+TEST(Rv32Edge, AmoMinMaxUseSignedCompareAtInt32Min) {    PrivTestFixture f;
     f.loadProgram({
         lui_(1, 0x1), addi_(1, 1, 0x100),          // x1 = 0x1100
         lui_(2, 0x80000),                          // x2 = 0x80000000（INT32_MIN）

@@ -87,6 +87,9 @@ std::string WishboneMemory::genFuncDef_seq() const {
     const int id = _id;
     const int nb = byte_count(_data_width);
     const uint32_t mask = (uint32_t) _depth - 1;
+    // 端口宽度决定 ADR 的低位语义：32 位端口 ADR(1:0) 恒为 0，16/8 位端口
+    // 分别是 ADR(0)/无低位。固定按 4 字节对齐会把 8/16 位访问的地址折错
+    const uint32_t align_mask = ~((uint32_t) nb - 1u);
 
     std::string code;
     code += std::format("// WishboneMemory: {}\n", name());
@@ -112,10 +115,10 @@ std::string WishboneMemory::genFuncDef_seq() const {
     uint32_t _dout = 0;
     uint8_t _ack8 = 0;
     if (_rise) {{
-        // Wishbone B4 RULE 3.100：32 位总线上 ADR(63..02) 是字地址，低两位不参与
+        // Wishbone B4 RULE 3.100：ADR 只到端口字边界，低 log2(字节数) 位不参与
         // 寻址；SEL(i) 对应 DAT(8i+7..8i)，小端时就是该字的第 i 个字节。
         // 从设备只有 addr_width 根地址线，高位在硬件上就是别名回来，按容量折算
-        const uint32_t _a = ((_adr & {1}u) & ~3u);
+        const uint32_t _a = ((_adr & {1}u) & {4}u);
         _wbm_s_{0}.latched_addr = _a;
         if (!_we) {{
             _wbm_s_{0}.latched_dout = 0;
@@ -143,7 +146,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
         else {{ _dout = _wbm_s_{0}.latched_dout; _ack8 = 1; }}
     }}
 )",
-                       id, mask, nb, (unsigned long long) _depth);
+                       id, mask, nb, (unsigned long long) _depth, align_mask);
     // 输出直接写线网：这两个线网只由本元件驱动、init 时清零，
     // 只写有效字节即可，不必再补高位清零
     int dat_nid = outputs()[O_DAT]->netId();

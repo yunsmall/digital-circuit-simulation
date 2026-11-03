@@ -18,9 +18,9 @@ struct MemFixture {
     WishboneMemory *mem = nullptr;
     std::unique_ptr<WbMaster> bus;
 
-    explicit MemFixture(int addr_bits = 16) {
+    explicit MemFixture(int addr_bits = 16, int data_bits = 32) {
         circuit = std::make_unique<Circuit>();
-        auto m = std::make_unique<WishboneMemory>("mem0", addr_bits, 32);
+        auto m = std::make_unique<WishboneMemory>("mem0", addr_bits, data_bits);
         mem = m.get();
         circuit->addComponent(std::move(m));
         bus = std::make_unique<WbMaster>(*circuit);
@@ -85,8 +85,33 @@ TEST(WbMemory, PartialWriteRespectsSel) {
     EXPECT_EQ(m[0x303], 0xFF);
 }
 
-TEST(WbMemory, WriteThenReadSameAddress) {
-    MemFixture f;
+// 8/16 位端口的 ADR 低位语义和 32 位不同：按端口宽度对齐，不能固定折掉低两位
+TEST(WbMemory, NarrowPortAlignsByPortWidth) {
+    MemFixture f8(16, 8);
+    uint8_t *m = f8.bytes();
+    m[0x105] = 0x5A;
+    m[0x104] = 0xA5;
+    uint32_t v = 0;
+    ASSERT_TRUE(f8.bus->transact(0x105, false, 0, 0x1, &v));
+    EXPECT_EQ(v, 0x5Au) << "8 位端口读 0x105 不能折到 0x104";
+
+    ASSERT_TRUE(f8.bus->transact(0x106, true, 0x77, 0x1));
+    EXPECT_EQ(m[0x106], 0x77) << "8 位端口写地址没有按字节寻址";
+    EXPECT_EQ(m[0x104], 0xA5) << "写到了错误的地址";
+
+    MemFixture f16(16, 16);
+    uint8_t *w = f16.bytes();
+    w[0x106] = 0x34;
+    w[0x107] = 0x12;
+    ASSERT_TRUE(f16.bus->transact(0x106, false, 0, 0x3, &v));
+    EXPECT_EQ(v, 0x1234u) << "16 位端口读 0x106 不能折到 0x104";
+
+    ASSERT_TRUE(f16.bus->transact(0x108, true, 0xBEEF, 0x3));
+    EXPECT_EQ(w[0x108], 0xEF);
+    EXPECT_EQ(w[0x109], 0xBE);
+}
+
+TEST(WbMemory, WriteThenReadSameAddress) {    MemFixture f;
     ASSERT_TRUE(f.bus->transact(0x400, true, 0x12345678, 0x0F));
     uint32_t v = 0;
     ASSERT_TRUE(f.bus->transact(0x400, false, 0, 0x0F, &v));

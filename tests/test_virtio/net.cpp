@@ -192,6 +192,35 @@ TEST(VirtioNet, RxRingFull) {
 
 // 超过 PKT_MAX 的帧：只拷贝能放下的部分，长度必须按实际拷贝量截断。
 // 只跳过 memcpy 却继续累加 written，会把未写过的残留数据当成本帧交给后端
+// 宿主 TX 环满时整包丢弃，used.len 必须报 0；报成完整包长会让驱动
+// 以为缓冲区已经发送成功并回收，丢包对上层完全不可见
+TEST(VirtioNet, TransmitRingFullReportsZeroLength) {
+    VirtioFixture<VirtioNet> f;
+    QueueAddrs s{0x100, 0x200, 0x300, 0x500};
+    constexpr int N = 8; // 和 State::PKT_RING 相同，正好填满
+    for (int i = 0; i < N; i++) {
+        f.putDesc(s.desc, (uint16_t) i, s.data + i * 64, 28, 0, 0);
+        std::memset(f.mem() + s.data + i * 64, 0, 28);
+        f.put16(s.avail + 4 + 2 * i, (uint16_t) i);
+    }
+    prepareQueue(f, s, N);
+    f.configureQueue(s.desc, s.avail, s.used, N, 1); // TX 是队列 1
+    f.write(0x070, 1);
+    f.write(0x050, 1);
+    for (int i = 0; i < 5000; i++) f.tick();
+    EXPECT_EQ(f.get16(s.used + 2), (uint16_t) N) << "前 8 个包应全部完成";
+
+    // 第 9 个包：复用 desc 0，avail 下标绕回 0
+    f.put16(s.avail + 4, 0);
+    f.put16(s.avail + 2, N + 1);
+    f.write(0x050, 1);
+    for (int i = 0; i < 3000; i++) f.tick();
+
+    EXPECT_EQ(f.get16(s.used + 2), (uint16_t) (N + 1)) << "环满也必须完成描述符";
+    // used 环大小是 N，第 9 项写回下标 0
+    EXPECT_EQ(f.usedLen(s.used, 0), 0u) << "环满丢弃的包不能报告已交付长度";
+}
+
 TEST(VirtioNet, TransmitOversizeTruncatesConsistently) {
     VirtioFixture<VirtioNet> f;
     QueueAddrs s{0x100, 0x200, 0x300, 0x500}; // data 放高一点，避免 1.7KB 撞到 used 环

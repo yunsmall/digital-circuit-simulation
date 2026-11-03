@@ -1117,11 +1117,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             // 只有 f3=1/5 才可能是 Z 扩展。f3=2/3 是 SLTI/SLTIU，此时 inst[31:25]
             // 是立即数高位而非 funct7，放进来会让某些立即数被误判成 Zbb/Zbs
             const bool z_imm_f3 = (f3 == 1 || f3 == 5);
-            // Zbkb 的 zip/unzip 也在 OP-IMM：funct7=0x04、rs2=0，f3=1 是 zip、5 是 unzip。
+            // Zbkb 的 zip/unzip 也在 OP-IMM：funct7=0x04、f3=1 是 zip、5 是 unzip。
             // 语义是把低半与高半的位交错/解交错
-            // zip/unzip 的 rs2 不是 0 而是固定编码 0x0F（与 rev8 的 0x18 同类），
-            // 所以只能按 (funct7, funct3) 精确匹配
-            if (f7 == RV::F7_ZUW && (f3 == 1 || f3 == 5)) {
+            // rs2 字段是固定编码 0x0F。只按 funct7/funct3 匹配会把
+            // `addi rd, rs1, 0x080..0x09F` 这类合法立即数错当成 zip/unzip
+            if (f7 == RV::F7_ZUW && (f3 == 1 || f3 == 5) && (rs2 & 0x1Fu) == 0x0Fu) {
                 const int half = XLEN / 2;
                 XLen r = 0;
                 for (int i = 0; i < half; ++i) {
@@ -2273,7 +2273,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     if (dsnan) s.fcsr |= 0x10;
                 } else if (db == 0.0) {
                     if (da == 0.0) { s.fregs[rd] = 0x7FF8000000000000ULL; s.fcsr |= 0x10; }
-                    else { setd(std::signbit(da) != std::signbit(db) ? -INFINITY : INFINITY); s.fcsr |= 0x08; }
+                    else {
+                        setd(std::signbit(da) != std::signbit(db) ? -INFINITY : INFINITY);
+                        // Inf/0 的结果是 Inf，不是除零异常；只有有限非零被除数才置 DZ
+                        if (std::isfinite(da)) s.fcsr |= 0x08;
+                    }
                 } else {
                     double hi = da / db;
                     // 只有"非零被除数下溢成 0"才算 UF|NX；0/db 是精确的 +0

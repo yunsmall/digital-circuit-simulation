@@ -125,8 +125,43 @@ static uint32_t enc_jal0() { return 0x0000006Fu; }
 uint32_t enc_fp(uint32_t f7, int rd, int rs1, int rs2) {
     return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (rd << 7) | 0x53;
 }
+uint32_t enc_fld(int rd, int rs1, int imm) {
+    return ((uint32_t)(imm & 0xFFF) << 20) | (rs1 << 15) | (3u << 12) | (rd << 7) | 0x07;
+}
+uint32_t enc_fsd(int rs2, int rs1, int imm) {
+    return ((uint32_t)(imm & 0xFE0) << 20) | (rs2 << 20) | (rs1 << 15) | (3u << 12)
+           | ((uint32_t)(imm & 0x1F) << 7) | 0x27;
+}
 
 } // namespace
+
+// IEEE 754：DZ 只针对"有限非零被除数 / 0"；双精度 Inf/0 的结果是 Inf，
+// 不能置 DZ（单精度路径已经有 isfinite 判断）
+TEST(FpuTest, DoubleDivInfByZeroDoesNotSetDz) {
+    Fixture f;
+    uint8_t *m = f.mem->writableMemPtr();
+    const uint64_t inf = 0x7FF0000000000000ULL;
+    const uint64_t zero = 0;
+    std::memcpy(m + 0x200, &inf, 8);
+    std::memcpy(m + 0x208, &zero, 8);
+    std::memset(m + 0x210, 0, 8);
+
+    f.load({
+            enc_addi(5, 0, 0x200),
+            enc_fld(1, 5, 0),         // f1 = +Inf
+            enc_fld(2, 5, 8),         // f2 = +0
+            enc_fp(0x0D, 3, 1, 2),    // fdiv.d f3, f1, f2（funct7 低位区分 D）
+            enc_fsd(3, 5, 16),        // 结果写回内存
+            enc_jal0(),
+    });
+    f.run(80);
+
+    EXPECT_EQ(f.cpu->freg64(3), inf) << "Inf/0 的结果应为 +Inf";
+    EXPECT_EQ(f.cpu->fcsr() & 0x08u, 0u) << "Inf/0 不应置 DZ";
+    uint64_t stored = 0;
+    std::memcpy(&stored, m + 0x210, 8);
+    EXPECT_EQ(stored, inf);
+}
 
 TEST(FpuTest, AddAndSub) {
     Fixture f;

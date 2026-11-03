@@ -61,24 +61,20 @@ TEST(MultiPortRAM, ReadLatency1) {
     auto c = build(4, 8, 1, 1, 1); // rd_lat=1
     const auto &nets = c->nets();
 
-    // 写入
+    // tick1：写入 mem[5]，同时把读地址也给成 5（本拍末捕获）
     c->setWire(nets[0]->id(), {1, 0});
     c->setWire(nets[1]->id(), {5, 0}); // wa=5
     c->setWire(nets[2]->id(), {0xCD, 0}); // wd=0xCD
     c->setWire(nets[3]->id(), {1, 0}); // we=1
+    c->setWire(nets[4]->id(), {5, 0}); // ra=5
     c->tick();
+    EXPECT_EQ(c->getWire(nets[6]->id())[0], 0) << "第 1 拍流水线未满，rd_valid 应为 0";
 
-    // 第1拍 clk=1, ra=5 — rd_valid 应该为 0（流水线未满）
-    c->setWire(nets[0]->id(), {1, 0});
-    c->setWire(nets[4]->id(), {5, 0});
-    c->tick();
-    EXPECT_EQ(c->getWire(nets[6]->id())[0], 0); // rd_valid=0，数据无效
-
-    // 第2拍 clk=0 — rd_valid 变为 1，数据有效
+    // tick2：地址只用走一级，数据已经有效，valid 必须同拍拉高
     c->setWire(nets[0]->id(), {0, 0});
     c->tick();
-    EXPECT_EQ(c->getWire(nets[6]->id())[0], 1); // rd_valid=1
     EXPECT_EQ(c->getWire(nets[5]->id())[0], 0xCD);
+    EXPECT_EQ(c->getWire(nets[6]->id())[0], 1) << "数据有效的同一拍 rd_valid 不能还是 0";
 }
 
 // ============================================================
@@ -88,27 +84,23 @@ TEST(MultiPortRAM, ReadLatency3) {
     auto c = build(4, 8, 1, 1, 3); // rd_lat=3
     const auto &nets = c->nets();
 
-    // Tick 1: 写入 mem[9]=0x99
+    // tick 1: 写入 mem[9]=0x99，读地址同时给 9
     c->setWire(nets[0]->id(), {1, 0});
     c->setWire(nets[1]->id(), {9, 0});
     c->setWire(nets[2]->id(), {0x99, 0});
     c->setWire(nets[3]->id(), {1, 0});
-    c->tick();
-
-    // 从 tick 2 开始读地址 9
     c->setWire(nets[4]->id(), {9, 0});
-    c->setWire(nets[0]->id(), {0, 0});
+    c->tick();
+    EXPECT_EQ(c->getWire(nets[6]->id())[0], 0) << "第 1 拍流水线未满";
 
+    c->setWire(nets[0]->id(), {0, 0});
     c->tick(); // tick 2
     EXPECT_EQ(c->getWire(nets[6]->id())[0], 0);
 
     c->tick(); // tick 3
     EXPECT_EQ(c->getWire(nets[6]->id())[0], 0);
 
-    c->tick(); // tick 4
-    EXPECT_EQ(c->getWire(nets[6]->id())[0], 0);
-
-    c->tick(); // tick 5: rd_valid=1，数据出现
+    c->tick(); // tick 4: 地址走完三级，数据和 valid 同拍有效
     EXPECT_EQ(c->getWire(nets[6]->id())[0], 1);
     EXPECT_EQ(c->getWire(nets[5]->id())[0], 0x99);
 }

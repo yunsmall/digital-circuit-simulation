@@ -322,8 +322,9 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
             // 只在真的推入一个包时叫醒后端，和每拍无关
             "                            dcs_virtio_trace({1}u, 0x306u, _h2, _l2, _n, 0, 0, 0);\n"
             "                            dcs_vnet_kick(_vio_state_{1});\n"
-            "                        }}\n"
-            // used.len 由公共 genQueue 从 _qv->written 写回，这里必须同步成实际交付量
+            "                        }} else _n = 0;\n"
+            // used.len 由公共 genQueue 从 _qv->written 写回：环满时整包丢弃，
+            // 必须报 0 字节交付，否则驱动会认为这个缓冲区已经发送成功并回收
             "                        _qv->written = _n;\n"
             "                        _qv->phase = {9};\n"
             "                    }}\n"

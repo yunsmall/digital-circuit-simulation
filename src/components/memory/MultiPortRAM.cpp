@@ -145,10 +145,12 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         code += "    " + genOutputWrite(i, std::format("_dout{}", i), _data_width) + "\n";
     }
 
-    // rd_valid
+    // rd_valid 表示"流水线已经灌满、输出数据有效"。第 1 拍 tick=0 时
+    // 还没有任何地址走完一级，所以前 read_latency 拍为 0，第 read_latency+1 拍变 1；
+    // 写成 `>` 会晚一拍，数据已经有效时 valid 还是 0
     if (valid_nid >= 0) {
         if (_rd_stages > 0)
-            code += std::format("    uint8_t _rd_valid = (_mpram_tick_{0} > {1}) ? 1 : 0;\n", sid, _read_latency);
+            code += std::format("    uint8_t _rd_valid = (_mpram_tick_{0} >= {1}) ? 1 : 0;\n", sid, _read_latency);
         else
             code += "    uint8_t _rd_valid = 1;\n";
         code += "    " + genOutputWrite(_num_read, "_rd_valid", 1) + "\n";
