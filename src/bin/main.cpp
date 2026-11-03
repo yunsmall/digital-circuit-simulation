@@ -32,6 +32,8 @@
 #include <sstream>
 #include <thread>
 
+#include "cli_common.h"
+
 // --dll-info 要直接打开动态库读导出符号，只能用平台 API
 #ifdef _WIN32
 #include <windows.h>
@@ -340,21 +342,9 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
 // ---- simulate ----
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
               const std::string &vcd_path, const std::string &dump_mem, dsc::Context &ctx) {
-    std::ifstream ifs(path);
-    if (!ifs) {
-        std::cerr << std::format("错误: 无法打开 '{}'\n", path);
+    auto circuit = dcs_cli::loadCircuit(path, ctx);
+    if (!circuit)
         return 1;
-    }
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    std::string error;
-    auto circuit =
-            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
-    if (!circuit) {
-        std::cerr << std::format("JSON 错误: {}\n", error);
-        return 1;
-    }
-    std::cout << std::format("电路: {} 线网, {} 元件\n", circuit->netCount(), circuit->componentCount());
 
     auto err = circuit->compile();
     if (err.code != dsc::ErrorCode::OK) {
@@ -446,24 +436,17 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     // 调试用：把存储器里的一段原样导出来。跑内核实测时，串口还没初始化
     // 之前内核的日志只在 printk 环形缓冲区里，只能靠它看到内核到底走到哪了
     if (!dump_mem.empty()) {
-        dsc::WishboneMemory *dm = nullptr;
-        for (auto &c: circuit->components())
-            if (auto *m = dynamic_cast<dsc::WishboneMemory *>(c.get())) {
-                dm = m;
-                break;
-            }
+        auto *dm = dcs_cli::findFirstComponent<dsc::WishboneMemory>(*circuit);
         if (!dm) {
             std::cerr << "错误: 电路里没有 WishboneMemory，无法导出\n";
             return 1;
         }
-        const std::string spec = dump_mem;
-        const auto colon = spec.find(':');
-        if (colon == std::string::npos) {
-            std::cerr << "错误: --dump-mem 格式应为 addr:len（十六进制）\n";
+        size_t addr, len;
+        std::string perr;
+        if (!dcs_cli::parseAddrLen(dump_mem, addr, len, perr)) {
+            std::cerr << "错误: " << perr << "\n";
             return 1;
         }
-        const size_t addr = std::stoull(spec.substr(0, colon), nullptr, 0);
-        const size_t len = std::stoull(spec.substr(colon + 1), nullptr, 0);
         const size_t cap = dm->memSize();
         const uint8_t *p = dm->writableMemPtr();
         dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
@@ -598,12 +581,10 @@ int main(int argc, char *argv[]) {
     // 蓝图库查找路径要在任何 fromJson 之前登记（电路 JSON 的 definitions 会用到）。
     // --lib-path 在前，环境变量 DCS_LIB_PATH（PATH 风格）在后
     dsc::Context ctx;
+    std::vector<std::string> lib_paths;
     if (result.count("lib-path"))
-        for (auto &p: result["lib-path"].as<std::vector<std::string>>())
-            ctx.library().addSearchPath(p);
-    if (const char *env = std::getenv("DCS_LIB_PATH"))
-        for (auto &p: dsc::splitPathList(env))
-            ctx.library().addSearchPath(p);
+        lib_paths = result["lib-path"].as<std::vector<std::string>>();
+    dcs_cli::configureLibrary(ctx, lib_paths);
 
     if (result.count("dump-schema"))
         return dumpSchema();

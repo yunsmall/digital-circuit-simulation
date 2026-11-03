@@ -94,6 +94,8 @@ public:
     // --- 验证与编译 ---
     CircuitError check(std::vector<std::string> *warnings = nullptr); // 环路检测，失败返回错误
     // 校验：展开复合元件 + 环路/拓扑检查，不生成也不编译 JIT。
+    // 注意会永久展开并重编号：调用后复合元件消失；若之前编译过，旧 JIT 会先被丢弃
+    // （结构已变，不能再用），tick() 在重新 compile() 前直接返回。
     // 拓扑告警只写进 warnings，不直接打印；CLI 层决定怎么呈现
     CircuitError validate(std::vector<std::string> *warnings = nullptr);
     CircuitError compile(); // JIT 编译（内部: 展开复合→检测→生成C→编译→链接）

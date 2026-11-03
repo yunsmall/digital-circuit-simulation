@@ -30,6 +30,8 @@
 #include <thread>
 #include <vector>
 
+#include "cli_common.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #include <conio.h>
@@ -108,10 +110,7 @@ int readConsoleChar() {
 }
 
 dsc::WishboneMemory *firstMemory(dsc::Circuit &circuit) {
-    for (auto &c: circuit.components())
-        if (auto *m = dynamic_cast<dsc::WishboneMemory *>(c.get()))
-            return m;
-    return nullptr;
+    return dcs_cli::findFirstComponent<dsc::WishboneMemory>(circuit);
 }
 
 // 把整个映像按存储器的地址别名语义灌进去：镜像可以链接在 DRAM_BASE(0x80000000)
@@ -134,21 +133,9 @@ bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
 int runSoc(const std::string &path, const std::string &elf_path, const std::string &disk_path, uint64_t ticks,
            int delay_ms, bool forever, const std::string &dump_mem, const std::string &feed_file,
            uint64_t feed_after, const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
-    std::ifstream ifs(path);
-    if (!ifs) {
-        std::cerr << std::format("错误: 无法打开 '{}'\n", path);
+    auto circuit = dcs_cli::loadCircuit(path, ctx);
+    if (!circuit)
         return 1;
-    }
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    std::string error;
-    auto circuit =
-            dsc::Circuit::fromJson(oss.str(), error, std::filesystem::path(path).parent_path().string(), &ctx);
-    if (!circuit) {
-        std::cerr << std::format("JSON 错误: {}\n", error);
-        return 1;
-    }
-    std::cout << std::format("电路: {} 线网, {} 元件\n", circuit->netCount(), circuit->componentCount());
 
     // 运行期换盘：--disk 覆盖 JSON 里的 file 后端路径。必须在 compile() 之前，
     // 容量和只读特性是生成 config 空间时按介质算的
@@ -406,13 +393,12 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     // 把存储器里的一段原样导出来。串口还没初始化之前内核的日志只在 printk
     // 环形缓冲区里，只能靠它看到内核到底走到哪了
     if (!dump_mem.empty()) {
-        const auto colon = dump_mem.find(':');
-        if (colon == std::string::npos) {
-            std::cerr << "错误: --dump-mem 格式应为 addr:len（十六进制）\n";
+        size_t addr, len;
+        std::string perr;
+        if (!dcs_cli::parseAddrLen(dump_mem, addr, len, perr)) {
+            std::cerr << "错误: " << perr << "\n";
             return 1;
         }
-        const size_t addr = std::stoull(dump_mem.substr(0, colon), nullptr, 0);
-        const size_t len = std::stoull(dump_mem.substr(colon + 1), nullptr, 0);
         const uint8_t *p = mem->writableMemPtr();
         dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
     }
@@ -483,12 +469,10 @@ int main(int argc, char *argv[]) {
     // 蓝图库查找路径要在 fromJson 之前登记（电路 JSON 的 definitions 会用到）。
     // --lib-path 在前，环境变量 DCS_LIB_PATH（PATH 风格）在后
     dsc::Context ctx;
+    std::vector<std::string> lib_paths;
     if (result.count("lib-path"))
-        for (auto &p: result["lib-path"].as<std::vector<std::string>>())
-            ctx.library().addSearchPath(p);
-    if (const char *env = std::getenv("DCS_LIB_PATH"))
-        for (auto &p: dsc::splitPathList(env))
-            ctx.library().addSearchPath(p);
+        lib_paths = result["lib-path"].as<std::vector<std::string>>();
+    dcs_cli::configureLibrary(ctx, lib_paths);
 
     if (!result.count("circuit")) {
         std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";

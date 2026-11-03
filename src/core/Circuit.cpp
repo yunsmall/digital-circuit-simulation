@@ -117,9 +117,6 @@ Net *Circuit::createNet(const std::string &name) {
 }
 
 Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *error) {
-    // 复合元件要按本电路的上下文查定义（不同 Context 可以有同名蓝图）
-    if (auto *cc = dynamic_cast<CompositeComponent *>(comp.get()))
-        cc->setLibrary(&context().library());
     // 加入电路时立即准备元件（DLL 加载、读取描述符创建引脚等）
     std::string prep_err;
     if (!comp->prepare(context(), prep_err)) {

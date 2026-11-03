@@ -20,11 +20,6 @@ CompositeComponent::CompositeComponent(const std::string &name, const std::strin
 // prepare — 加载定义、创建引脚
 // ============================================================
 
-const CircuitLibrary &CompositeComponent::lib() const {
-    // 没经过 Circuit::addComponent（直接 new 出来）时用进程默认库
-    return _lib ? *_lib : CircuitLibrary::instance();
-}
-
 std::map<std::string, std::string> CompositeComponent::effectiveParams(const CircuitDefinition &def) const {
     std::map<std::string, std::string> p = def.params;
     for (auto &[k, v]: _params)
@@ -32,11 +27,13 @@ std::map<std::string, std::string> CompositeComponent::effectiveParams(const Cir
     return p;
 }
 
-bool CompositeComponent::prepare(Context &, std::string &error) {
+bool CompositeComponent::prepare(Context &ctx, std::string &error) {
     if (_prepared)
         return true;
 
-    auto *def = lib().find(_def_name);
+    // 定义必须来自实例所在上下文的库，和 expandTo 用 parent.context().library()
+    // 保持同一个来源；不同 Context 可以有同名但内容不同的蓝图
+    auto *def = ctx.library().find(_def_name);
     if (!def) {
         error = std::format("复合元件 '{}': 定义 '{}' 未在 CircuitLibrary 中注册", name(), _def_name);
         return false;
@@ -49,17 +46,14 @@ bool CompositeComponent::prepare(Context &, std::string &error) {
         }
     }
 
-    if (!loadPinsFromDef(effectiveParams(*def), error))
+    if (!loadPinsFromDef(*def, effectiveParams(*def), error))
         return false;
     _prepared = true;
     return true;
 }
 
-bool CompositeComponent::loadPinsFromDef(const std::map<std::string, std::string> &params, std::string &error) {
-    auto *def = lib().find(_def_name);
-    if (!def)
-        return true;
-
+bool CompositeComponent::loadPinsFromDef(const CircuitDefinition &def,
+                                         const std::map<std::string, std::string> &params, std::string &error) {
     auto pin_width = [&](const ExposedPin &ep, const char *pin_name, const char *dir) {
         if (ep.width.empty())
             return 1;
@@ -77,13 +71,13 @@ bool CompositeComponent::loadPinsFromDef(const std::map<std::string, std::string
         return w;
     };
 
-    for (auto &[pin_name, ep]: def->input_expose) {
+    for (auto &[pin_name, ep]: def.input_expose) {
         const int bw = pin_width(ep, pin_name.c_str(), "输入");
         if (bw == 0)
             return false;
         addInput(pin_name, bw);
     }
-    for (auto &[pin_name, ep]: def->output_expose) {
+    for (auto &[pin_name, ep]: def.output_expose) {
         const int bw = pin_width(ep, pin_name.c_str(), "输出");
         if (bw == 0)
             return false;
@@ -104,9 +98,7 @@ std::unordered_map<std::string, std::string> CompositeComponent::exportParams() 
 }
 
 std::unique_ptr<Component> CompositeComponent::clone(const std::string &n) const {
-    auto c = std::make_unique<CompositeComponent>(n, _def_name, _params);
-    c->_lib = _lib; // 克隆体跟着原实例用同一个库
-    return c;
+    return std::make_unique<CompositeComponent>(n, _def_name, _params);
 }
 
 // ============================================================

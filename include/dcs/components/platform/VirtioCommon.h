@@ -52,8 +52,9 @@ struct DeviceSpec {
     std::string func_name; // genFuncDef_seq 的函数名
     std::string node_name; // 注释用
     // 生成代码调用的复位回调符号名。JIT 符号表按名字建索引，同名只会留下最后
-    // 注册的那个；各设备的 State 布局不同、thunk 也不同，所以每个设备类必须用自己的名字
-    std::string reset_symbol = "dcs_virtio_reset";
+    // 注册的那个；各设备的 State 布局不同、thunk 也不同，所以每个设备类必须用自己的名字。
+    // 故意不给默认值：空名字会让生成的 C 直接编译失败，比静默覆盖别人的回调好
+    std::string reset_symbol;
     uint32_t dev_id = 0;
     uint32_t nq = 1;
     uint32_t features = 0;
@@ -81,7 +82,7 @@ struct BlkParams {
     std::string func_name;
     std::string node_name;
     // 复位回调符号名：各设备类必须不同，原因见 DeviceSpec::reset_symbol
-    std::string reset_symbol = "dcs_virtio_reset";
+    std::string reset_symbol;
     std::vector<int> in_nets;
     uint32_t features = 0;
     uint64_t size_bytes = 0;

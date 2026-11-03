@@ -26,12 +26,6 @@ public:
     CompositeComponent(const std::string &name, const std::string &definition_name,
                        std::map<std::string, std::string> params = {});
 
-    // 定义来自哪个库。Circuit::addComponent 会设置成它所在上下文的库；
-    // 不设置时退回进程默认库（兼容直接 new 出来用的老代码）
-    void setLibrary(const CircuitLibrary *lib) {
-        _lib = lib;
-    }
-
     // 引用的定义名
     const std::string &definitionName() const {
         return _def_name;
@@ -71,12 +65,10 @@ private:
     // 实例覆盖的蓝图参数；默认值在定义里
     std::map<std::string, std::string> _params;
     bool _prepared = false;
-    const CircuitLibrary *_lib = nullptr;
-
-    const CircuitLibrary &lib() const;
 
     // 从定义加载引脚（width 表达式按有效参数解析）
-    bool loadPinsFromDef(const std::map<std::string, std::string> &params, std::string &error);
+    bool loadPinsFromDef(const CircuitDefinition &def, const std::map<std::string, std::string> &params,
+                         std::string &error);
     std::map<std::string, std::string> effectiveParams(const CircuitDefinition &def) const;
 };
 

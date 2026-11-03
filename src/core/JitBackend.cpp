@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstring>
 #include <format>
+#include <functional>
 
 #ifdef DCS_USE_TCC
 #include <libtcc.h>
@@ -45,6 +46,29 @@
 #endif
 
 namespace dsc {
+
+namespace {
+// 两个后端只在"怎么按名字取地址"上不同，入口列表和校验必须只有一份。
+// 新增入口时只改这里，不会再出现漏改 TCC 或 LLVM 分支的情况
+JitCompileResult resolveEntries(const std::function<void *(const char *)> &sym) {
+    JitCompileResult r;
+    auto load = [&](const char *n) { return sym(n); };
+    r.tick = reinterpret_cast<void (*)()>(load("circuit_tick"));
+    r.tick_cycle = reinterpret_cast<void (*)(int)>(load("circuit_tick_cycle"));
+    r.tick_cycles = reinterpret_cast<void (*)(int, uint64_t)>(load("circuit_tick_cycles"));
+    r.tick_batch = reinterpret_cast<void (*)(uint64_t)>(load("circuit_tick_batch"));
+    r.tick_forever = reinterpret_cast<void (*)()>(load("circuit_tick_forever"));
+    r.init = reinterpret_cast<void (*)()>(load("circuit_init"));
+    r.deinit = reinterpret_cast<void (*)()>(load("circuit_deinit"));
+    r.reset = reinterpret_cast<void (*)()>(load("circuit_reset"));
+    r.set_wire = reinterpret_cast<void (*)(int, const uint8_t *)>(load("circuit_set_wire"));
+    r.set_wire_u64 = reinterpret_cast<void (*)(int, uint64_t)>(load("circuit_set_wire_u64"));
+    r.get_wire = reinterpret_cast<void (*)(int, uint8_t *)>(load("circuit_get_wire"));
+    if (!r.tick || !r.init || !r.set_wire || !r.get_wire)
+        return {ErrorCode::JIT_SYMBOL_FAILED, -1, "查找 JIT 符号失败"};
+    return r;
+}
+} // namespace
 
 namespace {
 #ifdef DCS_USE_TCC
@@ -196,23 +220,10 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     }
     _impl->tcc_state = s;
 
-    JitCompileResult r;
     auto sym = [s](const char *n) { return reinterpret_cast<void *>(tcc_get_symbol(s, n)); };
-    r.tick = reinterpret_cast<void (*)()>(sym("circuit_tick"));
-    r.tick_cycle = reinterpret_cast<void (*)(int)>(sym("circuit_tick_cycle"));
-    r.tick_cycles = reinterpret_cast<void (*)(int, uint64_t)>(sym("circuit_tick_cycles"));
-    r.tick_batch = reinterpret_cast<void (*)(uint64_t)>(sym("circuit_tick_batch"));
-    r.tick_forever = reinterpret_cast<void (*)()>(sym("circuit_tick_forever"));
-    r.init = reinterpret_cast<void (*)()>(sym("circuit_init"));
-    r.deinit = reinterpret_cast<void (*)()>(sym("circuit_deinit"));
-    r.reset = reinterpret_cast<void (*)()>(sym("circuit_reset"));
-    r.set_wire = reinterpret_cast<void (*)(int, const uint8_t *)>(sym("circuit_set_wire"));
-    r.set_wire_u64 = reinterpret_cast<void (*)(int, uint64_t)>(sym("circuit_set_wire_u64"));
-    r.get_wire = reinterpret_cast<void (*)(int, uint8_t *)>(sym("circuit_get_wire"));
-    if (!r.tick || !r.init || !r.set_wire || !r.get_wire) {
+    auto r = resolveEntries(sym);
+    if (r.code != ErrorCode::OK)
         cleanup();
-        return {ErrorCode::JIT_SYMBOL_FAILED, -1, "查找 JIT 符号失败"};
-    }
     return r;
 
 #else
@@ -336,30 +347,17 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         return {ErrorCode::JIT_LINK_FAILED, -1, mod_err};
     }
 
-    auto lookup = [this]<typename F>(const std::string &name) -> F {
-        auto sym = _impl->jit->lookup(name);
-        if (!sym) {
-            llvm::consumeError(sym.takeError());
+    auto sym = [this](const char *name) -> void * {
+        auto s = _impl->jit->lookup(name);
+        if (!s) {
+            llvm::consumeError(s.takeError());
             return nullptr;
         }
-        return sym->template toPtr<F>();
+        return s->toPtr<void *>();
     };
-    JitCompileResult r;
-    r.tick = lookup.operator()<void (*)()>("circuit_tick");
-    r.tick_cycle = lookup.operator()<void (*)(int)>("circuit_tick_cycle");
-    r.tick_cycles = lookup.operator()<void (*)(int, uint64_t)>("circuit_tick_cycles");
-    r.tick_batch = lookup.operator()<void (*)(uint64_t)>("circuit_tick_batch");
-    r.tick_forever = lookup.operator()<void (*)()>("circuit_tick_forever");
-    r.init = lookup.operator()<void (*)()>("circuit_init");
-    r.deinit = lookup.operator()<void (*)()>("circuit_deinit");
-    r.reset = lookup.operator()<void (*)()>("circuit_reset");
-    r.set_wire = lookup.operator()<void (*)(int, const uint8_t *)>("circuit_set_wire");
-    r.set_wire_u64 = lookup.operator()<void (*)(int, uint64_t)>("circuit_set_wire_u64");
-    r.get_wire = lookup.operator()<void (*)(int, uint8_t *)>("circuit_get_wire");
-    if (!r.tick || !r.init || !r.set_wire || !r.get_wire) {
+    auto r = resolveEntries(sym);
+    if (r.code != ErrorCode::OK)
         cleanup();
-        return {ErrorCode::JIT_SYMBOL_FAILED, -1, "查找 JIT 符号失败"};
-    }
     return r;
 #endif
 }
