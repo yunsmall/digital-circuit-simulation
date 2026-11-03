@@ -163,6 +163,88 @@ TEST(CheckTool, CheckBlueprintValidatesReferencedDefinitions) {
     EXPECT_EQ(report.components, 1) << "被引用的蓝图应被实例化检查";
 }
 
+// 被引用的依赖已经先在库里时，仍要按本次导入重新校验：只靠"名字新出现"判断会漏掉它
+TEST(CheckTool, CheckReferencedBlueprintAlreadyInLibrary) {
+    TempDir dir;
+    dir.write("leaf.json", std::string(R"JSON({
+      "$meta": {"kind": "blueprint", "format": 1},
+      "definitions": {"chk_leaf_existing": )JSON") + kNotDef + "}}");
+    dir.write("wrapper.json", R"JSON({
+      "$meta": {"kind": "blueprint", "format": 1},
+      "definitions": {"chk_leaf_existing": "leaf.json"}
+    })JSON");
+    Context ctx;
+    std::string error;
+    ASSERT_TRUE(loadDefinitionsFromFile((dir.root / "leaf.json").string(), &ctx, error)) << error;
+    CheckReport report;
+    ASSERT_TRUE(checkBlueprintFile((dir.root / "wrapper.json").string(), &ctx, report, error)) << error;
+    EXPECT_EQ(report.components, 1) << "库中已有的依赖也要重新实例化检查";
+}
+
+// 单定义蓝图没有名字，独立校验时用文件名做键；库里已有同名定义时不能覆盖用户定义
+TEST(CheckTool, UnnamedBlueprintDoesNotOverwriteExistingDefinition) {
+    TempDir dir;
+    dir.write("gate.json", std::string(R"JSON({
+      "$meta": {"kind": "blueprint", "format": 1},
+      "nets": ["a", "y"],
+      "components": [{"type": "not", "name": "n0", "params": {"bit_width": "1"},
+                      "connections": {"in": "a", "out": "y"}}],
+      "expose": {"inputs": {"a": "a"}, "outputs": {"y": "y"}}
+    })JSON"));
+    Context ctx;
+    std::string error;
+    // 用户上下文里先有一个同名的两元件定义
+    const std::string user_json = std::string(R"JSON({"definitions": {"gate": )JSON") + kDoubleNotDef +
+                                   R"JSON(}, "components": []})JSON";
+    ASSERT_NE(Circuit::fromJson(user_json, error, "", &ctx), nullptr) << error;
+
+    CheckReport report;
+    ASSERT_TRUE(checkBlueprintFile((dir.root / "gate.json").string(), &ctx, report, error)) << error;
+    EXPECT_EQ(report.components, 1) << "校验的是文件里的单定义蓝图";
+    const auto *user_def = ctx.library().find("gate");
+    ASSERT_NE(user_def, nullptr);
+    EXPECT_EQ(user_def->components.size(), 2u) << "用户已有的同名定义不能被覆盖";
+}
+
+// 字段类型写错只能报错，不能让异常穿出去把进程带走
+TEST(JsonTypes, MalformedFieldsProduceErrors) {
+    struct Case {
+        const char *json;
+        const char *needle;
+    };
+    const Case cases[] = {
+            {R"({"nets": [1], "components": []})", "nets[0]"},
+            {R"({"nets": [], "components": [1]})", "components[0]"},
+            {R"({"nets": [], "components": [{"type": 3}]})", "type"},
+            {R"({"$meta": {"author": 1}, "nets": [], "components": []})", "author"},
+            {R"({"$meta": {"kind": 1}, "nets": [], "components": []})", "$meta.kind"},
+            {R"({"definitions": {"d": {"nets": [1]}}, "components": []})", "nets"},
+    };
+    for (const auto &c: cases) {
+        std::string error;
+        auto circuit = Circuit::fromJson(c.json, error);
+        EXPECT_EQ(circuit, nullptr) << c.json;
+        EXPECT_NE(error.find(c.needle), std::string::npos) << c.json << ": " << error;
+    }
+}
+
+// 直接调库接口时，根不是对象、定义字段类型错误都要写 error
+TEST(JsonTypes, LibraryImportReportsFieldTypes) {
+    CircuitLibrary lib;
+    std::string error;
+    lib.importJson("[1, 2]", error);
+    EXPECT_FALSE(error.empty()) << "根不是对象时必须报错";
+
+    error.clear();
+    lib.importJson(R"({"d": {"nets": [1]}})", error);
+    EXPECT_NE(error.find("nets"), std::string::npos) << error;
+    EXPECT_EQ(lib.find("d"), nullptr) << "导入失败时不能留下半份定义";
+
+    error.clear();
+    lib.importJson(R"({"d": {"nets": ["a"], "expose": {"inputs": {"i": 1}}}})", error);
+    EXPECT_NE(error.find("expose.inputs"), std::string::npos) << error;
+}
+
 // $meta.kind 的默认值：没有 $meta 按 circuit
 TEST(CheckTool, ReadJsonKindDefaultsToCircuit) {
     TempDir dir;
@@ -203,4 +285,108 @@ TEST(PathList, SplitsWithPlatformSeparator) {
     EXPECT_EQ(parts[1], "b");
     EXPECT_EQ(parts[2], "c");
     EXPECT_TRUE(splitPathList("").empty());
+}
+
+// --list-definitions 只导入 definitions：电路文件没有 components、或者元件建不出来
+// （ROM/DLL 路径缺失）都不该影响定义导入
+TEST(CheckTool, ListDefinitionsIgnoresCircuitComponents) {
+    TempDir dir;
+    dir.write("defs_only.json", std::string(R"JSON({
+      "definitions": {"chk_list_def": )JSON") + kNotDef + "}}");
+    Context ctx;
+    std::string error;
+    ASSERT_TRUE(loadDefinitionsFromFile((dir.root / "defs_only.json").string(), &ctx, error)) << error;
+    EXPECT_NE(ctx.library().find("chk_list_def"), nullptr);
+}
+
+// 定义导入失败必须整体回滚：另一个蓝图路径不存在时，前面已导入的定义不能留在库里
+TEST(CheckTool, FailedDefinitionImportRollsBackLibrary) {
+    TempDir dir;
+    dir.write("good.json", std::string(R"JSON({
+      "$meta": {"kind": "blueprint", "format": 1},
+      "definitions": {"chk_rollback_good": )JSON") + kNotDef + "}}");
+    const std::string top = R"JSON({
+      "definitions": {
+        "chk_rollback_good": "good.json",
+        "chk_rollback_missing": "no_such_blueprint.json"
+      },
+      "components": []
+    })JSON";
+    Context ctx;
+    std::string error;
+    EXPECT_EQ(Circuit::fromJson(top, error, dir.base(), &ctx), nullptr);
+    EXPECT_NE(error.find("no_such_blueprint"), std::string::npos) << error;
+    EXPECT_EQ(ctx.library().find("chk_rollback_good"), nullptr) << "失败的导入留下了半个库";
+}
+
+// 元件创建失败（未知类型）时，之前导入的定义也要回滚
+TEST(CheckTool, ComponentFailureRollsBackLibrary) {
+    TempDir dir;
+    dir.write("good.json", std::string(R"JSON({
+      "$meta": {"kind": "blueprint", "format": 1},
+      "definitions": {"chk_rollback2": )JSON") + kNotDef + "}}");
+    const std::string top = R"JSON({
+      "definitions": {"chk_rollback2": "good.json"},
+      "components": [{"type": "no_such_type", "name": "bad"}]
+    })JSON";
+    Context ctx;
+    std::string error;
+    EXPECT_EQ(Circuit::fromJson(top, error, dir.base(), &ctx), nullptr);
+    EXPECT_NE(error.find("no_such_type"), std::string::npos) << error;
+    EXPECT_EQ(ctx.library().find("chk_rollback2"), nullptr) << "失败的导入留下了半个库";
+}
+
+// 蓝图里的嵌套参数要和顶层电路一样拍平成点分键（backend_opts.hostfwd）
+TEST(JsonTypes, BlueprintNestedParamsAreFlattened) {
+    Context ctx;
+    std::string error;
+    const std::string json = R"JSON({
+      "definitions": {"chk_flat": {
+        "nets": ["a", "y"],
+        "components": [{"type": "not", "name": "n0",
+          "params": {"bit_width": "1",
+                     "backend_opts": {"hostfwd": "tcp::1", "nested": {"k": "v"}}},
+          "connections": {"in": "a", "out": "y"}}],
+        "expose": {"inputs": {"a": "a"}, "outputs": {"y": "y"}}}},
+      "components": []
+    })JSON";
+    ASSERT_NE(Circuit::fromJson(json, error, "", &ctx), nullptr) << error;
+    const auto *def = ctx.library().find("chk_flat");
+    ASSERT_NE(def, nullptr);
+    ASSERT_EQ(def->components.size(), 1u);
+    const auto &p = def->components[0].params;
+    EXPECT_EQ(p.count("backend_opts"), 0u) << "嵌套对象没有拍平";
+    EXPECT_EQ(p.at("backend_opts.hostfwd"), "tcp::1");
+    EXPECT_EQ(p.at("backend_opts.nested.k"), "v");
+}
+
+// 容器字段存在但类型不对必须报错，不能当成"没写"静默接受
+TEST(JsonTypes, ContainerFieldsMustHaveRightType) {
+    struct Case {
+        const char *json;
+        const char *needle;
+    };
+    const Case cases[] = {
+            {R"({"nets": "foo", "components": []})", "nets 必须是数组"},
+            {R"({"nets": [], "components": [{"type": "not", "params": []}]})", "params 必须是对象"},
+            {R"({"nets": [], "components": [{"type": "not", "connections": []}]})",
+             "connections 必须是对象"},
+            {R"({"nets": [], "components": [{"type": "not", "connections": {"in": 3}}]})",
+             "connections['in']"},
+            {R"({"definitions": {"d": {"nets": ["a"], "components": [{"type": "not", "params": []}]}},
+                 "components": []})",
+             "params 必须是对象"},
+            {R"({"definitions": {"d": {"nets": ["a"], "expose": []}}, "components": []})",
+             "expose 必须是对象"},
+            {R"({"definitions": {"d": {"nets": ["a"],
+                 "expose": {"inputs": {"p": "x"}, "outputs": {"p": "y"}}}}, "components": []})",
+             "同时出现在"},
+    };
+    for (const auto &c: cases) {
+        Context ctx;
+        std::string error;
+        auto circuit = Circuit::fromJson(c.json, error, "", &ctx);
+        EXPECT_EQ(circuit, nullptr) << c.json;
+        EXPECT_NE(error.find(c.needle), std::string::npos) << c.json << ": " << error;
+    }
 }

@@ -23,6 +23,9 @@ struct CircuitDefinition {
     std::string name;
     // 这个定义从哪来：内联定义的来源标签，或蓝图文件的路径。只用于诊断输出
     std::string source;
+    // 每次登记时库分配的递增编号。用来判断"这次导入覆盖了哪些定义"：
+    // 内容相同的定义被重新导入时 source 不变，只有编号能反映覆盖
+    std::size_t import_serial = 0;
     std::vector<std::string> nets; // 内部线网名
     std::vector<ComponentRecipe> components; // 子元件配方
     std::unordered_map<std::string, std::string> input_expose; // pin_name → net_name
@@ -57,9 +60,19 @@ public:
         return _defs;
     }
 
+    // 导入失败回滚：把定义表整体拷出来，失败时恢复。导入会覆盖同名定义，
+    // 没有快照就没法区分"本次新增"和"调用方原有"
+    std::unordered_map<std::string, CircuitDefinition> snapshot() const {
+        return _defs;
+    }
+    void restore(std::unordered_map<std::string, CircuitDefinition> defs) {
+        _defs = std::move(defs);
+    }
+
 private:
     std::unordered_map<std::string, CircuitDefinition> _defs;
     std::vector<std::string> _search_paths;
+    std::size_t _import_counter = 0;
 };
 
 } // namespace dsc

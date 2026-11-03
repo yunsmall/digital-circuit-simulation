@@ -6,6 +6,7 @@
 #include <format>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -58,6 +59,19 @@ std::vector<std::string> describeDefinitions(const CircuitLibrary &lib) {
     return out;
 }
 
+// 单定义蓝图本身没有名字，导入时要从引用处的键取名。独立校验/列出时没有引用处，
+// 用文件名做键；库里已有同名定义就加后缀。注意定义里写了 $meta.name 时以它为准
+// （那是文件自己声明的规范名字，与普通导入一样会覆盖同名定义）
+std::string keyForUnnamedBlueprint(const CircuitLibrary &lib, const fs::path &p) {
+    std::string base = p.stem().string();
+    if (base.empty())
+        base = "blueprint";
+    std::string key = base;
+    for (int i = 1; lib.exists(key); i++)
+        key = std::format("{}_{}", base, i);
+    return key;
+}
+
 } // namespace
 
 bool readJsonKind(const std::string &path, std::string &kind, std::string &error) {
@@ -72,8 +86,15 @@ bool readJsonKind(const std::string &path, std::string &kind, std::string &error
         error = std::format("{} 的根必须是对象", path);
         return false;
     }
-    if (auto m = root.find("$meta"); m != root.end() && m->is_object())
-        kind = m->value("kind", std::string{"circuit"});
+    if (auto m = root.find("$meta"); m != root.end() && m->is_object()) {
+        if (auto k = m->find("kind"); k != m->end()) {
+            if (!k->is_string()) {
+                error = std::format("{}: $meta.kind 必须是字符串", path);
+                return false;
+            }
+            kind = k->get<std::string>();
+        }
+    }
     return true;
 }
 
@@ -87,7 +108,7 @@ bool loadDefinitionsFromFile(const std::string &path, Context *ctx, std::string 
         // 用只含一个引用的最小电路把文件里的定义导进上下文
         nlohmann::json wrapper;
         wrapper["definitions"] = nlohmann::json::object();
-        wrapper["definitions"]["__dcs_check__"] = p.filename().string();
+        wrapper["definitions"][keyForUnnamedBlueprint(libraryOf(ctx), p)] = p.filename().string();
         wrapper["components"] = nlohmann::json::array();
         std::string err;
         auto c = Circuit::fromJson(wrapper.dump(), err, base.string(), ctx);
@@ -100,8 +121,21 @@ bool loadDefinitionsFromFile(const std::string &path, Context *ctx, std::string 
     std::string text;
     if (!readFile(path, text, error))
         return false;
+    nlohmann::json root;
+    if (!parseJson(text, path, root, error))
+        return false;
+    if (!root.is_object()) {
+        error = std::format("{} 的根必须是对象", path);
+        return false;
+    }
+    // 只导入 definitions：电路文件里可能没有 components，元件也可能因为外部
+    // 文件（ROM/DLL）缺失而建不出来——列定义/读蓝图不该被这些副作用拖累
+    nlohmann::json wrapper;
+    wrapper["components"] = nlohmann::json::array();
+    if (root.contains("definitions"))
+        wrapper["definitions"] = root["definitions"];
     std::string err;
-    auto c = Circuit::fromJson(text, err, base.string(), ctx);
+    auto c = Circuit::fromJson(wrapper.dump(), err, base.string(), ctx);
     if (!c) {
         error = err;
         return false;
@@ -134,20 +168,23 @@ bool checkCircuitFile(const std::string &path, Context *ctx, CheckReport &report
 
 bool checkBlueprintFile(const std::string &path, Context *ctx, CheckReport &report, std::string &error) {
     CircuitLibrary &lib = libraryOf(ctx);
-    // 记录本次导入新增的定义：只被引用的文件（自己不定义任何东西）也要校验它的依赖
-    std::vector<std::string> before;
+    // 记录本次导入覆盖了哪些定义：只被引用的文件（自己不定义任何东西）也要校验依赖。
+    // 不能只看"名字是否新出现"——依赖蓝图可能已经在库里，被重新导入后名字不变，
+    // 只有库分配的导入编号能反映它这次被读过
+    std::unordered_map<std::string, std::size_t> before;
     for (auto &[name, def]: lib.definitions())
-        before.push_back(name);
+        before[name] = def.import_serial;
     if (!loadDefinitionsFromFile(path, ctx, error))
         return false;
 
-    // 本文件引入的定义：新登记的名字，加上 source 指向本文件的（重复校验无害）
+    // 本文件引入的定义：这次新建或覆盖的，加上 source 指向本文件的（重复校验无害）
     const std::string self = canonString(path);
     std::vector<std::string> names;
     for (auto &[name, def]: lib.definitions()) {
-        const bool is_new = std::find(before.begin(), before.end(), name) == before.end();
+        auto it = before.find(name);
+        const bool imported_now = it == before.end() || it->second != def.import_serial;
         const bool from_self = !def.source.empty() && canonString(def.source) == self;
-        if (is_new || from_self)
+        if (imported_now || from_self)
             names.push_back(name);
     }
     if (names.empty()) {

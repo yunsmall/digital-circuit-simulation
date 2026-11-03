@@ -217,3 +217,31 @@ TEST(TruthTable, RejectsEmptyInputs) {
     std::string err;
     EXPECT_FALSE(computeTruthTable(c, {}, "y", t, err));
 }
+
+// 被元件输出驱动的网不能当输入：写进去的值会在 tick 里被电路覆盖，枚举出来的表是错的
+TEST(TruthTable, RejectsDrivenInputNet) {
+    Circuit c;
+    Net *a, *b, *y;
+    add2x1(c, GateOp::XOR, a, b, y);
+    mustCompile(c);
+    TruthTable t;
+    std::string err;
+    EXPECT_FALSE(computeTruthTable(c, {"y"}, "y", t, err));
+    EXPECT_NE(err.find("驱动"), std::string::npos) << err;
+
+    // 真正的外部输入网照常可用
+    err.clear();
+    EXPECT_TRUE(computeTruthTable(c, {"a", "b"}, "y", t, err)) << err;
+}
+
+// 同一个输入网列两次时，枚举只会保留最后一次赋值，表没有意义
+TEST(TruthTable, RejectsDuplicateInputs) {
+    Circuit c;
+    Net *a, *b, *y;
+    add2x1(c, GateOp::AND, a, b, y);
+    mustCompile(c);
+    TruthTable t;
+    std::string err;
+    EXPECT_FALSE(computeTruthTable(c, {"a", "a"}, "y", t, err));
+    EXPECT_NE(err.find("重复"), std::string::npos) << err;
+}

@@ -2,6 +2,7 @@
 
 #include <format>
 #include <sstream>
+#include <unordered_set>
 
 #include "dcs/Circuit.h"
 
@@ -18,7 +19,13 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
         return false;
     }
     std::vector<Net *> in_nets;
+    std::unordered_set<std::string> seen;
     for (const auto &name: inputs) {
+        // 同一个网出现两次时，枚举里后一次赋值会覆盖前一次，表只反映最后一次写入
+        if (!seen.insert(name).second) {
+            error = std::format("输入网 '{}' 重复", name);
+            return false;
+        }
         Net *n = c.findNet(name);
         if (!n) {
             error = std::format("找不到输入网 '{}'", name);
@@ -38,6 +45,20 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
     if (out_net->bit_width() != 1) {
         error = std::format("输出网 '{}' 位宽是 {}，真值表只支持 1 位", output, out_net->bit_width());
         return false;
+    }
+
+    // 真值表靠从外部写输入网来枚举组合。输入网如果被元件的输出引脚驱动，写进去的
+    // 值会在 tick 里被电路自己覆盖，枚举出来的表是错的，所以在入口直接拒绝
+    for (Net *n: in_nets) {
+        for (auto &comp: c.components()) {
+            for (auto &out: comp->outputs()) {
+                if (out->net() == n) {
+                    error = std::format("输入网 '{}' 被元件 '{}' 的输出引脚 '{}' 驱动，不能作为真值表输入",
+                                        n->name(), comp->name(), out->name());
+                    return false;
+                }
+            }
+        }
     }
 
     out.inputs = inputs;
