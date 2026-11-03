@@ -134,6 +134,8 @@ std::vector<Component::JitSymbol> VirtioNet::extraJitSymbols() const {
 }
 
 bool VirtioNet::pushRxPacket(const uint8_t *data, uint32_t len) {
+    // pollBackend 和后端线程都可能投递 RX 包；环本身只保证单生产者
+    std::lock_guard<std::mutex> lock(_rx_mutex);
     auto &s = *_state;
     // 0 长度帧没有意义，而且设备侧会把它当"头写完但没有包体"：rx_tail 不前进，
     // 后面所有包都被它堵在环里
@@ -151,6 +153,8 @@ bool VirtioNet::pushRxPacket(const uint8_t *data, uint32_t len) {
 }
 
 uint32_t VirtioNet::popTxPacket(uint8_t *buf, uint32_t max_len) {
+    // pollBackend 和后端线程都可能取 TX 包；环本身只保证单消费者
+    std::lock_guard<std::mutex> lock(_tx_mutex);
     auto &s = *_state;
     const uint32_t head = std::atomic_ref<uint32_t>(s.tx_head).load(std::memory_order_acquire);
     const uint32_t tail = std::atomic_ref<uint32_t>(s.tx_tail).load(std::memory_order_relaxed);

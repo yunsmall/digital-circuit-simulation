@@ -94,8 +94,11 @@ void VirtioInput::simInit() {
 }
 
 void VirtioInput::simDeinit() {
-    if (_state->ops.deinit)
+    // clear()/析构会重复调用 simDeinit；deinit 后把 ctx 置空，避免后端回调被调两次
+    if (_state->ops.deinit && _state->ops.ctx) {
         _state->ops.deinit(_state->ops.ctx);
+        _state->ops.ctx = nullptr;
+    }
 }
 
 std::vector<Component::JitSymbol> VirtioInput::extraJitSymbols() const {
@@ -105,10 +108,13 @@ std::vector<Component::JitSymbol> VirtioInput::extraJitSymbols() const {
 
 bool VirtioInput::pushInputEvent(const InputEvent &ev) {
     auto &s = *_state;
-    const uint32_t next = (s.evt_head + 1) % State::EVT_RING;
-    if (next == s.evt_tail)
+    // head/tail 都用实际增长值，只在索引时取模。若 head 写成模值而 tail 单调增长，
+    // tail 越过 RING 后 (head+1)%RING == tail 永远不成立，环满检测失效，
+    // q.start 里的 _h - _t 也会下溢成巨值
+    const uint32_t next = s.evt_head + 1;
+    if (next % State::EVT_RING == s.evt_tail % State::EVT_RING)
         return false; // 环满
-    s.events[s.evt_head] = ev;
+    s.events[s.evt_head % State::EVT_RING] = ev;
     s.evt_head = next;
     return true;
 }

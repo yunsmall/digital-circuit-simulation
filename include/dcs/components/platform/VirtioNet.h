@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,9 @@ private:
     std::string _backend;
     std::map<std::string, std::string> _backend_opts;
     BackendOps _ops;
+    // rx/tx 环本身是单生产者单消费者；但宿主 pollBackend 和后端自己的线程
+    // 都可能调用 push/pop，这里把主机侧的多生产者/多消费者串行化
+    std::mutex _rx_mutex, _tx_mutex;
 
     // JIT 侧入口：从 State 里取后端上下文转发 kick
     static void kickThunk(void *state);

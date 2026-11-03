@@ -342,6 +342,12 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
 // ---- simulate ----
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
               const std::string &vcd_path, const std::string &dump_mem, dsc::Context &ctx) {
+    // --forever 不会正常返回（tickForever 或 Ctrl+C 结束进程），后段的 dump-mem
+    // 永远执行不到；早点报错，不要让参数静默失效
+    if (forever && !dump_mem.empty()) {
+        std::cerr << "错误: --forever 下仿真不会正常结束，--dump-mem 无法执行\n";
+        return 1;
+    }
     auto circuit = dcs_cli::loadCircuit(path, ctx);
     if (!circuit)
         return 1;

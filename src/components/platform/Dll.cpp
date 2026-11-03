@@ -182,13 +182,22 @@ void DllComponent::simInit() {
             return;
         }
     }
-    if (_init_fn)
+    // 重复 init（用户把 init 当"重置"用）不能重复执行全局 init；
+    // deinit 会把 _init_called 清掉，下一次 init 才会重新执行
+    if (_init_called)
+        return;
+    if (_init_fn) {
         _init_fn();
+        _init_called = true;
+    }
 }
 
 void DllComponent::simDeinit() {
-    if (_deinit_fn)
+    // validate()/--check 路径只 prepare，从未 simInit；这时不能调 deinit，
+    // 否则 DLL 会在 init 之前收到 deinit
+    if (_deinit_fn && _init_called)
         _deinit_fn();
+    _init_called = false;
     if (_loaded) {
         dll_unload(_dll_path);
         _dll_handle = nullptr;
@@ -302,6 +311,8 @@ std::string DllComponent::genInitCode() const {
     int no = (int) outputs().size();
     int out_count = no > 0 ? no : 1;
     std::string code;
+    // circuit_init 可能被重复调用（init 当重置用）：先销毁旧状态，避免泄漏
+    code += std::format("    if (_dcs_dll_state_{0}) _dcs_dll_destroy_{0}(_dcs_dll_state_{0});\n", id);
     code += std::format("    _dcs_dll_state_{0} = _dcs_dll_create_{0}();\n", id);
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
@@ -325,8 +336,12 @@ std::string DllComponent::genResetCode() const {
 }
 
 std::string DllComponent::genDeinitCode() const {
+    // 销毁后清零，重复 deinit/再 init 时不会 double-destroy
     return std::format(R"(
-    _dcs_dll_destroy_{0}(_dcs_dll_state_{0});)",
+    if (_dcs_dll_state_{0}) {{
+        _dcs_dll_destroy_{0}(_dcs_dll_state_{0});
+        _dcs_dll_state_{0} = 0;
+    }})",
                        _id);
 }
 

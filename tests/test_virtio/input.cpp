@@ -262,3 +262,55 @@ TEST(VirtioInput, BothQueues) {
     ASSERT_TRUE(f.dev->popStatusEvent(got));
     EXPECT_EQ(got.code, 1);
 }
+
+// head/tail 必须都用实际增长值：tail 越过 RING 后，模值 head 与单调 tail
+// 比较会永远判不满，_h - _t 还会下溢，把旧事件当新事件重复投递
+TEST(VirtioInput, RingWorksAfterTailExceedsCapacity) {
+    VirtioFixture<VirtioInput> f;
+    QueueAddrs s{0x000, 0x200, 0x280, 0x400};
+    constexpr int BUFS = 32;
+    for (int i = 0; i < BUFS; i++) {
+        f.putDesc(s.desc, (uint16_t) i, s.data + i * 64, 64, 2, 0); // F_WRITE
+        f.put16(s.avail + 4 + 2 * i, (uint16_t) i);
+    }
+    prepareQueue(f, s, BUFS);
+    f.configureQueue(s.desc, s.avail, s.used, BUFS);
+    f.write(0x050, 0);
+
+    // 第一批：63 个事件，刚好占满环（留一个空位）
+    for (int i = 0; i < 63; i++)
+        ASSERT_TRUE(f.dev->pushInputEvent({1, (uint16_t) i, i}));
+    for (int i = 0; i < 8000; i++) f.tick();
+    EXPECT_EQ(f.get16(s.used + 2), 8u);
+
+    // 第二批：再来 63 个，此时 evt_tail 已经 >= 64
+    for (int i = 0; i < 63; i++)
+        ASSERT_TRUE(f.dev->pushInputEvent({1, (uint16_t) (1000 + i), i}));
+    for (int i = 0; i < 8000; i++) f.tick();
+    EXPECT_EQ(f.get16(s.used + 2), 16u);
+
+    // 第 8 个 buffer 只该有 7 个事件（63 = 7*8 + 7），长度 56
+    EXPECT_EQ(f.usedLen(s.used, 15), 56u);
+    uint16_t code = 0;
+    std::memcpy(&code, f.mem() + s.data + 15 * 64 + 6 * 8 + 2, 2);
+    EXPECT_EQ(code, 1062) << "最后交付的必须是第二批的第 62 个事件";
+    std::memcpy(&code, f.mem() + s.data + 15 * 64 + 7 * 8 + 2, 2);
+    EXPECT_EQ(code, 0) << "没有第 8 个事件，不能把上一轮的残留写进来";
+}
+
+// 析构/clear 会重复调用 simDeinit；带 ctx 的后端回调只能执行一次，
+// 否则释放 ctx 的 deinit 会 double-free
+TEST(VirtioInput, DeinitIsIdempotent) {
+    VirtioFixture<VirtioInput> f;
+    static int calls;
+    calls = 0;
+    VirtioInput::BackendOps ops;
+    ops.ctx = &calls;
+    ops.deinit = [](void *p) { ++*static_cast<int *>(p); };
+    f.dev->setBackend(ops);
+
+    f.c->deinit();
+    EXPECT_EQ(calls, 1);
+    f.c->deinit();
+    EXPECT_EQ(calls, 1) << "第二次 simDeinit 不能再调 backend deinit";
+}

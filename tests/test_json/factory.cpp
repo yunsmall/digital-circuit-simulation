@@ -166,3 +166,14 @@ TEST(ComponentFactory, CustomCategory) {
     EXPECT_EQ(builtin.category, "gate");
     EXPECT_EQ(f.categoryDisplayName(builtin.category), "门电路");
 }
+
+// Meta 的 valid_values 必须和构造函数实际支持的范围一致。
+// wishbone_mem 的引脚只有 32 位，64 位数据会在构造时被拒绝
+TEST(JsonRoundTrip, MemoryDataWidthMatchesDeclaration) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("wishbone_mem", "m", {{"data_width", "64"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("data_width"), std::string::npos)
+        << "应该由 Meta 的参数校验拦下，而不是构造后才报位宽错误: " << err;
+}

@@ -12,6 +12,7 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <sys/select.h>
 #include <unistd.h>
 #endif
 
@@ -43,6 +44,14 @@ int pollStdin() {
     }
     return -1;
 #else
+    // stdin 默认是阻塞的，直接 read 会让整个仿真停在这里等按键；
+    // 先零超时 select，确认可读再读
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    timeval tv{0, 0};
+    if (::select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) <= 0)
+        return -1;
     unsigned char c = 0;
     ssize_t n = ::read(STDIN_FILENO, &c, 1);
     return n == 1 ? (int) c : -1;

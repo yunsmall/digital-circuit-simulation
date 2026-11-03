@@ -74,6 +74,9 @@ void Circuit::deinit() {
         _jit.deinit();
         _jit.deinit = nullptr;
     }
+    // deinit 之后 JIT 代码引用的外部状态（DLL 句柄、DLL 内部对象）已经失效，
+    // 必须让 tick 系列停下；要重新仿真就重新 compile()
+    _compiled = false;
 
     // 仿真结束通知（DLL: dcs_dll_deinit）。各元件自己保证可重复调用
     for (auto &comp: _components)
@@ -672,6 +675,9 @@ void Circuit::tickBatch(uint64_t n) {
 
 void Circuit::tickForever() {
     if (!_compiled)
+        return;
+    // 已经处于总线冲突/振荡错误时不能再进 JIT 死循环，否则错误永远没机会返回
+    if (_tick_error.code != ErrorCode::OK)
         return;
     if (_jit.tick_forever)
         _jit.tick_forever();

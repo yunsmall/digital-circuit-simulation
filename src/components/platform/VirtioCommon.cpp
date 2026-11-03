@@ -417,11 +417,14 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "                    if (_qv->dlen < 16) _qv->phase = {3};\n"
             "                    else {{ _qv->step = 1; _qv->phase = {0}; }}\n"
             "                }} else if (_qv->dflags & 1) {{\n"
-            "                    _qv->phase = {1};\n"
+            // 零长度数据段没有可搬运的字节，直接跳到下一个描述符；
+            // 否则 q.start 里 _l=0，genQueue 不启动主端口事务，请求永远卡在数据阶段
+            "                    if (_qv->dlen == 0) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            "                    else _qv->phase = {1};\n"
             "                }} else {{\n"
             "                    _qv->phase = {2};\n"
             "                }}\n",
-            Q_DEV, Q_DEV + 1, Q_DEV + 2, Q_USED);
+            Q_DEV, Q_DEV + 1, Q_DEV + 2, Q_USED, Q_DESC);
     q.start = std::format(
             "        case {0}: _a = _qv->daddr; _l = 16; _wr = 0; break;\n"
             "        case {3}: {{\n"

@@ -50,6 +50,9 @@ private:
     std::string _dll_path;
     void *_dll_handle = nullptr;
     bool _loaded = false;
+    // 只有真正执行过 dcs_dll_init 才能执行 dcs_dll_deinit。
+    // validate()/--check 只 prepare 不 simInit，销毁时不能调用 deinit
+    bool _init_called = false;
 
     dcs_dll_descriptor_t _desc = {};
 

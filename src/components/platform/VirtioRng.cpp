@@ -54,8 +54,11 @@ void VirtioRng::simInit() {
 }
 
 void VirtioRng::simDeinit() {
-    if (_state->ops.deinit)
+    // clear()/析构会重复调用 simDeinit；deinit 后把 ctx 置空，避免后端回调被调两次
+    if (_state->ops.deinit && _state->ops.ctx) {
         _state->ops.deinit(_state->ops.ctx);
+        _state->ops.ctx = nullptr;
+    }
 }
 
 std::vector<Component::JitSymbol> VirtioRng::extraJitSymbols() const {

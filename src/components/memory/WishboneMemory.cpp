@@ -167,7 +167,7 @@ std::unique_ptr<Component> WishboneMemory::clone(const std::string &new_name) co
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"wishbone_mem", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32", "64"}}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o"}, dsc::ComponentCategory::Memory, "Wishbone 从设备存储器，支持 IStorage 加载程序"},
+    {"wishbone_mem", {{"addr_width", "16"}, {"data_width", "32", {"8", "16", "32"}}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "clk"}, {"wb_dat_o", "wb_ack_o"}, dsc::ComponentCategory::Memory, "Wishbone 从设备存储器，支持 IStorage 加载程序"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             return std::make_unique<dsc::WishboneMemory>(n, dsc::paramInt(p, "addr_width", 16), dsc::paramInt(p, "data_width", 32));
         });

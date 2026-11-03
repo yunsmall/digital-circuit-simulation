@@ -255,3 +255,19 @@ TEST(VirtioTest, HeaderWithoutNextDoesNotWriteHeader) {
     EXPECT_EQ(f.get16(used + 2), 1u);
     EXPECT_EQ(f.mem()[0x200], 99) << "状态字节被写进了请求头";
 }
+
+// 零长度数据段没有字节可搬；必须跳到下一个描述符，不能停在数据阶段等一个
+// 永远不会启动的主端口事务
+TEST(VirtioTest, ZeroLengthDataSegmentDoesNotHang) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 0 /*data_len*/, 0 /*IN*/, 0, false);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++)
+        f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1u) << "零长度数据段不能把请求卡死";
+    EXPECT_EQ(f.mem()[status], 0) << "状态字节应为 OK";
+}

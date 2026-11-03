@@ -68,7 +68,9 @@ std::string LogicGate::genFuncDef_comb() const {
         expr << "_in" << i;
     }
     if (neg)
-        expr << ")";
+        // 反相在 int 上做，宽度不是 8/16/32/64 时高位会是 1；
+        // 这里必须按位宽掩掉，否则脏位写进线网、下游按同宽读取时不会再次掩码
+        expr << ") & " << gen_mask(_bit_width);
 
     return std::format(R"(static void {}(void) {{
 {}

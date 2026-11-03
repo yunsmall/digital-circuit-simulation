@@ -32,3 +32,29 @@ TEST(GatesTest, MultiInput3_AND) {
     c.tick();
     EXPECT_EQ(c.getWire(o->id())[0], 0xFF & 0x0F & 0x55);
 }
+
+// 3 位反相门：~ 在 int 上求值，高位必须按位宽掩掉。
+// 线网宽度也是 3 时，下游 gen_read_wire 不会再掩码，脏位会直接参与运算
+TEST(GatesTest, NarrowNandMasksHighBits) {
+    EXPECT_EQ(runGate(7, 7, 2, 3,
+                      [](const std::string &n, int ni, int bw) {
+                          return std::make_unique<dsc::LogicGate>(n, ni, bw, dsc::GateOp::NAND);
+                      }),
+              0u);
+}
+
+TEST(GatesTest, NarrowNorMasksHighBits) {
+    EXPECT_EQ(runGate(7, 0, 2, 3,
+                      [](const std::string &n, int ni, int bw) {
+                          return std::make_unique<dsc::LogicGate>(n, ni, bw, dsc::GateOp::NOR);
+                      }),
+              0u);
+}
+
+TEST(GatesTest, NarrowXnorMasksHighBits) {
+    EXPECT_EQ(runGate(7, 0, 2, 3,
+                      [](const std::string &n, int ni, int bw) {
+                          return std::make_unique<dsc::LogicGate>(n, ni, bw, dsc::GateOp::XNOR);
+                      }),
+              0u);
+}
