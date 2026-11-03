@@ -406,4 +406,69 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
     }
 }
 
+std::string exportCircuitJson(const Circuit &circuit) {
+    using json = nlohmann::json;
+    json root;
+
+    // 元数据：kind 区分电路/蓝图，format 是数据格式版本。作者和说明是可选字段，
+    // 加载时原样保留、导出时写回，方便脚本和 IDE 识别文件用途
+    json meta;
+    meta["kind"] = "circuit";
+    meta["format"] = kJsonFormatVersion;
+    if (!circuit.author().empty())
+        meta["author"] = circuit.author();
+    if (!circuit.description().empty())
+        meta["description"] = circuit.description();
+    root["$meta"] = meta;
+
+    // 共享定义库直接嵌进根对象，不再走"导出成字符串再 parse 回来"
+    json j_defs = circuit.context().library().toJson();
+    if (!j_defs.empty())
+        root["definitions"] = j_defs;
+
+    // 线网: 名字数组
+    json j_nets = json::array();
+    for (auto &n: circuit.nets())
+        j_nets.push_back(n->name());
+
+    // 元件
+    json j_comps = json::array();
+    for (auto &c: circuit.components()) {
+        json jc;
+        jc["type"] = c->typeName();
+        jc["name"] = c->name();
+
+        // 构造参数（复合元件导出 definition 引用）
+        auto params = c->exportParams();
+        if (!params.empty()) {
+            json jp = json::object();
+            for (auto &[k, v]: params)
+                jp[k] = v;
+            jc["params"] = jp;
+        }
+
+        // 引脚连接: pin_name → net_name (null 表示悬空)
+        json jconn = json::object();
+        for (auto &p: c->inputs()) {
+            if (p->net())
+                jconn[p->name()] = p->net()->name();
+            else
+                jconn[p->name()] = nullptr;
+        }
+        for (auto &p: c->outputs()) {
+            if (p->net())
+                jconn[p->name()] = p->net()->name();
+            else
+                jconn[p->name()] = nullptr;
+        }
+        jc["connections"] = jconn;
+
+        j_comps.push_back(jc);
+    }
+
+    root["nets"] = j_nets;
+    root["components"] = j_comps;
+    return root.dump(2);
+}
+
 } // namespace dsc

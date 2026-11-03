@@ -20,4 +20,8 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
                                              const std::string &base_dir = "",
                                              Context *context = nullptr);
 
+// 导出为电路 JSON（含 $meta 和当前上下文的 definitions）。
+// 读写两侧放在同一文件里，字段增删时能直接对照
+std::string exportCircuitJson(const Circuit &circuit);
+
 } // namespace dsc

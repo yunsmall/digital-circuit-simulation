@@ -61,7 +61,7 @@ void CircuitLibrary::addSearchPath(const std::string &dir) {
     _search_paths.push_back(dir);
 }
 
-std::string CircuitLibrary::exportJson() const {
+nlohmann::json CircuitLibrary::toJson() const {
     using json = nlohmann::json;
     json root = json::object();
 
@@ -123,7 +123,11 @@ std::string CircuitLibrary::exportJson() const {
         root[name] = jd;
     }
 
-    return root.dump();
+    return root;
+}
+
+std::string CircuitLibrary::exportJson() const {
+    return toJson().dump();
 }
 
 // 参数键的拍平规则统一在 dcs/util/ParamFlatten.h，与顶层电路装载共用一份实现

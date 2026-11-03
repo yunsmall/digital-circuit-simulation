@@ -5,6 +5,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -67,7 +68,9 @@ public:
         _search_paths.clear();
     }
 
-    // JSON 支持
+    // JSON 支持。toJson() 给需要拼其它 JSON 的调用方（CircuitSerializer 导出电路时
+    // 直接把定义嵌进根对象），exportJson() 是给只想拿文本的调用方
+    nlohmann::json toJson() const;
     std::string exportJson() const;
     // source 只是记录在定义上，供 --list-definitions 之类的诊断用；
     // base_dir 用于展开时解析元件参数里的相对路径
