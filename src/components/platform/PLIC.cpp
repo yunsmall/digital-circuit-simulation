@@ -83,7 +83,9 @@ std::string PLIC::genInitCode() const {
 
 std::string PLIC::genFuncDef_seq() const {
     const int n = _num_sources;
-    const uint32_t emask = ((1u << (n + 1)) - 1) & ~1u; // 有效源位图，源 0 不存在恒为 0
+    // 源 31 时 n+1=32，1u<<32 是未定义行为（x86 上移位量被掩成 0，emask 会变成 0，
+    // 使能寄存器被写成全 0，所有中断源都失效）
+    const uint32_t emask = n >= 31 ? ~1u : (((1u << (n + 1)) - 1) & ~1u); // 有效源位图，源 0 不存在恒为 0
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
     c += std::format("// PLIC {}\n", name());

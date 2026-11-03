@@ -116,6 +116,21 @@ TEST(PlicTest, PriorityAndEnableGate) {
     f.setSrc(0x00);
 }
 
+// num_sources=31 时位图最高位是 bit31；emask 若用 1u<<32 计算会在 x86 上折成 0，
+// 使能寄存器永远写不进任何位
+TEST(PlicTest, MaxSourceCanBeEnabled) {
+    Fixture f(31);
+    f.compile();
+    f.write(31 * 4, 1);        // source 31 priority = 1
+    f.write(0x2000, 1u << 31); // 使能源 31
+    // irq_src 的 bit30 对应源 31
+    f.circuit->setWire(f.src->id(), {(uint8_t) 0, (uint8_t) 0, (uint8_t) 0, (uint8_t) 0x40});
+    f.cycle();
+    f.cycle();
+    EXPECT_TRUE(f.irqHigh()) << "源 31 使能后应能拉高中断";
+    EXPECT_EQ(f.read(0x200004), 31u) << "claim 应返回源 31";
+}
+
 TEST(PlicTest, ThresholdBlocksInterrupt) {
     Fixture f;
     f.compile();

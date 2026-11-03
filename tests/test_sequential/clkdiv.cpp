@@ -32,8 +32,35 @@ TEST(ClockDividerTest, DivBy2) {
     EXPECT_EQ(c.getWire(out->id())[0] & 1, 1);
 }
 
-TEST(ClockDividerTest, DivBy4) {
+// 奇数分频无法做到 50%：divisor=3 时高 1 拍、低 2 拍（33%），文档按这个行为写
+TEST(ClockDividerTest, DivBy3DutyIsFloorOverCeil) {
     dsc::Circuit c;
+    auto *clk = c.createNet("clk"), *out = c.createNet("out");
+    auto *g = c.addComponent(std::make_unique<dsc::ClockDivider>("d", 3));
+    c.connect(g, "clk", clk);
+    c.connect(g, "out", out);
+    c.compile();
+    c.init();
+
+    std::vector<uint8_t> v1(1, 1), v0(1, 0);
+    auto rising = [&]() {
+        c.setWire(clk->id(), v1);
+        c.tick();
+        c.setWire(clk->id(), v0);
+        c.tick();
+    };
+
+    c.tick();
+    EXPECT_EQ(c.getWire(out->id())[0] & 1, 1) << "counter=0 时输出高";
+    rising(); // counter=1
+    EXPECT_EQ(c.getWire(out->id())[0] & 1, 0);
+    rising(); // counter=2
+    EXPECT_EQ(c.getWire(out->id())[0] & 1, 0);
+    rising(); // 回绕到 0
+    EXPECT_EQ(c.getWire(out->id())[0] & 1, 1);
+}
+
+TEST(ClockDividerTest, DivBy4) {    dsc::Circuit c;
     auto *clk = c.createNet("clk"), *out = c.createNet("out");
     auto *g = c.addComponent(std::make_unique<dsc::ClockDivider>("d", 4));
     c.connect(g, "clk", clk);
