@@ -66,7 +66,7 @@ std::string CLINT::genInitCode() const {
 std::string CLINT::genFuncDef_seq() const {
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
-    c += std::format("// CLINT {}\n", name());
+    c += std::format("// CLINT {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     // 空闲快速路径：mtime 只在时钟上升沿推进，其余寄存器只受总线写影响。
     // 两者都没有时本拍状态和输出都不会变，读 clk/stb/cyc 三根线即可返回

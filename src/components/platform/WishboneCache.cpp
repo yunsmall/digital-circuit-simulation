@@ -87,7 +87,7 @@ std::string WishboneCache::genInitCode() const {
 std::string WishboneCache::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// WishboneCache {}\n", name());
+    c += std::format("// WishboneCache {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(U_ADR) + "], 4);\n";
     c += "    uint32_t _dat = 0; dcs_memcpy(&_dat, _w[" + nid(U_DAT) + "], 4);\n";

@@ -80,7 +80,7 @@ std::string AxiLiteBridge::genInitCode() const {
 std::string AxiLiteBridge::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// AxiLiteBridge {}\n", name());
+    c += std::format("// AxiLiteBridge {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _awaddr = 0; dcs_memcpy(&_awaddr, _w[" + nid(I_AWADDR) + "], 4);\n";
     c += "    uint32_t _wdata = 0; dcs_memcpy(&_wdata, _w[" + nid(I_WDATA) + "], 4);\n";

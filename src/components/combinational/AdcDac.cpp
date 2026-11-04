@@ -1,6 +1,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/AdcDac.h"
 
+#include <cmath>
 #include <format>
 #include <stdexcept>
 
@@ -17,6 +18,9 @@ Dac::Dac(const std::string &name, int bit_width, double vref) :
     CombinationalComponent(name, "dac"), _bit_width(bit_width), _vref(vref) {
     if (bit_width < 1 || bit_width > 32)
         throw std::invalid_argument("位宽必须在1-32之间");
+    // vref 会原样拼进生成 C，inf/nan 是非法 C 字面量，必须在构造期拒绝
+    if (!std::isfinite(vref))
+        throw std::invalid_argument("vref 必须是有限数值");
     setParam("bit_width", std::to_string(bit_width));
     setParam("vref", std::format("{}", vref));
     addInput("value", bit_width);
@@ -47,6 +51,9 @@ Adc::Adc(const std::string &name, int bit_width, double vref) :
     CombinationalComponent(name, "adc"), _bit_width(bit_width), _vref(vref) {
     if (bit_width < 1 || bit_width > 32)
         throw std::invalid_argument("位宽必须在1-32之间");
+    // vref 会原样拼进生成 C，inf/nan 是非法 C 字面量，必须在构造期拒绝
+    if (!std::isfinite(vref))
+        throw std::invalid_argument("vref 必须是有限数值");
     setParam("bit_width", std::to_string(bit_width));
     setParam("vref", std::format("{}", vref));
     addInput("analog", 32);

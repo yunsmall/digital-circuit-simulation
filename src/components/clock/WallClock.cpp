@@ -1,9 +1,11 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/clock/WallClock.h"
 
+#include <charconv>
 #include <chrono>
 #include <format>
 #include <stdexcept>
+#include <system_error>
 
 namespace dsc {
 
@@ -16,8 +18,19 @@ WallClock::WallClock(const std::string &name, int ns_per_tick, const std::string
     SequentialComponent(name, "wallclock"), _ns_per_tick(ns_per_tick), _base_epoch(base_epoch), _sync_host(sync_host) {
     if (ns_per_tick < 1 || ns_per_tick > 1000000000)
         throw std::invalid_argument("ns_per_tick 必须在1-1000000000之间");
+    // base_epoch 会原样写进生成的 C（`<base> .base = <值>ULL;`），必须严格解析成
+    // 无符号整数；只放行全数字，空串表示用宿主时间。任何分号/换行/运算符都不能进
+    if (!_base_epoch.empty()) {
+        uint64_t value = 0;
+        const char *first = _base_epoch.data();
+        const char *last = first + _base_epoch.size();
+        auto [ptr, ec] = std::from_chars(first, last, value);
+        if (ec != std::errc() || ptr != last)
+            throw std::invalid_argument("base_epoch 必须是非负十进制整数（Unix 秒）");
+        _base_epoch = std::to_string(value); // 归一化，避免前导零/异形数字进生成代码
+    }
     setParam("ns_per_tick", std::to_string(ns_per_tick));
-    setParam("base_epoch", base_epoch);
+    setParam("base_epoch", _base_epoch);
     setParam("sync_host", sync_host ? "1" : "0");
     addInput("clk", 1);
     addOutput("year", 16, false, true);

@@ -105,7 +105,7 @@ template<int XLEN> requires SupportedXlen<XLEN>
 std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
     int id = _id;
     std::string code;
-    code += std::format("// RISC-V CPU: {}\n", name());
+    code += std::format("// RISC-V CPU: {}\n", cgen::commentText(name()));
     const std::string sfx = (XLEN == 32) ? "_32" : "_64";
     code += "extern void _dcs_cpu_tick" + sfx + "(void *, const uint8_t *const *);\n";
     code += "extern void _dcs_cpu_reset" + sfx + "(void *);\n\n";

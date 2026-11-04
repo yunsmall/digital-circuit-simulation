@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -124,5 +125,24 @@ TEST(DacAdc, RoundTripWithinOneLsb) {
         AdcFx a(8, 5.0);
         const float volts = d.run(v);
         EXPECT_LE(std::llabs((long long) a.run(volts) - (long long) v), 1u) << "value " << v;
+    }
+}
+
+// vref 会原样拼进生成的 C，inf/nan 不是合法 C 字面量
+TEST(DacAdc, RejectsNonFiniteVref) {
+    EXPECT_THROW(Dac("d", 8, std::numeric_limits<double>::infinity()), std::invalid_argument);
+    EXPECT_THROW(Dac("d", 8, -std::numeric_limits<double>::infinity()), std::invalid_argument);
+    EXPECT_THROW(Dac("d", 8, std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
+    EXPECT_THROW(Adc("a", 8, std::numeric_limits<double>::infinity()), std::invalid_argument);
+    EXPECT_THROW(Adc("a", 8, std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
+}
+
+TEST(DacAdc, JsonLoadRejectsNonFiniteVref) {
+    for (const char *type: {"dac", "adc"}) {
+        const std::string json = std::string(R"({"nets":[],"components":[{"type":")") + type +
+                                   R"(","name":"x","params":{"vref":"inf"}}]})";
+        std::string error;
+        EXPECT_EQ(Circuit::fromJson(json, error), nullptr) << type;
+        EXPECT_NE(error.find("vref"), std::string::npos) << type << ": " << error;
     }
 }

@@ -43,7 +43,7 @@ std::string UartFeed::genInitCode() const {
 
 std::string UartFeed::genFuncDef_seq() const {
     std::string c;
-    c += std::format("// UartFeed {}\n", name());
+    c += std::format("// UartFeed {}\n", cgen::commentText(name()));
     c += "extern int _dcs_feed_pop(void *);\n";
     c += std::format("static void {}() {{\n", funcName_seq());
     // 队列非空才回调；head/tail 是原子量，生产者 push 后一定能在这里看到，

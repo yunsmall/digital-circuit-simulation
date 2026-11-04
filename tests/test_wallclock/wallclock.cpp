@@ -171,3 +171,26 @@ TEST(WallClock, SyncHostFollowsRealClock) {
     EXPECT_LE(f.v(f.second), 59u);
     EXPECT_LE(f.v(f.weekday), 6u);
 }
+
+// base_epoch 会被拼进生成的 C，必须严格是全数字；分号/换行/符号一律拒绝
+TEST(WallClock, RejectsNonNumericBaseEpoch) {
+    EXPECT_THROW(WallClock("w", 100, "0; void pwn(){}", false), std::invalid_argument);
+    EXPECT_THROW(WallClock("w", 100, "123abc", false), std::invalid_argument);
+    EXPECT_THROW(WallClock("w", 100, " 1", false), std::invalid_argument);
+    EXPECT_THROW(WallClock("w", 100, "-1", false), std::invalid_argument);
+    EXPECT_THROW(WallClock("w", 100, "0\n1", false), std::invalid_argument);
+}
+
+TEST(WallClock, NormalizesBaseEpochInParams) {
+    WallClock w("w", 100, "001700000000", false);
+    EXPECT_EQ(w.exportParams().at("base_epoch"), "1700000000");
+}
+
+TEST(WallClock, JsonLoadRejectsInjectedBaseEpoch) {
+    const char *json = R"json({"nets":[],"components":[
+        {"type":"wallclock","name":"w","params":{"base_epoch":"0; pwn()"}}]})json";
+    std::string error;
+    auto c = Circuit::fromJson(json, error);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(error.find("base_epoch"), std::string::npos) << error;
+}

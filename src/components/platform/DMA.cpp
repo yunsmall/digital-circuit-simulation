@@ -79,7 +79,7 @@ std::string DMA::genInitCode() const {
 std::string DMA::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// DMA {}\n", name());
+    c += std::format("// DMA {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _cfg_adr = 0; dcs_memcpy(&_cfg_adr, _w[" + nid(I_CFG_ADR) + "], 4);\n";
     c += "    uint32_t _cfg_dat = 0; dcs_memcpy(&_cfg_dat, _w[" + nid(I_CFG_DAT) + "], 4);\n";

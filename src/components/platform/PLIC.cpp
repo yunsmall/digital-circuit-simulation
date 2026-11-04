@@ -88,7 +88,7 @@ std::string PLIC::genFuncDef_seq() const {
     const uint32_t emask = n >= 31 ? ~1u : (((1u << (n + 1)) - 1) & ~1u); // 有效源位图，源 0 不存在恒为 0
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
-    c += std::format("// PLIC {}\n", name());
+    c += std::format("// PLIC {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     // 空闲快速路径：中断源位图和总线握手都没变化时，本拍不可能产生新状态或新输出。
     // 只读 3 根线就返回，省掉地址译码和每拍 16 次优先级比较

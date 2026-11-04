@@ -87,7 +87,8 @@ bool CompositeComponent::loadPinsFromDef(const CircuitDefinition &def,
 }
 
 std::string CompositeComponent::genFuncDef_seq() const {
-    return std::format("// Composite: {} (definition: {})\n", name(), _def_name);
+    return std::format("// Composite: {} (definition: {})\n", cgen::commentText(name()),
+                       cgen::commentText(_def_name));
 }
 
 std::unordered_map<std::string, std::string> CompositeComponent::exportParams() const {

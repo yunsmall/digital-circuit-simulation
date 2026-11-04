@@ -92,7 +92,7 @@ std::string WishboneMemory::genFuncDef_seq() const {
     const uint32_t align_mask = ~((uint32_t) nb - 1u);
 
     std::string code;
-    code += std::format("// WishboneMemory: {}\n", name());
+    code += std::format("// WishboneMemory: {}\n", cgen::commentText(name()));
     code += std::format("static void {}() {{\n", funcName_seq());
     code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
     code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";

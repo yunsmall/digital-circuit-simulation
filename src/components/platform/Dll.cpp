@@ -294,7 +294,7 @@ std::string DllComponent::genTickFunc(const char *phase) const {
     int in_count = ni > 0 ? ni : 1;
     int out_count = no > 0 ? no : 1;
     std::string code;
-    code += std::format("// DLL 元件: {} ({})\n", name(), phase);
+    code += std::format("// DLL 元件: {} ({})\n", cgen::commentText(name()), phase);
     code += std::format("extern void* _dcs_dll_create_{0}(void);\n", id);
     code += std::format("extern void  _dcs_dll_destroy_{0}(void*);\n", id);
     code += std::format("extern void  _dcs_dll_tick_{0}_{1}(void*, const uint8_t*, uint8_t*);\n", phase, id);

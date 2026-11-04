@@ -89,7 +89,7 @@ std::string UART::genFuncDef_seq() const {
         return gen_read_wire(p->netId(), width, nw, var);
     };
     std::string c;
-    c += std::format("// UART {}\n", name());
+    c += std::format("// UART {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    " + rd(I_STB, "_stb", 1) + "\n";
     c += "    " + rd(I_CYC, "_cyc", 1) + "\n";

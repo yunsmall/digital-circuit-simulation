@@ -68,7 +68,7 @@ std::string SPI::genInitCode() const {
 std::string SPI::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// SPI {}\n", name());
+    c += std::format("// SPI {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";

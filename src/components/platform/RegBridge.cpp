@@ -51,7 +51,7 @@ std::string RegBridge::genInitCode() const {
 std::string RegBridge::genFuncDef_seq() const {
     auto nid = [&](int i) { return std::to_string(inputs()[i]->netId()); };
     std::string c;
-    c += std::format("// RegBridge {}\n", name());
+    c += std::format("// RegBridge {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _dat = 0; dcs_memcpy(&_dat, _w[" + nid(I_DAT) + "], 4);\n";

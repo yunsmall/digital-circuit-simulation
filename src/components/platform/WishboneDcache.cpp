@@ -102,7 +102,7 @@ std::string WishboneDcache::genInitCode() const {
 std::string WishboneDcache::genFuncDef_comb() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// WishboneDcache {}\n", name());
+    c += std::format("// WishboneDcache {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_comb());
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(U_ADR) + "], 4);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(U_DAT) + "], 4);\n";
@@ -176,7 +176,7 @@ std::string WishboneDcache::genFuncDef_seq() const {
     auto nid = [&](int pin) { return std::to_string(inputs()[pin]->netId()); };
     auto oid = [&](int pin) { return std::to_string(outputs()[pin]->netId()); };
     std::string c;
-    c += std::format("// WishboneDcache {} 的状态机\n", name());
+    c += std::format("// WishboneDcache {} 的状态机\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     // 主端口本拍发出的请求（组合阶段刚写下的线网值）和从设备应答
     c += "    uint32_t _madr = 0; dcs_memcpy(&_madr, _w[" + oid(O_DADR) + "], 4);\n";
