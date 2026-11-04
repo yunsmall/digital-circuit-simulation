@@ -1,6 +1,7 @@
 // 蓝图参数：定义级默认值、实例覆盖、${name} 替换、端口位宽表达式
 #include <dcs/Circuit.h>
 #include <dcs/Context.h>
+#include <dcs/util/TemplateExpr.h>
 #include <gtest/gtest.h>
 
 #include <string>
@@ -127,6 +128,133 @@ TEST(BlueprintParam, MissingWidthParamRejected) {
     auto c = dsc::Circuit::fromJson(json, error, "", &ctx);
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(error.find("未定义参数"), std::string::npos) << error;
+}
+
+namespace {
+
+std::string templ(const std::string &src, const dsc::TemplateExpr::Params &params) {
+    dsc::TemplateExpr expr(src, params);
+    std::string out;
+    if (!expr.resolve(out))
+        return "ERR:" + expr.error();
+    return out;
+}
+
+} // namespace
+
+TEST(BlueprintTemplate, ArithmeticAndConcatenation) {
+    const dsc::TemplateExpr::Params p{{"w", "4"}, {"prefix", "u"}, {"suffix", "x"}, {"name", "cpu"}};
+    EXPECT_EQ(templ("${w}", p), "4");
+    EXPECT_EQ(templ("${ w + 1 }", p), "5");
+    EXPECT_EQ(templ("${(w+1)*2}", p), "10");
+    EXPECT_EQ(templ("${w-6}", p), "-2");
+    EXPECT_EQ(templ("${prefix}_${w}", p), "u_4");
+    EXPECT_EQ(templ("${prefix+suffix}", p), "ux");
+    EXPECT_EQ(templ("${name+w}", p), "cpu4");
+}
+
+// 单独引用参数时保留原始文本：位宽参数写成 "007" 不能悄悄变成 "7"
+TEST(BlueprintTemplate, StandaloneParamKeepsText) {
+    const dsc::TemplateExpr::Params p{{"v", "007"}};
+    EXPECT_EQ(templ("${v}", p), "007");
+}
+
+TEST(BlueprintTemplate, ExpressionErrorsAreReported) {
+    const dsc::TemplateExpr::Params p{{"w", "4"}, {"big", "7000000000"}};
+
+    dsc::TemplateExpr div("${w/0}", p);
+    std::string out;
+    EXPECT_FALSE(div.resolve(out));
+    EXPECT_NE(div.error().find("除数为 0"), std::string::npos) << div.error();
+
+    dsc::TemplateExpr missing("${nope+1}", p);
+    EXPECT_FALSE(missing.resolve(out));
+    EXPECT_EQ(missing.missingParam(), "nope");
+    EXPECT_NE(missing.error().find("nope"), std::string::npos) << missing.error();
+
+    dsc::TemplateExpr overflow("${big*big*100}", p);
+    EXPECT_FALSE(overflow.resolve(out));
+    EXPECT_NE(overflow.error().find("整数溢出"), std::string::npos) << overflow.error();
+
+    dsc::TemplateExpr syntax("${w + }", p);
+    EXPECT_FALSE(syntax.resolve(out));
+    EXPECT_FALSE(syntax.error().empty());
+}
+
+// 端口位宽和元件参数里都可以写表达式
+std::string widthExprJson(const std::string &w) {
+    std::string json = R"({
+      "definitions": {
+        "wide": {
+          "params": {"w": "2"},
+          "nets": ["i", "o"],
+          "components": [{
+            "type": "buf",
+            "name": "b",
+            "params": {"bit_width": "${w*2}"},
+            "connections": {"in": "i", "out": "o"}
+          }],
+          "expose": {
+            "inputs": {"i": {"net": "i", "width": "${w*2}"}},
+            "outputs": {"o": {"net": "o", "width": "${w*2}"}}
+          }
+        }
+      },
+      "nets": ["i", "o"],
+      "components": [{
+        "type": "composite",
+        "name": "u",
+        "params": {"definition": "wide", "w": "@W@"},
+        "connections": {"i": "i", "o": "o"}
+      }]
+    })";
+    const size_t pos = json.find("@W@");
+    json.replace(pos, 3, w);
+    return json;
+}
+
+TEST(BlueprintParam, WidthExpressionInBlueprint) {
+    dsc::Context ctx;
+    std::string error;
+    auto c = dsc::Circuit::fromJson(widthExprJson("3"), error, "", &ctx);
+    ASSERT_NE(c, nullptr) << error;
+    ASSERT_EQ(c->components().size(), 1u);
+    EXPECT_EQ(c->components()[0]->inputs()[0]->bit_width(), 6);
+    EXPECT_EQ(c->components()[0]->outputs()[0]->bit_width(), 6);
+    ASSERT_EQ(c->compile().code, dsc::ErrorCode::OK);
+}
+
+// 求值器本身不钳制，位宽的 1..128 校验仍在使用处做：128 合法，0/130 拒绝
+TEST(BlueprintParam, WidthExpressionRangeIsCheckedAtUseSite) {
+    {
+        dsc::Context ctx;
+        std::string error;
+        auto c = dsc::Circuit::fromJson(widthExprJson("64"), error, "", &ctx);
+        ASSERT_NE(c, nullptr) << error;
+        EXPECT_EQ(c->components()[0]->inputs()[0]->bit_width(), 128);
+        ASSERT_EQ(c->compile().code, dsc::ErrorCode::OK);
+    }
+    for (const char *bad: {"0", "65"}) {
+        dsc::Context ctx;
+        std::string error;
+        auto c = dsc::Circuit::fromJson(widthExprJson(bad), error, "", &ctx);
+        EXPECT_EQ(c, nullptr) << bad;
+        EXPECT_NE(error.find("1..128"), std::string::npos) << bad << ": " << error;
+    }
+}
+
+TEST(BlueprintParam, BadWidthExpressionIsRejected) {
+    dsc::Context ctx;
+    std::string error;
+    std::string json = kParamAdder;
+    const std::string from = R"("width": "${bit_width}")";
+    const size_t pos = json.find(from);
+    ASSERT_NE(pos, std::string::npos);
+    json.replace(pos, from.size(), R"("width": "${bit_width/0}")");
+
+    auto c = dsc::Circuit::fromJson(json, error, "", &ctx);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(error.find("除数为 0"), std::string::npos) << error;
 }
 
 } // namespace

@@ -3,6 +3,7 @@
 #include <charconv>
 #include <format>
 #include "dcs/CircuitLibrary.h"
+#include "dcs/util/TemplateExpr.h"
 #include "dcs/ComponentFactory.h"
 #include "dcs/Context.h"
 
@@ -57,9 +58,14 @@ bool CompositeComponent::loadPinsFromDef(const CircuitDefinition &def,
     auto pin_width = [&](const ExposedPin &ep, const char *pin_name, const char *dir) {
         if (ep.width.empty())
             return 1;
-        std::string text, missing;
-        if (!resolveTemplate(ep.width, params, text, missing)) {
-            error = std::format("复合元件 '{}': 端口 '{}' 的位宽引用了未定义参数 '{}'", name(), pin_name, missing);
+        std::string text;
+        TemplateExpr expr(ep.width, params);
+        if (!expr.resolve(text)) {
+            if (!expr.missingParam().empty())
+                error = std::format("复合元件 '{}': 端口 '{}' 的位宽引用了未定义参数 '{}'", name(), pin_name,
+                                    expr.missingParam());
+            else
+                error = std::format("复合元件 '{}': 端口 '{}' 的位宽表达式错误: {}", name(), pin_name, expr.error());
             return 0;
         }
         int w = 0;
@@ -116,11 +122,12 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
     // 所有配方/线网里的 ${name} 在展开时一次性替换；缺参数直接报错，
     // 不能带着字面量 "${x}" 去创建元件/连线
     auto R = [&](const std::string &src, std::string &dst) {
-        std::string missing;
-        if (resolveTemplate(src, params, dst, missing)) {
+        TemplateExpr expr(src, params);
+        if (expr.resolve(dst))
             return true;
-        }
-        out.error = std::format("复合元件 '{}': 展开时引用了未定义参数 '{}'", name(), missing);
+        out.error = expr.missingParam().empty()
+                            ? std::format("复合元件 '{}': 展开时模板错误: {}", name(), expr.error())
+                            : std::format("复合元件 '{}': 展开时引用了未定义参数 '{}'", name(), expr.missingParam());
         return false;
     };
 

@@ -3,10 +3,10 @@
   "$meta": {
     "kind": "circuit",
     "format": 1,
-    "description": "偶校验演示：0xF1 有 5 个 1，library/parity8 应输出校验位 1"
+    "description": "偶校验演示：0xF1 有 5 个 1，library/parity 应输出校验位 1"
   },
   "definitions": {
-    "parity8": "../../library/parity8.json"
+    "parity": "../../library/parity.json"
   },
   "nets": ["din", "parity"],
   "components": [
@@ -19,7 +19,7 @@
     {
       "type": "composite",
       "name": "u_parity",
-      "params": { "definition": "parity8" },
+      "params": { "definition": "parity" },
       "connections": { "din": "din", "parity": "parity" }
     },
     {

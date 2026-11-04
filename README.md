@@ -109,6 +109,10 @@ via Verilator's `--pins-inout-enables`, wired to the same net for bidirectional 
 # Show blueprint definitions and where they came from
 ./build/RelWithDebInfo/dcs --list-definitions circuit.json
 
+# Recursively list blueprint components in a directory (--json for machine output)
+./build/RelWithDebInfo/dcs --list-library library --depth 2
+./build/RelWithDebInfo/dcs --list-library library --json
+
 # Generate an IDE-hint schema for every registered component type
 ./build/RelWithDebInfo/dcs --dump-schema > schemas/component.schema.json
 

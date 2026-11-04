@@ -45,9 +45,8 @@ struct CircuitDefinition {
     std::map<std::string, ExposedPin> output_expose; // pin_name → 内部端口
 };
 
-// 替换字符串里的 ${name}。遇到未定义的参数返回 false，missing 里写参数名
-bool resolveTemplate(const std::string &src, const std::map<std::string, std::string> &params, std::string &out,
-                     std::string &missing);
+// 替换字符串里的 ${...} 由 dcs/util/TemplateExpr.h 的 TemplateExpr 负责。
+// 蓝图库这里只保存定义，不做模板求值
 
 // 全局定义库
 class CircuitLibrary {

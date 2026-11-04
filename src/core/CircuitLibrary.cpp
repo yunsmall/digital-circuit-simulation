@@ -8,34 +8,6 @@
 
 namespace dsc {
 
-bool resolveTemplate(const std::string &src, const std::map<std::string, std::string> &params, std::string &out,
-                     std::string &missing) {
-    out.clear();
-    size_t pos = 0;
-    while (pos < src.size()) {
-        const size_t start = src.find("${", pos);
-        if (start == std::string::npos) {
-            out.append(src, pos, std::string::npos);
-            break;
-        }
-        const size_t end = src.find('}', start + 2);
-        if (end == std::string::npos) {
-            out.append(src, pos, std::string::npos);
-            break;
-        }
-        out.append(src, pos, start - pos);
-        const std::string key = src.substr(start + 2, end - start - 2);
-        auto it = params.find(key);
-        if (it == params.end()) {
-            missing = key;
-            return false;
-        }
-        out += it->second;
-        pos = end + 1;
-    }
-    return true;
-}
-
 CircuitLibrary &CircuitLibrary::instance() {
     // 进程级默认上下文里的库；显式建 Context 的调用方直接用自己的那份
     return Context::global().library();

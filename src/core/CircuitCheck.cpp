@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <unordered_map>
 
@@ -140,6 +141,126 @@ bool loadDefinitionsFromFile(const std::string &path, Context *ctx, std::string 
         error = err;
         return false;
     }
+    return true;
+}
+
+namespace {
+
+bool scanLibraryDir(Context &ctx, const fs::path &dir, int depth, int max_depth,
+                    std::map<std::string, std::string> &seen, int &imported, std::string &error) {
+    std::error_code ec;
+    std::vector<fs::directory_entry> entries;
+    for (fs::directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+        if (ec)
+            break;
+        entries.push_back(*it);
+    }
+    if (ec) {
+        error = std::format("读取目录 '{}' 失败: {}", dir.string(), ec.message());
+        return false;
+    }
+    // 字典序保证每次扫描顺序一致，重名报错也稳定
+    std::sort(entries.begin(), entries.end(), [](const fs::directory_entry &a, const fs::directory_entry &b) {
+        return a.path().filename().string() < b.path().filename().string();
+    });
+
+    for (auto &e: entries) {
+        std::error_code sec;
+        if (e.is_directory(sec)) {
+            if (e.is_symlink(sec))
+                continue; // 不跟符号链接，避免环
+            if (max_depth >= 0 && depth >= max_depth)
+                continue;
+            if (!scanLibraryDir(ctx, e.path(), depth + 1, max_depth, seen, imported, error))
+                return false;
+            continue;
+        }
+        if (!e.is_regular_file(sec) || e.path().extension() != ".json")
+            continue;
+
+        // 先判断是不是库文件：显式 kind=blueprint，或无 kind 且只有 definitions
+        std::string text, err;
+        if (!readFile(e.path().string(), text, err)) {
+            error = err;
+            return false;
+        }
+        nlohmann::json root;
+        if (!parseJson(text, e.path().string(), root, err)) {
+            error = err;
+            return false;
+        }
+        if (!root.is_object())
+            continue;
+        bool is_lib = false;
+        if (root.contains("$meta") && root["$meta"].is_object()) {
+            const auto &meta = root["$meta"];
+            if (meta.contains("kind") && meta["kind"].is_string()) {
+                if (meta["kind"].get<std::string>() != "blueprint")
+                    continue; // 顶层电路、schema 等
+                is_lib = true;
+            }
+        }
+        if (!is_lib)
+            is_lib = root.contains("definitions") && !root.contains("components");
+        if (!is_lib)
+            continue;
+
+        const std::string file_canon = canonString(e.path());
+        // A 引用 B 时 B 已随 A 一起导入；扫到 B.json 时按路径识别为同一个文件，
+        // 跳过重新导入。否则无 $meta.name 的单定义蓝图会被换一个键再登记一次
+        bool already_loaded = false;
+        for (auto &[name, def]: ctx.library().definitions()) {
+            if (!def.source.empty() && canonString(def.source) == file_canon) {
+                already_loaded = true;
+                break;
+            }
+        }
+        if (already_loaded) {
+            imported++;
+            continue;
+        }
+
+        if (!loadDefinitionsFromFile(e.path().string(), &ctx, err)) {
+            error = err;
+            return false;
+        }
+        // 同一个文件被传递导入时 source 规范化后相同，不算重名；
+        // 不同文件给出同名蓝图则拒绝，避免扫描顺序决定谁覆盖谁
+        for (auto &[name, def]: ctx.library().definitions()) {
+            const std::string src = def.source.empty() ? std::string() : canonString(def.source);
+            auto it = seen.find(name);
+            if (it != seen.end() && !it->second.empty() && !src.empty() && it->second != src) {
+                error = std::format("蓝图 '{}' 重名：{} 与 {}", name, it->second, src);
+                return false;
+            }
+            if (!src.empty())
+                seen[name] = src;
+        }
+        imported++;
+    }
+    return true;
+}
+
+} // namespace
+
+bool importLibraryDirectory(Context &ctx, const std::string &dir, int max_depth, int &imported, std::string &error) {
+    error.clear();
+    imported = 0;
+    std::error_code ec;
+    const fs::path root(dir);
+    if (!fs::is_directory(root, ec)) {
+        error = std::format("蓝图目录不存在或不是目录: {}", dir);
+        return false;
+    }
+    auto &lib = ctx.library();
+    auto before = lib.snapshot();
+    std::map<std::string, std::string> seen;
+    int count = 0;
+    if (!scanLibraryDir(ctx, root, 0, max_depth, seen, count, error)) {
+        lib.restore(std::move(before)); // 扫描事务化，失败不留半套定义
+        return false;
+    }
+    imported = count;
     return true;
 }
 

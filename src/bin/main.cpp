@@ -510,6 +510,58 @@ int listDefinitions(const std::string &path, dsc::Context &ctx) {
     return 0;
 }
 
+// ---- 递归列出目录下的蓝图元件（--list-library）----
+int listLibrary(const std::string &dir, int max_depth, bool as_json) {
+    dsc::Context ctx;
+    std::string error;
+    int imported = 0;
+    if (!dsc::importLibraryDirectory(ctx, dir, max_depth, imported, error)) {
+        std::cerr << std::format("错误: {}\n", error);
+        return 1;
+    }
+
+    std::vector<const dsc::CircuitDefinition *> defs;
+    for (auto &[name, def]: ctx.library().definitions())
+        defs.push_back(&def);
+    std::sort(defs.begin(), defs.end(), [](const dsc::CircuitDefinition *a, const dsc::CircuitDefinition *b) {
+        return a->name < b->name;
+    });
+
+    if (as_json) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto *d: defs) {
+            nlohmann::json jd;
+            jd["name"] = d->name;
+            jd["source"] = d->source;
+            jd["params"] = d->params;
+            nlohmann::json ins = nlohmann::json::object();
+            for (auto &[pin, ep]: d->input_expose)
+                ins[pin] = {{"net", ep.net}, {"width", ep.width}};
+            nlohmann::json outs = nlohmann::json::object();
+            for (auto &[pin, ep]: d->output_expose)
+                outs[pin] = {{"net", ep.net}, {"width", ep.width}};
+            jd["inputs"] = ins;
+            jd["outputs"] = outs;
+            arr.push_back(jd);
+        }
+        std::cout << arr.dump(2) << "\n";
+        return 0;
+    }
+
+    if (defs.empty()) {
+        std::cout << "（没有蓝图定义）\n";
+        return 0;
+    }
+    for (auto *d: defs) {
+        std::string params;
+        for (auto &[k, v]: d->params)
+            params += std::format("{}{}={}", params.empty() ? "" : ", ", k, v);
+        std::cout << std::format("{}{}  <-  {}\n", d->name,
+                                 params.empty() ? "" : std::format("  (params: {})", params), d->source);
+    }
+    return 0;
+}
+
 // ---- 元件 schema（--dump-schema）----
 int dumpSchema() {
     std::cout << dsc::componentSchemaJson() << "\n";
@@ -545,6 +597,8 @@ int main(int argc, char *argv[]) {
             cxxopts::value<std::vector<std::string>>())(
             "check", "校验电路/蓝图 JSON：加载、展开、静态检查，不编译", cxxopts::value<std::string>())(
             "list-definitions", "列出 JSON 里的蓝图定义及来源", cxxopts::value<std::string>())(
+            "list-library", "递归列出目录下的蓝图元件（配合 --depth / --json）", cxxopts::value<std::string>())(
+            "depth", "配合 --list-library：最大递归子目录层数（默认 -1 不限）", cxxopts::value<int>()->default_value("-1"))(
             "dump-schema", "把元件类型 schema 输出到 stdout（重定向到文件即可）");
 
     opts.add_options("其他")("h,help", "显示帮助")("v,version", "显示版本号");
@@ -577,6 +631,8 @@ int main(int argc, char *argv[]) {
   dcs circuit.json --truth-table --inputs a,b --output y
                                     导出真值表和卡诺图
   dcs --list-types                  列出元件类型
+  dcs --list-library library --depth 2
+                                    递归列出蓝图元件（--json 输出机器可读格式）
   dcs --pins counter --param has_en=1
                                     查该参数下元件的真实引脚名和位宽
   dcs --dll-info adder8_dll.dll    查看 DLL 引脚信息
@@ -598,6 +654,8 @@ int main(int argc, char *argv[]) {
         return checkFile(result["check"].as<std::string>(), ctx);
     if (result.count("list-definitions"))
         return listDefinitions(result["list-definitions"].as<std::string>(), ctx);
+    if (result.count("list-library"))
+        return listLibrary(result["list-library"].as<std::string>(), result["depth"].as<int>(), result.count("json") != 0);
 
     if (result.count("pins")) {
         std::vector<std::string> ps;

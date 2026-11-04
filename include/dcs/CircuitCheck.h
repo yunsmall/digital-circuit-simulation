@@ -28,4 +28,9 @@ bool readJsonKind(const std::string &path, std::string &kind, std::string &error
 // 只把文件里的 definitions 导入上下文（电路或蓝图都行），不检查元件
 bool loadDefinitionsFromFile(const std::string &path, Context *ctx, std::string &error);
 
+// 递归导入目录下的蓝图 JSON 到 ctx 的库（按路径字典序，跳过非蓝图文件）。
+// max_depth 是允许下探的子目录层数：0 只看 dir 本身，1 含直接子目录，负数不限。
+// imported 返回贡献了定义的文件数；失败时 error 非空且库整体回滚
+bool importLibraryDirectory(Context &ctx, const std::string &dir, int max_depth, int &imported, std::string &error);
+
 } // namespace dsc

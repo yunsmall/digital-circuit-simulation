@@ -109,6 +109,10 @@ unpacked 数组端口会按维展开成独立引脚，`inout` 用 Verilator 官�
 # 列出蓝图定义以及它们来自哪个文件
 ./build/RelWithDebInfo/dcs --list-definitions circuit.json
 
+# 递归列出目录下的蓝图元件（--depth 限制子目录层数，--json 给机器读）
+./build/RelWithDebInfo/dcs --list-library library --depth 2
+./build/RelWithDebInfo/dcs --list-library library --json
+
 # 从元件注册表生成 schema（给 IDE 提示用）
 ./build/RelWithDebInfo/dcs --dump-schema > schemas/component.schema.json
 
@@ -387,9 +391,27 @@ JSON 往返后会保留。
 `examples/combinational/composite_library.json` 和项目根的 `library/`。
 
 蓝图可以带参数：定义里写 `"params": {"bit_width": "8"}` 给默认值，实例用同名参数覆盖，
-配方参数、实例名、线网名和端口位宽里的 `${name}` 会在展开时做字符串替换。端口位宽写成
-`{"net": "a", "width": "${bit_width}"}`；只支持字符串替换，没有循环展开，端口数量随位宽
-变化的结构请用总线端口或内置的 `adder`/`register` 这类带 `bit_width` 的元件。
+配方参数、实例名、线网名和端口位宽里的 `${...}` 会在展开时求值。端口位宽写成
+`{"net": "a", "width": "${bit_width}"}`。
+
+`${...}` 里可以写参数名、整数四则运算和拼接：
+
+```
+template := ( TEXT | "${" expr "}" )*
+expr     := add
+add      := mul ( ("+" | "-") mul )*
+mul      := unary ( ("*" | "/") unary )*
+unary    := ("+" | "-") unary | primary
+primary  := INTEGER | IDENT | "(" expr ")"
+INTEGER  := [0-9]+
+IDENT    := [A-Za-z_][A-Za-z0-9_.]*
+```
+
+- `+` 两边都是整数时做加法，否则按字符串拼接；`u_${i}`、`${prefix}_${suffix}` 这种直接相邻也会拼接；
+- `-` `*` `/` 只接受整数，`/` 向零截断，除零/溢出会报错；
+- 单独引用参数时保留原文本（位宽写 `"007"` 不会被改成 `"7"`），只有参与算术才按整数处理；
+- 求值结果不做范围钳制，位宽仍是 1~128、由使用它的地方校验；
+- 没有循环展开，端口数量随位宽变化的结构请用总线端口或内置的 `adder`/`register` 这类带 `bit_width` 的元件。
 
 `schemas/circuit.schema.json`、`schemas/blueprint.schema.json` 只给编辑器提示用，
 不参与任何校验，文件里不引用它们也没关系。`schemas/component.schema.json` 由元件
