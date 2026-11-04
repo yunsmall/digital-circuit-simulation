@@ -8,18 +8,10 @@
 
 namespace dsc {
 
-extern "C" void dcs_fprint32(const char *name, const uint8_t *data) {
-    float v;
-    std::memcpy(&v, data, 4);
-    std::printf("[%s] %g\n", name, (double) v);
-    std::fflush(stdout);
-}
-
-extern "C" void dcs_fprint64(const char *name, const uint8_t *data) {
-    double v;
-    std::memcpy(&v, data, 8);
-    std::printf("[%s] %g\n", name, v);
-    std::fflush(stdout);
+// 精度由 owner 自己决定，JIT 只把原始位模式送过来；这样不同精度的实例
+// 共用同一个宿主符号，不需要按精度拆两个入口
+extern "C" void dcs_fprint(void *owner, const uint8_t *data) {
+    static_cast<FloatPrint *>(owner)->emitValue(data);
 }
 
 FloatPrint::FloatPrint(const std::string &name, int precision) :
@@ -39,6 +31,8 @@ std::string FloatPrint::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
 }
 
+// circuit_init/circuit_reset 都先把全部线网清零，再执行元件的初始化代码，
+// 所以 clk 的上一拍电平就是 0，prev_clk 从 0 起不会漏掉/伪造上升沿
 std::string FloatPrint::genInitCode() const {
     return std::format("    {}.prev_clk = 0;", stateVarName());
 }
@@ -53,29 +47,48 @@ std::string FloatPrint::genFuncDef_seq() const {
     std::string clk_read = clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
                                         : "    bool _clk = false;";
 
-    const char *dcs_func = (_precision == 32) ? "dcs_fprint32" : "dcs_fprint64";
+    const auto owner = (unsigned long long) reinterpret_cast<uintptr_t>(this);
 
-    return std::format(R"(extern void {0}(const char*, const uint8_t*);
-static void {1}() {{
+    return std::format(R"(extern void dcs_fprint(void*, const uint8_t*);
+static void {0}() {{
+    {1}
     {2}
-    {3}
-    bool _rising = (_clk && !{4}.prev_clk);
+    bool _rising = (_clk && !{3}.prev_clk);
     if (_rising) {{
-        uint8_t _buf[{5}];
-        dcs_memcpy(_buf, &_val, {5});
-        {0}("{6}", _buf);
+        uint8_t _buf[{4}];
+        dcs_memcpy(_buf, &_val, {4});
+        dcs_fprint((void *)0x{5:X}ULL, _buf);
     }}
-    {4}.prev_clk = _clk;
+    {3}.prev_clk = _clk;
 }})",
-                       dcs_func, funcName_seq(), gen_read_wire(in_nid, _precision, in_nw, "_val"), clk_read, st, bytes,
-                       name());
+                       funcName_seq(), gen_read_wire(in_nid, _precision, in_nw, "_val"), clk_read, st, bytes, owner);
+}
+
+void FloatPrint::setSink(const TextSink &sink, void *ctx) {
+    _sink = sink;
+    _sink_ctx = ctx;
+}
+
+void FloatPrint::emitValue(const uint8_t *data) {
+    double v;
+    if (_precision == 32) {
+        float f;
+        std::memcpy(&f, data, 4);
+        v = (double) f;
+    } else {
+        std::memcpy(&v, data, 8);
+    }
+    const std::string line = std::format("[{}] {:g}\n", name(), v);
+    if (_sink.on_text) {
+        _sink.on_text(_sink_ctx, this, line.data(), (int) line.size());
+        return;
+    }
+    std::fwrite(line.data(), 1, line.size(), stdout);
+    std::fflush(stdout);
 }
 
 std::vector<Component::JitSymbol> FloatPrint::extraJitSymbols() const {
-    if (_precision == 32)
-        return {{"dcs_fprint32", reinterpret_cast<void *>(&dcs_fprint32)}};
-    else
-        return {{"dcs_fprint64", reinterpret_cast<void *>(&dcs_fprint64)}};
+    return {{"dcs_fprint", reinterpret_cast<void *>(&dcs_fprint)}};
 }
 
 std::unique_ptr<Component> FloatPrint::clone(const std::string &n) const {

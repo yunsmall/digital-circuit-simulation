@@ -7,21 +7,14 @@
 
 namespace dsc {
 
-// 供 JIT 代码调用的打印函数（C 链接，避免 name mangling）
-extern "C" void dcs_print(const char *name, const uint8_t *data, int bytes) {
-    std::printf("[%s] ", name);
-    for (int i = bytes - 1; i >= 0; i--)
-        std::printf("%02X", data[i]);
-    std::printf("\n");
-    std::fflush(stdout);
+// 供 JIT 代码调用的打印入口（C 链接，避免 name mangling）。
+// owner 是元件实例，回调按实例分发，不再有进程级全局 sink
+extern "C" void dcs_print(void *owner, const uint8_t *data, int bytes) {
+    static_cast<Print *>(owner)->emitValue(data, bytes);
 }
 
-// 字符模式：串口字节流要的是原始字符，不能走上面那种十六进制格式。
-// 遇换行立刻刷出，否则重定向到文件时整段输出要等缓冲满才可见
-extern "C" void dcs_print_char(unsigned char c) {
-    std::fputc((int) c, stdout);
-    if (c == '\n')
-        std::fflush(stdout);
+extern "C" void dcs_print_char(void *owner, unsigned char c) {
+    static_cast<Print *>(owner)->emitChar(c);
 }
 
 Print::Print(const std::string &name, int bit_width, bool ascii) :
@@ -32,7 +25,9 @@ Print::Print(const std::string &name, int bit_width, bool ascii) :
     setParam("ascii", ascii ? "1" : "0");
     addInput("in", bit_width);
     addInput("clk", 1);
-    // 门控输入：只在该信号为高的拍交付。不接时按恒使能处理，
+    // 门控输入。十六进制模式下 en 是电平门控（clk 上升沿且 en 为高才交）；
+    // 字符模式下 en 是"有效字节"选通，按它的上升沿交（UartTerm 的 valid 只高一拍，
+    // 且不一定和 clk 对齐）。不接时按恒使能处理，字符模式退回 clk 上升沿，
     // 这样老的电路 JSON（没有 en 连接）行为不变
     addInput("en", 1);
 }
@@ -49,6 +44,8 @@ std::string Print::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
 }
 
+// circuit_init/circuit_reset 都先把全部线网清零，再执行元件的初始化代码，
+// 所以 clk 的上一拍电平就是 0，prev_clk 从 0 起不会漏掉/伪造上升沿
 std::string Print::genInitCode() const {
     return std::format("    {}.prev_clk = 0; {}.prev_en = 0;", stateVarName(), stateVarName());
 }
@@ -68,14 +65,20 @@ std::string Print::genFuncDef_seq() const {
                               ? gen_read_wire(en_nid, 1, inputs()[2]->net()->bit_width(), "_en")
                               : "    bool _en = true;";
 
-    // 字符模式下 valid 往往只高一拍，用上升沿触发保证一个字节只打一次；
-    // 十六进制模式沿用原来的"每个 clk 上升沿打一次"，避免改变既有行为
-    std::string emit = _ascii
-                           ? std::format("    if (_en_rising) dcs_print_char((unsigned char) (_val & 0xFF));")
-                           : std::format("    if (_rising && _en) dcs_print(\"{}\", (const uint8_t*)&_val, {});", name(), bytes);
+    // 字符模式下 en 是"有效字节"选通（UartTerm 的 valid 只高一拍，而且不一定和
+    // clk 对齐），所以接了 en 时用它的上升沿触发，保证一个字节只打一次。
+    // 没接 en 的老电路按恒使能处理，退回 clk 上升沿，否则只会输出第一拍
+    const auto owner = (unsigned long long) reinterpret_cast<uintptr_t>(this);
+    std::string emit;
+    if (_ascii) {
+        const char *cond = en_nid >= 0 ? "_en_rising" : "_rising";
+        emit = std::format("    if ({}) dcs_print_char((void *)0x{:X}ULL, (unsigned char) (_val & 0xFF));", cond, owner);
+    } else {
+        emit = std::format("    if (_rising && _en) dcs_print((void *)0x{:X}ULL, (const uint8_t*)&_val, {});", owner, bytes);
+    }
 
-    return std::format(R"(extern void dcs_print(const char*, const uint8_t*, int);
-extern void dcs_print_char(unsigned char);
+    return std::format(R"(extern void dcs_print(void*, const uint8_t*, int);
+extern void dcs_print_char(void*, unsigned char);
 static void {}() {{
     {}
     {}
@@ -95,6 +98,37 @@ std::vector<Component::JitSymbol> Print::extraJitSymbols() const {
             {"dcs_print_char", reinterpret_cast<void *>(&dcs_print_char)}};
 }
 
+void Print::setSink(const TextSink &sink, void *ctx) {
+    _sink = sink;
+    _sink_ctx = ctx;
+}
+
+void Print::emitValue(const uint8_t *data, int bytes) {
+    std::string line = std::format("[{}] ", name());
+    for (int i = bytes - 1; i >= 0; i--)
+        line += std::format("{:02X}", (unsigned) data[i]);
+    line += '\n';
+    if (_sink.on_text) {
+        _sink.on_text(_sink_ctx, this, line.data(), (int) line.size());
+        return;
+    }
+    std::fwrite(line.data(), 1, line.size(), stdout);
+    std::fflush(stdout);
+}
+
+// 字符模式下不能拼行：串口是一个字节一个字节到达的，攒到换行会把交互式输入
+// 一直卡在缓冲区里。无 sink 时保留原来的行为，遇换行立刻刷出
+void Print::emitChar(unsigned char c) {
+    if (_sink.on_text) {
+        const char ch = (char) c;
+        _sink.on_text(_sink_ctx, this, &ch, 1);
+        return;
+    }
+    std::fputc((int) c, stdout);
+    if (c == '\n')
+        std::fflush(stdout);
+}
+
 std::unique_ptr<Component> Print::clone(const std::string &n) const {
     return std::make_unique<Print>(n, _bit_width, _ascii);
 }
@@ -104,7 +138,7 @@ std::unique_ptr<Component> Print::clone(const std::string &n) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"print", {{"bit_width", "8"}, {"ascii", "0", {"0", "1"}}}, {"in", "clk", "en"}, {}, dsc::ComponentCategory::Misc, "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出）"},
+    {"print", {{"bit_width", "8"}, {"ascii", "0", {"0", "1"}}}, {"in", "clk", "en"}, {}, dsc::ComponentCategory::Misc, "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出；可按实例 setSink 接管输出）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            return std::make_unique<dsc::Print>(n, dsc::paramInt(p, "bit_width", 8), dsc::paramStr(p, "ascii", "0") == "1");
                        });

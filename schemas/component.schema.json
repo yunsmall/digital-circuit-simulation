@@ -625,7 +625,7 @@
       ]
     },
     {
-      "description": "显示件：值变化时把新值交给宿主（GUI 用 Display::setSink 接入）；kind=led/seg/text",
+      "description": "显示件：值变化时把新值交给宿主（每个实例单独 setSink 绑定）；kind=led/seg/text",
       "properties": {
         "name": {
           "type": "string"

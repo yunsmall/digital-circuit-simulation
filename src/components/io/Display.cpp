@@ -12,16 +12,6 @@ struct Display::State {
 
 namespace {
 
-Display::Sink &sinkSlot() {
-    static Display::Sink s{};
-    return s;
-}
-
-void *&sinkCtxSlot() {
-    static void *ctx = nullptr;
-    return ctx;
-}
-
 const char *kindKey(Display::Kind k) {
     switch (k) {
         case Display::Kind::Led:
@@ -41,9 +31,13 @@ extern "C" void dcs_display_update(void *owner, unsigned long long v) {
     static_cast<Display *>(owner)->notifyFromJit((uint64_t) v);
 }
 
+extern "C" void dcs_display_reset(void *owner) {
+    static_cast<Display *>(owner)->resetHostValue();
+}
+
 void Display::setSink(const Sink &sink, void *ctx) {
-    sinkSlot() = sink;
-    sinkCtxSlot() = ctx;
+    _sink = sink;
+    _sink_ctx = ctx;
 }
 
 Display::Display(const std::string &name, int bit_width, Kind kind, int digits) :
@@ -70,9 +64,12 @@ uint64_t Display::value() const {
 
 void Display::notifyFromJit(uint64_t v) {
     _state->value = v;
-    auto &s = sinkSlot();
-    if (s.on_change)
-        s.on_change(sinkCtxSlot(), this, v);
+    if (_sink.on_change)
+        _sink.on_change(_sink_ctx, this, v);
+}
+
+void Display::resetHostValue() {
+    _state->value = 0;
 }
 
 std::string Display::genStructDef() const {
@@ -86,6 +83,15 @@ std::string Display::genStateDecl() const {
 std::string Display::genInitCode() const {
     return std::format("    {}.last = 0; {}.valid = 0; _disp_owner_{} = (void *)0x{:X}ULL;", stateVarName(), stateVarName(),
                        _id, (unsigned long long) reinterpret_cast<uintptr_t>(this));
+}
+
+std::string Display::genResetCode() const {
+    // circuit_reset 已经把线网清零；这里把宿主侧 value() 缓存也归零，
+    // 否则 reset 后到下一次 tick 之间调用 value() 还能读到复位前的旧值
+    return genInitCode() +
+           std::format("    extern void dcs_display_reset(void *);\n"
+                       "    dcs_display_reset((void *)0x{:X}ULL);\n",
+                       (unsigned long long) reinterpret_cast<uintptr_t>(this));
 }
 
 std::string Display::genFuncDef_seq() const {
@@ -108,7 +114,8 @@ std::string Display::genFuncDef_seq() const {
 }
 
 std::vector<Component::JitSymbol> Display::extraJitSymbols() const {
-    return {{"dcs_display_update", reinterpret_cast<void *>(&dcs_display_update)}};
+    return {{"dcs_display_update", reinterpret_cast<void *>(&dcs_display_update)},
+            {"dcs_display_reset", reinterpret_cast<void *>(&dcs_display_reset)}};
 }
 
 std::unique_ptr<Component> Display::clone(const std::string &n) const {
@@ -121,7 +128,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"display", {{"bit_width", "8"}, {"kind", "led", {"led", "seg", "text"}}, {"digits", "1"}}, {"in"}, {},
      dsc::ComponentCategory::Misc,
-     "显示件：值变化时把新值交给宿主（GUI 用 Display::setSink 接入）；kind=led/seg/text"},
+     "显示件：值变化时把新值交给宿主（每个实例单独 setSink 绑定）；kind=led/seg/text"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            const std::string k = dsc::paramStr(p, "kind", "led");
                            const auto kind = k == "seg"    ? dsc::Display::Kind::SevenSeg

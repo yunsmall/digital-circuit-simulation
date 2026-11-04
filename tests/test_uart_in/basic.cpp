@@ -1,5 +1,9 @@
 // UartIn：把字节编成 8N1 串行电平（UART 接收端的对端）
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
+
+#include <memory>
+#include <vector>
 
 #include <dcs/Circuit.h>
 #include <dcs/components/io/UartIn.h>
@@ -105,4 +109,139 @@ TEST(UartInTest, QueueOverflowDropsNewBytes) {
     for (int i = 0; i < 100; i++)
         f.in->pushByte((uint8_t) i);
     EXPECT_EQ(f.in->pending(), 63u);
+}
+
+namespace {
+
+// 轮询源：按顺序吐出预先放好的字节，吐完返回 -1
+struct ByteSource {
+    std::vector<int> bytes;
+    int calls = 0;
+    const UartIn *expected_owner = nullptr;
+    bool owner_ok = true;
+
+    static int poll(void *ctx, UartIn *owner) {
+        auto &s = *static_cast<ByteSource *>(ctx);
+        s.calls++;
+        if (s.expected_owner && owner != s.expected_owner)
+            s.owner_ok = false;
+        if (s.bytes.empty())
+            return -1;
+        int b = s.bytes.front();
+        s.bytes.erase(s.bytes.begin());
+        return b;
+    }
+};
+
+// 当前已经处在起始位第 1 拍：再走半位到中点，然后逐位采样
+int decodeFromStartBit(UartInFixture &f) {
+    f.ticks(3);
+    EXPECT_EQ(f.level(), 0) << "起始位中点应为低";
+    int data = 0;
+    for (int b = 0; b < 8; b++) {
+        f.ticks(f.baud);
+        data |= f.level() << b;
+    }
+    f.ticks(f.baud);
+    EXPECT_EQ(f.level(), 1) << "停止位应为高";
+    return data;
+}
+
+} // namespace
+
+// 未绑定 source 时走默认 stdin；绑定后只在轮询拍调用它，字节照常编成 8N1
+TEST(UartInTest, CustomSourceFeedsBytes) {
+    UartInFixture f(8);
+    ByteSource src;
+    src.bytes = {0x41}; // 'A'
+    src.expected_owner = f.in;
+    f.in->setSource({&ByteSource::poll}, &src);
+
+    // POLL_INTERVAL 是 1024 拍，第一次轮询在第 1024 拍发生
+    f.ticks(1024);
+    ASSERT_EQ(src.calls, 1);
+    EXPECT_TRUE(src.owner_ok) << "source 必须收到触发它的那个实例";
+    EXPECT_EQ(f.level(), 0) << "取到字节后应当立刻发出起始位";
+    EXPECT_EQ(decodeFromStartBit(f), 0x41);
+    EXPECT_TRUE(src.bytes.empty());
+}
+
+// 队列里有数据时优先出队，不必等轮询周期，也不应该去打扰 source
+TEST(UartInTest, QueueTakesPriorityOverSource) {
+    UartInFixture f(8);
+    ByteSource src;
+    src.bytes = {0x41};
+    f.in->setSource({&ByteSource::poll}, &src);
+    f.in->pushByte(0x42); // 'B'
+
+    f.ticks(1); // 队列非空，第一拍就取
+    EXPECT_EQ(src.calls, 0);
+    EXPECT_EQ(f.level(), 0);
+    EXPECT_EQ(decodeFromStartBit(f), 0x42);
+
+    // 帧发完之后要等轮询周期才轮到 source；轮询计数在忙时暂停，
+    // 所以这里按"最多再等 2 个周期"推进，不假设精确拍数
+    int guard = 0;
+    while (src.calls == 0 && guard++ < 2048)
+        f.ticks(1);
+    ASSERT_EQ(src.calls, 1);
+    EXPECT_EQ(f.level(), 0);
+    EXPECT_EQ(decodeFromStartBit(f), 0x41);
+}
+
+// 两个实例各自的 source 互不干扰
+TEST(UartInTest, EachInstanceUsesItsOwnSource) {
+    UartInFixture a(8), b(8);
+    ByteSource sa, sb;
+    sa.bytes = {0x11};
+    sb.bytes = {0x22};
+    a.in->setSource({&ByteSource::poll}, &sa);
+    b.in->setSource({&ByteSource::poll}, &sb);
+
+    a.ticks(1024);
+    b.ticks(1024);
+    ASSERT_EQ(sa.calls, 1);
+    ASSERT_EQ(sb.calls, 1);
+    EXPECT_EQ(decodeFromStartBit(a), 0x11);
+    EXPECT_EQ(decodeFromStartBit(b), 0x22);
+}
+
+// 复位只清发送状态机；宿主输入队列属于外部世界，已经推入的字节不能被吞掉
+TEST(UartInTest, ResetKeepsHostInputQueue) {
+    UartInFixture f(8);
+    f.in->pushByte(0x41);
+    f.in->pushByte(0x42);
+    EXPECT_EQ(f.in->pending(), 2u);
+
+    f.circuit->reset();
+    EXPECT_EQ(f.in->pending(), 2u);
+}
+
+// 元件名来自 JSON，可以带换行；生成 C 的注释不能把名字拼进去，否则会逃逸成代码
+TEST(UartInTest, NewlineInNameStillCompiles) {
+    Circuit c;
+    auto *clk = c.createNet("clk"), *rx = c.createNet("rx");
+    auto *u = c.addComponent(std::make_unique<UartIn>("u\n0", 8));
+    ASSERT_NE(u, nullptr);
+    c.connect(u, "clk", clk);
+    c.connect(u, "rx", rx);
+    auto err = c.compile();
+    EXPECT_EQ(err.code, ErrorCode::OK) << err.message;
+}
+
+TEST(UartInTest, JsonRoundTripKeepsBaudDiv) {    UartInFixture f(6);
+    auto json = f.circuit->exportJson();
+    std::string error;
+    auto c2 = Circuit::fromJson(json, error);
+    ASSERT_NE(c2, nullptr) << error;
+    // 重新导出后 baud_div 必须仍在（构造函数把非法的 1 钳成 2 也依赖这个参数）
+    auto j = nlohmann::json::parse(c2->exportJson());
+    bool found = false;
+    for (auto &comp: j["components"]) {
+        if (comp["type"] == "uart_in") {
+            EXPECT_EQ(comp["params"]["baud_div"], "6");
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
 }
