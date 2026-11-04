@@ -1,11 +1,17 @@
 #include "dcs/util/TemplateExpr.h"
 
+#include "dcs/util/CheckedInt.h"
+
 #include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <format>
 
 namespace dsc {
+
+using checked::addOverflow;
+using checked::mulOverflow;
+using checked::subOverflow;
 
 std::string TemplateExpr::Value::text() const {
     return has_text ? s : std::to_string(i);
@@ -90,7 +96,7 @@ bool TemplateExpr::parseSum(Value &out) {
         if (op == '+') {
             if (out.is_int && rhs.is_int) {
                 int64_t r;
-                if (__builtin_add_overflow(out.i, rhs.i, &r))
+                if (addOverflow(out.i, rhs.i, r))
                     return fail("整数溢出");
                 out.i = r;
                 out.s.clear();
@@ -104,7 +110,7 @@ bool TemplateExpr::parseSum(Value &out) {
             if (!out.is_int || !rhs.is_int)
                 return fail("'-' 只能用于整数");
             int64_t r;
-            if (__builtin_sub_overflow(out.i, rhs.i, &r))
+            if (subOverflow(out.i, rhs.i, r))
                 return fail("整数溢出");
             out.i = r;
             out.s.clear();
@@ -128,7 +134,7 @@ bool TemplateExpr::parseProduct(Value &out) {
             return fail(op == '*' ? "'*' 只能用于整数" : "'/' 只能用于整数");
         if (op == '*') {
             int64_t r;
-            if (__builtin_mul_overflow(out.i, rhs.i, &r))
+            if (mulOverflow(out.i, rhs.i, r))
                 return fail("整数溢出");
             out.i = r;
         } else {
