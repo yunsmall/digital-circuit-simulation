@@ -19,13 +19,13 @@ namespace dsc {
 
 class ROM : public SequentialComponent, public IStorage {
 public:
-    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
-    const uint8_t *readOnlyMemPtr() const override { return _data_ptr; }
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）。未 prepare 时返回 nullptr
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _data_ptr : nullptr; }
     uint8_t *writableMemPtr() override {
-        if (_filepath.empty())
-            ensureMem();
-        return _mapped ? nullptr : (_mem.empty() ? nullptr : _mem.data());
+        // 文件模式的数据来自 mmap/只读文件，不提供可写指针
+        return (!isPrepared() || !_filepath.empty()) ? nullptr : _mem.data();
     }
+    // 文件模式的容量要读了文件才知道，未 prepare 时是 0
     size_t memSize() const override { return _filepath.empty() ? (size_t) _depth : _data_size; }
 
     // ---- 构造方式1：内存模式 ----
@@ -45,11 +45,10 @@ public:
     int depth() const { return _depth; }
     int addrWidth() const { return _addr_width; }
     int dataWidth() const { return _data_width; }
-    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
-    const uint8_t *data() const { return _data_ptr; }
+    // 裸指针，仅供仿真框架，元件禁止调用。未 prepare 时返回 nullptr
+    const uint8_t *data() const { return isPrepared() ? _data_ptr : nullptr; }
     uint8_t *data() {
-        ensureMem();
-        return _mem.data();
+        return (!isPrepared() || !_filepath.empty()) ? nullptr : _mem.data();
     } // 仅内存模式可写
 
     std::string genStructDef() const override { return ""; }
@@ -61,8 +60,8 @@ public:
 private:
     void initCommon(const std::string &name, int addr_width, int data_width, int read_latency);
     void loadFile(const std::filesystem::path &filepath);
-    // 内存模式按需分配；文件模式必须在 prepare 里加载，这里不碰文件
-    void ensureMem();
+    // 内存模式在 prepare() 里分配；文件模式在 prepare() 里加载，这里不碰文件
+    void allocateMem();
 
     int _addr_width, _data_width, _depth;
     int _read_latency, _rd_stages;

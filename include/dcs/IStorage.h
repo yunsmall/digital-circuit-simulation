@@ -1,6 +1,7 @@
 // IStorage — 存储接口
 //
-// 拥有内部紧凑内存的元件（Memory、ROM、FIFO、MultiPortRAM）实现此接口。
+// 拥有内部紧凑内存的元件（Memory、WishboneMemory、ROM、FIFO、MultiPortRAM、
+// VirtioBlkMem）实现此接口。
 //
 // 下面这些裸指针函数**只允许仿真框架调用**：ELF 装载、测试布置数据、
 // --dump-mem 这类扮演"外部世界"的工具。任何元件都禁止调用它们。
@@ -29,14 +30,17 @@ public:
     //
     // 约定：
     //   - memSize() 表示元件的逻辑容量，只由参数决定，不要求存储已经分配；
-    //   - readOnlyMemPtr() 是 const 方法，不分配、不改状态：元件还没 prepare()
-    //     且没访问过可写指针时可以是 nullptr；
-    //   - writableMemPtr() 是非 const 方法，内存型存储在第一次调用时才分配
-    //     （prepare() 正常加入电路时已经分配好）。宿主预加载数据用它即可。
-    // 只读指针（prepare 或首次 writableMemPtr 后有效）
+    //     例外是 ROM 文件模式，容量要读了文件才知道，未 prepare 时返回 0；
+    //   - 元件在 prepare() 成功之前处于未就绪状态（见 Component.h 的生命周期
+    //     注释），两个指针函数一律返回 nullptr。框架侧必须先 addComponent 再
+    //     访问，不要指望访问器替你补做分配；
+    //   - readOnlyMemPtr() 是 const 方法，不分配、不改状态；
+    //   - writableMemPtr() 返回 nullptr 表示该存储不可写（如 ROM 的 mmap 模式）。
+    // 存储的分配全部发生在 prepare() 里，访问器只做转发。
+    // 只读指针（prepare 成功后有效）
     virtual const uint8_t *readOnlyMemPtr() const = 0;
 
-    // 可写指针（不可写返回 nullptr，如 ROM mmap 模式）；首次调用可能分配存储
+    // 可写指针（未 prepare 或不可写返回 nullptr）
     virtual uint8_t *writableMemPtr() { return nullptr; }
 
     // 逻辑容量（字节数），按参数计算，不依赖存储是否已分配

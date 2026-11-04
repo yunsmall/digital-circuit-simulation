@@ -28,11 +28,11 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
 }
 
 bool FIFO::prepare(Context &, std::string &) {
-    ensureMem();
+    allocateMem();
     return true;
 }
 
-void FIFO::ensureMem() {
+void FIFO::allocateMem() {
     const size_t bytes = (size_t) _depth * (size_t) ((_data_width + 7) / 8);
     if (_mem.size() != bytes)
         _mem.assign(bytes, 0);

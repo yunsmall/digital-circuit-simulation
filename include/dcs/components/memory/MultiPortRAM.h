@@ -16,12 +16,9 @@ namespace dsc {
 
 class MultiPortRAM : public SequentialComponent, public IStorage {
 public:
-    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
-    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override {
-        ensureMem();
-        return _mem.data();
-    }
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）。未 prepare 时返回 nullptr
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _mem.data() : nullptr; }
+    uint8_t *writableMemPtr() override { return isPrepared() ? _mem.data() : nullptr; }
     size_t memSize() const override { return (size_t)_depth; }
 
     // addr_width:  地址总线位宽，容量 = 2^addr_width 字节
@@ -44,8 +41,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    // 存储按需分配：prepare() 或第一次访问裸指针时分配
-    void ensureMem();
+    // 只在 prepare() 里调用
+    void allocateMem();
     int _addr_width, _data_width, _num_read, _num_write, _read_latency, _rd_stages, _depth;
     std::vector<uint8_t> _mem; // 字节寻址存储（_depth 字节）
 };

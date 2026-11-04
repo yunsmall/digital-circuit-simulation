@@ -143,7 +143,7 @@ ROM::~ROM() = default;
 
 bool ROM::prepare(Context &ctx, std::string &error) {
     if (_filepath.empty()) {
-        ensureMem();
+        allocateMem();
         return true;
     }
     try {
@@ -155,9 +155,10 @@ bool ROM::prepare(Context &ctx, std::string &error) {
     }
 }
 
-void ROM::ensureMem() {
+void ROM::allocateMem() {
     if (!_filepath.empty())
-        return; // 文件模式必须 prepare：要解析路径并 mmap/读取
+        return; // 文件模式由 loadFile 决定数据来源
+    // 容量一致时不清零：clone 会先复制一份数据过来，prepare 再分配不能把它清掉
     if (_mem.size() != (size_t) _depth)
         _mem.assign((size_t) _depth, 0);
     _data_ptr = _mem.data();

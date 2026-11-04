@@ -19,12 +19,9 @@ namespace dsc {
 
 class Memory : public SequentialComponent, public IStorage {
 public:
-    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
-    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override {
-        ensureMem();
-        return _mem.data();
-    }
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）。未 prepare 时返回 nullptr
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _mem.data() : nullptr; }
+    uint8_t *writableMemPtr() override { return isPrepared() ? _mem.data() : nullptr; }
     size_t memSize() const override { return (size_t)_depth; }
     // addr_width: 地址总线位宽，容量 = 2^addr_width 字节
     // data_width: 数据位宽（1~64）
@@ -44,13 +41,12 @@ public:
     int dataWidth() const {
         return _data_width;
     }
-    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
+    // 裸指针，仅供仿真框架，元件禁止调用。未 prepare 时返回 nullptr
     const uint8_t *data() const {
-        return _mem.data();
+        return isPrepared() ? _mem.data() : nullptr;
     }
     uint8_t *data() {
-        ensureMem();
-        return _mem.data();
+        return isPrepared() ? _mem.data() : nullptr;
     }
 
     std::string genStructDef() const override {
@@ -62,8 +58,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
-    // 存储按需分配：prepare() 或第一次访问裸指针时分配，构造本身不碰大内存
-    void ensureMem();
+    // 只在 prepare() 里调用；容量一致时不清零，保留 clone 预填的数据
+    void allocateMem();
     int _addr_width, _data_width, _depth;
     int _read_latency, _write_latency;
     int _rd_stages, _wr_stages; // 流水线级数（= latency + 1）

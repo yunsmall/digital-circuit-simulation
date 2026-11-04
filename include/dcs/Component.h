@@ -159,6 +159,19 @@ public:
     //            不重复创建引脚（引脚在构造函数或 prepare 里已经建好）。
     //   simInit() / simDeinit()：每次 Circuit::init()/deinit() 的运行期资源
     //            创建/释放，必须可重复调用；构造函数和 prepare 不能依赖它们先执行。
+    //
+    // 就绪状态：构造完成（只有引脚和参数）到 prepare() 成功之间，元件处于未就绪
+    // 状态，行为未定义。需要外部资源的接口（存储裸指针、DLL 句柄等）在未就绪时
+    // 返回空/失败，而不是自己偷偷补做 prepare 里的工作——否则"构造后能不能用"
+    // 会取决于哪条路径恰好先分配过内存，prepare 再赋值时是否清掉预填数据也成了
+    // 隐式约定。框架侧（ELF 装载、测试布置数据）必须先 addComponent 再访问。
+    [[nodiscard]] bool isPrepared() const {
+        return _prepared;
+    }
+    // 只由 Circuit::addComponent 在 prepare() 成功后置位；元件自己不要调用
+    void setPrepared(bool v) {
+        _prepared = v;
+    }
 
     // 编译前准备（加载 DLL/镜像等外部资源），返回 false 则编译中止。
     // 上下文显式传入：需要把参数里的相对路径按当前 JSON 目录解析的元件
@@ -237,6 +250,7 @@ protected:
     std::string _name;
     std::string _type_name;
     int _id = -1; // 电路内唯一 ID，由 Circuit::addComponent 分配
+    bool _prepared = false; // prepare() 是否成功，见生命周期注释
     std::vector<std::unique_ptr<Pin>> _inputs;
     std::vector<std::unique_ptr<Pin>> _outputs;
     std::unordered_map<std::string, std::string> _params;

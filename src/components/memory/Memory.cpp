@@ -28,11 +28,11 @@ Memory::Memory(const std::string &name, int addr_width, int data_width, int read
 }
 
 bool Memory::prepare(Context &, std::string &) {
-    ensureMem();
+    allocateMem();
     return true;
 }
 
-void Memory::ensureMem() {
+void Memory::allocateMem() {
     if (_mem.size() != (size_t) _depth)
         _mem.assign((size_t) _depth, 0);
 }

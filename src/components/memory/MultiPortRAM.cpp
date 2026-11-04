@@ -46,11 +46,11 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
 }
 
 bool MultiPortRAM::prepare(Context &, std::string &) {
-    ensureMem();
+    allocateMem();
     return true;
 }
 
-void MultiPortRAM::ensureMem() {
+void MultiPortRAM::allocateMem() {
     if (_mem.size() != (size_t) _depth)
         _mem.assign((size_t) _depth, 0);
 }

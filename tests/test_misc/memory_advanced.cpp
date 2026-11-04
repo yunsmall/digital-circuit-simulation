@@ -8,10 +8,10 @@ TEST(MiscTest, MemoryCppSideAccess) {
     dsc::Circuit c;
     auto *addr = c.createNet("addr"), *din = c.createNet("din"), *we = c.createNet("we"), *clk = c.createNet("clk");
     auto *dout = c.createNet("dout");
-    auto mem = std::make_unique<dsc::Memory>("mem", 4, 8);
-    mem->data()[5 * 1] = 0x77;
-    mem->data()[10 * 1] = 0x33;
-    auto *mem_ptr = static_cast<dsc::Memory *>(c.addComponent(std::move(mem)));
+    auto *mem_ptr = static_cast<dsc::Memory *>(c.addComponent(std::make_unique<dsc::Memory>("mem", 4, 8)));
+    // 存储只在 prepare（addComponent 内部）之后才可访问
+    mem_ptr->data()[5 * 1] = 0x77;
+    mem_ptr->data()[10 * 1] = 0x33;
     c.connect(mem_ptr, "addr", addr);
     c.connect(mem_ptr, "data_in", din);
     c.connect(mem_ptr, "we", we);
@@ -72,9 +72,8 @@ TEST(MiscTest, MemoryReadLatency) {
     dsc::Circuit c;
     auto *addr = c.createNet("addr"), *din = c.createNet("din"), *we = c.createNet("we"), *clk = c.createNet("clk");
     auto *dout = c.createNet("dout");
-    auto mem_ptr = std::make_unique<dsc::Memory>("mem", 4, 8, 2, 0);
-    mem_ptr->data()[3 * 1] = 0x77;
-    auto *mem = c.addComponent(std::move(mem_ptr));
+    auto *mem = static_cast<dsc::Memory *>(c.addComponent(std::make_unique<dsc::Memory>("mem", 4, 8, 2, 0)));
+    mem->data()[3 * 1] = 0x77;
     c.connect(mem, "addr", addr);
     c.connect(mem, "data_in", din);
     c.connect(mem, "we", we);

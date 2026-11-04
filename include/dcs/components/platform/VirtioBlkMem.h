@@ -37,16 +37,15 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
     // ---- IStorage：仅供仿真框架装载/检查内容，元件禁止调用 ----
-    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override {
-        ensureMem();
-        return _mem.data();
-    }
+    // 未 prepare 时返回 nullptr
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _mem.data() : nullptr; }
+    uint8_t *writableMemPtr() override { return isPrepared() ? _mem.data() : nullptr; }
     size_t memSize() const override { return (size_t) _size_bytes; }
 
 private:
     virtio_gen::DeviceSpec makeSpec() const;
-    void ensureMem();
+    // 只在 prepare() 里调用
+    void allocateMem();
 
     uint64_t _size_bytes = 0; // 构造期记录，prepare 时按这个容量分配
     std::vector<uint8_t> _mem;

@@ -39,12 +39,9 @@ public:
     WishboneMemory(const std::string &name, int addr_width = 16, int data_width = 32);
     ~WishboneMemory() override;
 
-    // ---- IStorage：以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）----
-    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override {
-        ensureMem();
-        return _mem.data();
-    }
+    // ---- IStorage：以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）。未 prepare 时返回 nullptr ----
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _mem.data() : nullptr; }
+    uint8_t *writableMemPtr() override { return isPrepared() ? _mem.data() : nullptr; }
     size_t memSize() const override { return (size_t) _depth; }
 
     // ---- Component 接口 ----
@@ -59,13 +56,12 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    // 存储按需分配：prepare() 或第一次访问裸指针时分配
-    void ensureMem();
+    // 只在 prepare() 里调用
+    void allocateMem();
     int _addr_width;
     int _data_width;
     int _depth;
     std::vector<uint8_t> _mem;
-    bool _prepared = false;
 };
 
 } // namespace dsc

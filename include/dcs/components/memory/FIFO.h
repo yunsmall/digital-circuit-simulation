@@ -26,12 +26,9 @@ namespace dsc {
 
 class FIFO : public SequentialComponent, public IStorage {
 public:
-    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
-    const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override {
-        ensureMem();
-        return _mem.data();
-    }
+    // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）。未 prepare 时返回 nullptr
+    const uint8_t *readOnlyMemPtr() const override { return isPrepared() ? _mem.data() : nullptr; }
+    uint8_t *writableMemPtr() override { return isPrepared() ? _mem.data() : nullptr; }
     size_t memSize() const override { return _depth * ((_data_width + 7) / 8); }
 
     FIFO(const std::string &name, int data_width, int depth, bool has_rst = false);
@@ -45,13 +42,12 @@ public:
     int fifoDepth() const {
         return _depth;
     }
-    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
+    // 裸指针，仅供仿真框架，元件禁止调用。未 prepare 时返回 nullptr
     const uint8_t *data() const {
-        return _mem.data();
+        return isPrepared() ? _mem.data() : nullptr;
     }
     uint8_t *data() {
-        ensureMem();
-        return _mem.data();
+        return isPrepared() ? _mem.data() : nullptr;
     }
 
     std::string genStructDef() const override {
@@ -63,8 +59,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
-    // 存储按需分配：prepare() 或第一次访问裸指针时分配
-    void ensureMem();
+    // 只在 prepare() 里调用
+    void allocateMem();
     int _data_width, _depth;
     bool _has_rst;
     std::vector<uint8_t> _mem;

@@ -41,11 +41,11 @@ VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
 VirtioBlkMem::~VirtioBlkMem() = default;
 
 bool VirtioBlkMem::prepare(Context &, std::string & /*error*/) {
-    ensureMem();
+    allocateMem();
     return true;
 }
 
-void VirtioBlkMem::ensureMem() {
+void VirtioBlkMem::allocateMem() {
     const size_t bytes = (size_t) _size_bytes;
     if (_mem.size() != bytes)
         _mem.assign(bytes, 0);

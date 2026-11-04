@@ -56,12 +56,11 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
 WishboneMemory::~WishboneMemory() = default;
 
 bool WishboneMemory::prepare(Context &, std::string & /*error*/) {
-    ensureMem();
-    _prepared = true;
+    allocateMem();
     return true;
 }
 
-void WishboneMemory::ensureMem() {
+void WishboneMemory::allocateMem() {
     if (_mem.size() != (size_t) _depth)
         _mem.assign((size_t) _depth, 0);
 }
