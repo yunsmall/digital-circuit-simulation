@@ -149,6 +149,17 @@ public:
 
     // ======== 外部资源 & JIT 符号 ========
 
+    // 生命周期职责划分（新增元件按这个约定写）：
+    //   构造函数：只做参数校验、setParam、addInput/addOutput 和少量标量字段初始化。
+    //            不要分配大块存储、不要读文件、不要加载 DLL——--pins 这类工具
+    //            可能只为了看引脚就构造一个临时实例。
+    //   prepare()：需要 Context 或重活的一次性准备（相对路径解析、大块存储分配、
+    //            读镜像、加载 DLL）。Circuit::addComponent 时调用；失败则元件不入电路。
+    //   prepareForCompile()：deinit() 释放了外部资源后重新 compile 时重新绑定；
+    //            不重复创建引脚（引脚在构造函数或 prepare 里已经建好）。
+    //   simInit() / simDeinit()：每次 Circuit::init()/deinit() 的运行期资源
+    //            创建/释放，必须可重复调用；构造函数和 prepare 不能依赖它们先执行。
+
     // 编译前准备（加载 DLL/镜像等外部资源），返回 false 则编译中止。
     // 上下文显式传入：需要把参数里的相对路径按当前 JSON 目录解析的元件
     // 用 ctx.resolvePath，元件不自己保存 Context 指针

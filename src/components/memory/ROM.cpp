@@ -121,10 +121,7 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, int read_laten
     initCommon(name, addr_width, data_width, read_latency);
     setParam("source_type", "mem");
 
-    // 字节寻址：容量 = 2^addr_width 字节
-    _mem.resize(_depth, 0);
-    _data_ptr = _mem.data();
-    _data_size = _mem.size();
+    // 存储分配推迟到 prepare()，构造只建引脚
 }
 
 // ============================================================
@@ -145,8 +142,10 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, const std::fil
 ROM::~ROM() = default;
 
 bool ROM::prepare(Context &ctx, std::string &error) {
-    if (_filepath.empty())
-        return true; // 内存模式，已分配好
+    if (_filepath.empty()) {
+        ensureMem();
+        return true;
+    }
     try {
         loadFile(ctx.resolvePath(_filepath.string()));
         return true;
@@ -154,6 +153,15 @@ bool ROM::prepare(Context &ctx, std::string &error) {
         error = e.what();
         return false;
     }
+}
+
+void ROM::ensureMem() {
+    if (!_filepath.empty())
+        return; // 文件模式必须 prepare：要解析路径并 mmap/读取
+    if (_mem.size() != (size_t) _depth)
+        _mem.assign((size_t) _depth, 0);
+    _data_ptr = _mem.data();
+    _data_size = _mem.size();
 }
 
 void ROM::loadFile(const std::filesystem::path &filepath) {
@@ -251,7 +259,10 @@ std::unique_ptr<Component> ROM::clone(const std::string &n) const {
         return std::make_unique<ROM>(n, _addr_width, _data_width, _filepath, _read_latency);
     } else {
         auto r = std::make_unique<ROM>(n, _addr_width, _data_width, _read_latency);
-        std::memcpy(r->_mem.data(), _mem.data(), _mem.size());
+        // 克隆时要连数据一起复制，不能只复制尺寸；原实例可能还没 prepare()
+        r->_mem = _mem;
+        r->_data_ptr = r->_mem.empty() ? nullptr : r->_mem.data();
+        r->_data_size = r->_mem.size();
         return r;
     }
 }

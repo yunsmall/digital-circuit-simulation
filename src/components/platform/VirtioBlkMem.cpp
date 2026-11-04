@@ -16,9 +16,8 @@ void noopReset(void *) {}
 } // namespace
 
 VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
-    SequentialComponent(name, "virtio_blk_mem") {
+    SequentialComponent(name, "virtio_blk_mem"), _size_bytes(size_bytes & ~511ull) {
     setParam("size_kb", std::to_string(size_bytes / 1024));
-    _mem.assign((size_t) (size_bytes & ~511ull), 0);
     addInput("clk", 1);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
@@ -42,7 +41,14 @@ VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
 VirtioBlkMem::~VirtioBlkMem() = default;
 
 bool VirtioBlkMem::prepare(Context &, std::string & /*error*/) {
+    ensureMem();
     return true;
+}
+
+void VirtioBlkMem::ensureMem() {
+    const size_t bytes = (size_t) _size_bytes;
+    if (_mem.size() != bytes)
+        _mem.assign(bytes, 0);
 }
 
 std::vector<Component::JitSymbol> VirtioBlkMem::extraJitSymbols() const {
@@ -101,7 +107,7 @@ std::string VirtioBlkMem::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioBlkMem::clone(const std::string &new_name) const {
-    auto m = std::make_unique<VirtioBlkMem>(new_name, _mem.size());
+    auto m = std::make_unique<VirtioBlkMem>(new_name, _size_bytes);
     m->_mem = _mem;
     return m;
 }

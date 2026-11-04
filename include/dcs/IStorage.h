@@ -26,13 +26,20 @@ public:
     virtual ~IStorage() = default;
 
     // 以下三个函数仅供仿真框架使用，元件禁止调用（原因见文件头）
-    // 只读指针（始终有效）
+    //
+    // 约定：
+    //   - memSize() 表示元件的逻辑容量，只由参数决定，不要求存储已经分配；
+    //   - readOnlyMemPtr() 是 const 方法，不分配、不改状态：元件还没 prepare()
+    //     且没访问过可写指针时可以是 nullptr；
+    //   - writableMemPtr() 是非 const 方法，内存型存储在第一次调用时才分配
+    //     （prepare() 正常加入电路时已经分配好）。宿主预加载数据用它即可。
+    // 只读指针（prepare 或首次 writableMemPtr 后有效）
     virtual const uint8_t *readOnlyMemPtr() const = 0;
 
-    // 可写指针（不可写返回 nullptr，如 ROM mmap 模式）
+    // 可写指针（不可写返回 nullptr，如 ROM mmap 模式）；首次调用可能分配存储
     virtual uint8_t *writableMemPtr() { return nullptr; }
 
-    // 紧凑存储的字节数
+    // 逻辑容量（字节数），按参数计算，不依赖存储是否已分配
     virtual size_t memSize() const = 0;
 };
 

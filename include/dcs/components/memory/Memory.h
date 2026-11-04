@@ -21,13 +21,19 @@ class Memory : public SequentialComponent, public IStorage {
 public:
     // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override { return _mem.data(); }
+    uint8_t *writableMemPtr() override {
+        ensureMem();
+        return _mem.data();
+    }
     size_t memSize() const override { return (size_t)_depth; }
     // addr_width: 地址总线位宽，容量 = 2^addr_width 字节
     // data_width: 数据位宽（1~64）
     // read_latency: 读延迟（0=组合逻辑直出）
     // write_latency: 写延迟（0=上升沿直写）
     Memory(const std::string &name, int addr_width, int data_width, int read_latency = 0, int write_latency = 0);
+
+    // 存储分配放在 prepare：--pins 这类工具只构造看引脚，不能顺手分配 2^addr_width 字节
+    bool prepare(Context &ctx, std::string &error) override;
 
     int depth() const {
         return _depth; // 容量（字节数）
@@ -38,11 +44,12 @@ public:
     int dataWidth() const {
         return _data_width;
     }
-    // 裸指针，仅供仿真框架，元件禁止调用
+    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
     const uint8_t *data() const {
         return _mem.data();
     }
     uint8_t *data() {
+        ensureMem();
         return _mem.data();
     }
 
@@ -55,6 +62,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
+    // 存储按需分配：prepare() 或第一次访问裸指针时分配，构造本身不碰大内存
+    void ensureMem();
     int _addr_width, _data_width, _depth;
     int _read_latency, _write_latency;
     int _rd_stages, _wr_stages; // 流水线级数（= latency + 1）

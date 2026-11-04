@@ -28,10 +28,16 @@ class FIFO : public SequentialComponent, public IStorage {
 public:
     // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override { return _mem.data(); }
+    uint8_t *writableMemPtr() override {
+        ensureMem();
+        return _mem.data();
+    }
     size_t memSize() const override { return _depth * ((_data_width + 7) / 8); }
 
     FIFO(const std::string &name, int data_width, int depth, bool has_rst = false);
+
+    // 存储分配放在 prepare：构造只做参数校验和建引脚
+    bool prepare(Context &ctx, std::string &error) override;
 
     int dataWidth() const {
         return _data_width;
@@ -39,11 +45,12 @@ public:
     int fifoDepth() const {
         return _depth;
     }
-    // 裸指针，仅供仿真框架，元件禁止调用
+    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
     const uint8_t *data() const {
         return _mem.data();
     }
     uint8_t *data() {
+        ensureMem();
         return _mem.data();
     }
 
@@ -56,6 +63,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
+    // 存储按需分配：prepare() 或第一次访问裸指针时分配
+    void ensureMem();
     int _data_width, _depth;
     bool _has_rst;
     std::vector<uint8_t> _mem;

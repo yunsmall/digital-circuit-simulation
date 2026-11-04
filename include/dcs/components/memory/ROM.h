@@ -21,8 +21,12 @@ class ROM : public SequentialComponent, public IStorage {
 public:
     // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _data_ptr; }
-    uint8_t *writableMemPtr() override { return _mapped ? nullptr : _mem.data(); }
-    size_t memSize() const override { return _data_size; }
+    uint8_t *writableMemPtr() override {
+        if (_filepath.empty())
+            ensureMem();
+        return _mapped ? nullptr : (_mem.empty() ? nullptr : _mem.data());
+    }
+    size_t memSize() const override { return _filepath.empty() ? (size_t) _depth : _data_size; }
 
     // ---- 构造方式1：内存模式 ----
     // 内部分配 depth × d_bytes 全零存储，调用者通过 writableMemPtr()/memSize() 填入数据
@@ -41,9 +45,12 @@ public:
     int depth() const { return _depth; }
     int addrWidth() const { return _addr_width; }
     int dataWidth() const { return _data_width; }
-    // 裸指针，仅供仿真框架，元件禁止调用
+    // 裸指针，仅供仿真框架，元件禁止调用。const 版本不分配存储
     const uint8_t *data() const { return _data_ptr; }
-    uint8_t *data() { return _mem.data(); } // 仅内存模式可写
+    uint8_t *data() {
+        ensureMem();
+        return _mem.data();
+    } // 仅内存模式可写
 
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;
@@ -54,6 +61,8 @@ public:
 private:
     void initCommon(const std::string &name, int addr_width, int data_width, int read_latency);
     void loadFile(const std::filesystem::path &filepath);
+    // 内存模式按需分配；文件模式必须在 prepare 里加载，这里不碰文件
+    void ensureMem();
 
     int _addr_width, _data_width, _depth;
     int _read_latency, _rd_stages;

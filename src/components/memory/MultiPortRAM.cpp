@@ -25,9 +25,6 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
     setParam("num_write_ports", std::to_string(num_write_ports));
     setParam("read_latency", std::to_string(read_latency));
 
-    // 字节寻址：容量 = 2^addr_width 字节
-    _mem.resize(_depth, 0);
-
     // 时钟
     addInput("clk", 1);
 
@@ -46,6 +43,16 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
 
     // 流控：读数据有效标志（read_latency=0 时始终为 1）
     addOutput("rd_valid", 1, false, true);
+}
+
+bool MultiPortRAM::prepare(Context &, std::string &) {
+    ensureMem();
+    return true;
+}
+
+void MultiPortRAM::ensureMem() {
+    if (_mem.size() != (size_t) _depth)
+        _mem.assign((size_t) _depth, 0);
 }
 
 std::string MultiPortRAM::genStateDecl() const {

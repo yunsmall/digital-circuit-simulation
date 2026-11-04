@@ -24,6 +24,7 @@ public:
     explicit VirtioBlkMem(const std::string &name, uint64_t size_bytes = 1024u * 1024u);
     ~VirtioBlkMem() override;
 
+    // 存储分配放在 prepare：构造只记录容量、建引脚
     bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
@@ -37,12 +38,17 @@ public:
 
     // ---- IStorage：仅供仿真框架装载/检查内容，元件禁止调用 ----
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override { return _mem.data(); }
-    size_t memSize() const override { return _mem.size(); }
+    uint8_t *writableMemPtr() override {
+        ensureMem();
+        return _mem.data();
+    }
+    size_t memSize() const override { return (size_t) _size_bytes; }
 
 private:
     virtio_gen::DeviceSpec makeSpec() const;
+    void ensureMem();
 
+    uint64_t _size_bytes = 0; // 构造期记录，prepare 时按这个容量分配
     std::vector<uint8_t> _mem;
 };
 

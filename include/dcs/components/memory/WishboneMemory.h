@@ -41,8 +41,11 @@ public:
 
     // ---- IStorage：以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）----
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override { return _mem.data(); }
-    size_t memSize() const override { return _mem.size(); }
+    uint8_t *writableMemPtr() override {
+        ensureMem();
+        return _mem.data();
+    }
+    size_t memSize() const override { return (size_t) _depth; }
 
     // ---- Component 接口 ----
     bool prepare(Context &ctx, std::string &error) override;
@@ -56,6 +59,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
+    // 存储按需分配：prepare() 或第一次访问裸指针时分配
+    void ensureMem();
     int _addr_width;
     int _data_width;
     int _depth;

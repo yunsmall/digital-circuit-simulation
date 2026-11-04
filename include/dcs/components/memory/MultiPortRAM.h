@@ -18,7 +18,10 @@ class MultiPortRAM : public SequentialComponent, public IStorage {
 public:
     // 以下裸指针仅供仿真框架，元件禁止调用（见 IStorage.h）
     const uint8_t *readOnlyMemPtr() const override { return _mem.data(); }
-    uint8_t *writableMemPtr() override { return _mem.data(); }
+    uint8_t *writableMemPtr() override {
+        ensureMem();
+        return _mem.data();
+    }
     size_t memSize() const override { return (size_t)_depth; }
 
     // addr_width:  地址总线位宽，容量 = 2^addr_width 字节
@@ -29,6 +32,9 @@ public:
     MultiPortRAM(const std::string &name, int addr_width, int data_width, int num_read_ports, int num_write_ports,
                  int read_latency = 0);
 
+    // 存储分配放在 prepare：构造只做参数校验和建引脚
+    bool prepare(Context &ctx, std::string &error) override;
+
     std::string genStructDef() const override {
         return "";
     }
@@ -38,6 +44,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
+    // 存储按需分配：prepare() 或第一次访问裸指针时分配
+    void ensureMem();
     int _addr_width, _data_width, _num_read, _num_write, _read_latency, _rd_stages, _depth;
     std::vector<uint8_t> _mem; // 字节寻址存储（_depth 字节）
 };

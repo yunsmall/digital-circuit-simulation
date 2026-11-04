@@ -51,16 +51,19 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
     // Wishbone 从设备输出（按 O_* 顺序）
     addOutput("wb_dat_o", 32, false, true);
     addOutput("wb_ack_o", 1, false, true);
-
-    _mem.resize(_depth, 0);
-
 }
 
 WishboneMemory::~WishboneMemory() = default;
 
 bool WishboneMemory::prepare(Context &, std::string & /*error*/) {
+    ensureMem();
     _prepared = true;
     return true;
+}
+
+void WishboneMemory::ensureMem() {
+    if (_mem.size() != (size_t) _depth)
+        _mem.assign((size_t) _depth, 0);
 }
 
 // ============================================================

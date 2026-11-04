@@ -16,8 +16,6 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     if (depth < 2 || depth > 65536 || (depth & (depth - 1)) != 0)
         throw std::invalid_argument("FIFO 深度必须是2的幂（2~65536）");
 
-    _mem.resize(depth * ((data_width + 7) / 8), 0);
-
     addInput("din", data_width);
     addInput("wr_en", 1);
     addInput("rd_en", 1);
@@ -27,6 +25,17 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     addOutput("dout", data_width, false, true);
     addOutput("full", 1, false, true);
     addOutput("empty", 1, false, true);
+}
+
+bool FIFO::prepare(Context &, std::string &) {
+    ensureMem();
+    return true;
+}
+
+void FIFO::ensureMem() {
+    const size_t bytes = (size_t) _depth * (size_t) ((_data_width + 7) / 8);
+    if (_mem.size() != bytes)
+        _mem.assign(bytes, 0);
 }
 
 std::string FIFO::genStateDecl() const {

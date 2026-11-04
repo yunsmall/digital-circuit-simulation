@@ -19,15 +19,22 @@ Memory::Memory(const std::string &name, int addr_width, int data_width, int read
     setParam("read_latency", std::to_string(read_latency));
     setParam("write_latency", std::to_string(write_latency));
 
-    // 字节寻址：容量 = 2^addr_width 字节
-    _mem.resize(_depth, 0);
-
     addInput("addr", addr_width);
     addInput("data_in", data_width);
     addInput("we", 1);
     addInput("clk", 1);
     addOutput("data_out", data_width, false, true);
     addOutput("busy", 1, false, true);
+}
+
+bool Memory::prepare(Context &, std::string &) {
+    ensureMem();
+    return true;
+}
+
+void Memory::ensureMem() {
+    if (_mem.size() != (size_t) _depth)
+        _mem.assign((size_t) _depth, 0);
 }
 
 // ============================================================
