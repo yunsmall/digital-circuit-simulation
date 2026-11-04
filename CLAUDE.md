@@ -18,22 +18,6 @@ cmake --build build --parallel --config RelWithDebInfo
 
 `LLVM_ROOT` 指向 LLVM/Clang 的安装前缀（含 `bin/`、`lib/`、`include/` 的那个目录）。
 
-## 编译器可移植性
-
-CI 的 Windows 任务是 MSVC（cl.exe），Linux/ARM64 是 clang，本地 Windows 用 clang++。
-`src/`、`include/` 里因此不能出现 GCC/Clang 专有扩展：`__builtin_*`、语句表达式、
-`__int128`、`__attribute__` 等在 cl.exe 下会直接报 C3861/C2069，而本地 clang
-构建完全看不出问题。
-
-需要这类能力时写成标准 C++ 或可移植替身，例如整数溢出检查用
-`include/dcs/util/CheckedInt.h`，不要用 `__builtin_add_overflow`。新增或修改的文件
-推送前至少用 cl 单独编译一遍：
-
-```bat
-call "E:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
-cl /nologo /std:c++latest /EHsc /Iinclude /c src\util\TemplateExpr.cpp /Fotmp\check.obj
-```
-
 ## TCC 后端（可选）
 
 `TCC_ROOT` 指向 TinyCC 的可执行文件所在目录（如 `win32/`，内含 `tcc.exe`、`libtcc.lib`、`libtcc.dll`）。
