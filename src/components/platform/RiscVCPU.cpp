@@ -152,10 +152,10 @@ std::unique_ptr<Component> RiscVCPU<XLEN>::clone(const std::string &n) const {
 // ============================================================
 namespace {
 struct CpuIn {
-    bool clk, rst, ack, irq, mti, msi, seip; uint32_t dat;
+    bool ack, irq, mti, msi, seip; uint32_t dat;
     explicit CpuIn(const uint8_t *const *in) {
+        // clk/rst 在 cpuTick 入口已按边沿需要单独读过，这里不再重复读；
         // 固定 4 字节的 memcpy 会被编成单条 mov，比手写字节拼接更快，别改成移位
-        clk=(in[I_CLK][0]&1)!=0; rst=(in[I_RST][0]&1)!=0;
         std::memcpy(&dat,in[I_DAT],4); ack=(in[I_ACK][0]&1)!=0;
         irq=(in[I_IRQ][0]&1)!=0; mti=(in[I_MTI][0]&1)!=0; msi=(in[I_MSI][0]&1)!=0;
         seip=(in[I_SEIP][0]&1)!=0;

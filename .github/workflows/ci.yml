@@ -54,7 +54,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022]
+        # arm64 只在 Linux 上跑：JIT 按宿主架构生成代码，arm64 任务专门验证
+        # AArch64 目标初始化（JitBackend 用的是 native target，不是写死 X86）
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022]
         backend: [llvm, tcc]
 
     env:

@@ -121,11 +121,11 @@ void initCompilerEnv() {
     // 测试夹具会并行编译多个电路，一次性初始化必须线程安全
     static std::once_flag once;
     std::call_once(once, [] {
-        LLVMInitializeX86TargetInfo();
-        LLVMInitializeX86Target();
-        LLVMInitializeX86TargetMC();
-        LLVMInitializeX86AsmParser();
-        LLVMInitializeX86AsmPrinter();
+        // 按编译 LLVM 时的宿主架构初始化（x86_64 → X86，arm64 → AArch64）。
+        // LLJIT 用 detectHost 选目标，这里写死 X86 会让 arm64 宿主上找不到 target
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+        llvm::InitializeNativeTargetAsmParser();
     });
 }
 #endif
