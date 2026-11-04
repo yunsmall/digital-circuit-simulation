@@ -3,7 +3,7 @@
   "$meta": {
     "kind": "blueprint",
     "format": 1,
-    "name": "parity8",
+    "name": "parity",
     "author": "dcs",
     "description": "偶校验生成器：数据位宽由 bit_width 参数决定，默认 8"
   },

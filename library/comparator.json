@@ -3,7 +3,7 @@
   "$meta": {
     "kind": "blueprint",
     "format": 1,
-    "name": "comparator4",
+    "name": "comparator",
     "author": "dcs",
     "description": "N 位无符号数值比较器：位宽由 bit_width 参数决定，默认 4"
   },
