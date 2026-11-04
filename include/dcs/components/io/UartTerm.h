@@ -18,7 +18,6 @@ public:
     explicit UartTerm(const std::string &name, int baud_div = 16);
     ~UartTerm() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -41,7 +40,6 @@ private:
     uint64_t _errors = 0;
     uint8_t _last_byte = 0;
     int _baud_div = 16;
-    bool _prepared = false;
 };
 
 } // namespace dsc

@@ -130,14 +130,13 @@ Net *Circuit::createNet(const std::string &name) {
 }
 
 Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *error) {
-    // 加入电路时立即准备元件（DLL 加载、分配存储、读取描述符创建引脚等）
+    // 加入电路时立即准备元件（ensurePins 建动态引脚、分配存储、加载 DLL 等）
     std::string prep_err;
     if (!comp->prepare(context(), prep_err)) {
         if (error)
             *error = {ErrorCode::PREPARE_FAILED, -1, {}, prep_err};
         return nullptr;
     }
-    comp->setPrepared(true);
     // 用"现有最大 ID + 1"而不是 size()：removeComponent 不重编号，
     // 按 size 分配会和留下来的元件撞号（编译前按 id 查元件/生成符号都会歧义）
     int next_id = 0;

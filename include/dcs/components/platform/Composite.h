@@ -43,8 +43,8 @@ public:
     std::string genFuncDef_seq() const override;
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
-    // 编译前准备：加载定义、创建引脚
-    bool prepare(Context &ctx, std::string &error) override;
+    // 引脚描述在蓝图定义里，构造期拿不到，由 ensurePins 解析并创建
+    bool ensurePins(Context &ctx, std::string &error) override;
 
     // 导出构造参数
     std::unordered_map<std::string, std::string> exportParams() const override;
@@ -64,7 +64,8 @@ private:
     std::string _def_name;
     // 实例覆盖的蓝图参数；默认值在定义里
     std::map<std::string, std::string> _params;
-    bool _prepared = false;
+    // 引脚是否已经建好；ensurePins 幂等
+    bool _pins_built = false;
 
     // 从定义加载引脚（width 表达式按有效参数解析）
     bool loadPinsFromDef(const CircuitDefinition &def, const std::map<std::string, std::string> &params,

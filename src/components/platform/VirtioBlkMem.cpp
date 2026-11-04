@@ -40,7 +40,7 @@ VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
 
 VirtioBlkMem::~VirtioBlkMem() = default;
 
-bool VirtioBlkMem::prepare(Context &, std::string & /*error*/) {
+bool VirtioBlkMem::prepareImpl(Context &, std::string & /*error*/) {
     allocateMem();
     return true;
 }

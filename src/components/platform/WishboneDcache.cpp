@@ -62,10 +62,6 @@ WishboneDcache::WishboneDcache(const std::string &name, int lines, uint32_t base
 
 WishboneDcache::~WishboneDcache() = default;
 
-bool WishboneDcache::prepare(Context &, std::string &) {
-    _prepared = true;
-    return true;
-}
 
 std::string WishboneDcache::genStateDecl() const {
     return std::format(

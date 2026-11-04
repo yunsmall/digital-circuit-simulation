@@ -46,10 +46,6 @@ PLIC::PLIC(const std::string &name, int num_sources) : SequentialComponent(name,
 
 PLIC::~PLIC() = default;
 
-bool PLIC::prepare(Context &, std::string &) {
-    _prepared = true;
-    return true;
-}
 
 std::string PLIC::genStateDecl() const {
     const int n = _num_sources;

@@ -70,10 +70,10 @@ DllComponent::DllComponent(const std::string &name, const std::string &dll_path)
 }
 
 // ============================================================
-// prepare — 加载 DLL、读取描述符、创建引脚
+// ensurePins — 加载 DLL、读取描述符、创建引脚
 // ============================================================
 
-// 只加载描述符和函数指针，不创建引脚。prepare() 首次建引脚时调用；
+// 只加载描述符和函数指针，不创建引脚。ensurePins() 首次建引脚时调用；
 // simDeinit 之后再 simInit 也走这里（引脚已存在，不能重复创建）
 bool DllComponent::loadSymbols(std::string &error) {
 #ifdef _WIN32
@@ -133,7 +133,7 @@ bool DllComponent::loadSymbols(std::string &error) {
     return true;
 }
 
-bool DllComponent::prepare(Context &ctx, std::string &error) {
+bool DllComponent::ensurePins(Context &ctx, std::string &error) {
     // 解析后的绝对路径要留住：simInit/simDeinit 重新加载时还要用
     if (!_loaded && !_dll_path.empty())
         _dll_path = ctx.resolvePath(_dll_path);

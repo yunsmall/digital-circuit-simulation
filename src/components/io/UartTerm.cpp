@@ -24,10 +24,6 @@ UartTerm::UartTerm(const std::string &name, int baud_div) : SequentialComponent(
 
 UartTerm::~UartTerm() = default;
 
-bool UartTerm::prepare(Context &, std::string &) {
-    _prepared = true;
-    return true;
-}
 
 std::string UartTerm::genStateDecl() const {
     return std::format(

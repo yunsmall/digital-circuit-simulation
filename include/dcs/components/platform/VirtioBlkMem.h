@@ -25,7 +25,7 @@ public:
     ~VirtioBlkMem() override;
 
     // 存储分配放在 prepare：构造只记录容量、建引脚
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }

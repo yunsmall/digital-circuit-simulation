@@ -113,7 +113,8 @@ void listTypesJson() {
 // ---- --pins：按指定参数实例化元件，打印真实引脚 ----
 // --list-types 里的引脚来自注册元数据，动态引脚（sel0..、in0..、out0..）只能标成
 // "(动态)"，位宽也看不到。这里直接走工厂构造一次，输出的就是接线时能用的名字。
-int printPins(const std::string &type, const std::vector<std::string> &raw_params, bool as_json) {
+// 引脚来自蓝图/DLL 的元件要 ensurePins 之后才齐全，所以 Context 必须传进来。
+int printPins(dsc::Context &ctx, const std::string &type, const std::vector<std::string> &raw_params, bool as_json) {
     std::unordered_map<std::string, std::string> params;
     for (auto &kv: raw_params) {
         auto eq = kv.find('=');
@@ -124,11 +125,30 @@ int printPins(const std::string &type, const std::vector<std::string> &raw_param
         params[kv.substr(0, eq)] = kv.substr(eq + 1);
     }
 
+    // 复合元件的引脚要靠蓝图定义解析；--pins 不加载电路文件，只能把 -I
+    // 查找路径扫一遍。同一份文件按 canonical path 去重，重复扫描不重复导入
+    if (type == "composite") {
+        for (auto &dir: ctx.library().searchPaths()) {
+            int imported = 0;
+            std::string scan_err;
+            if (!dsc::importLibraryDirectory(ctx, dir, -1, imported, scan_err)) {
+                std::cerr << scan_err << "\n";
+                return 1;
+            }
+        }
+    }
+
     auto &f = dsc::ComponentFactory::instance();
     std::string err;
     auto comp = f.create(type, "__pins__", params, err);
     if (!comp) {
         std::cerr << err << "\n";
+        return 1;
+    }
+    // 蓝图定义、DLL 导出表的引脚只有 ensurePins 之后才存在
+    std::string pin_err;
+    if (!comp->ensurePins(ctx, pin_err)) {
+        std::cerr << pin_err << "\n";
         return 1;
     }
 
@@ -660,7 +680,7 @@ int main(int argc, char *argv[]) {
     if (result.count("pins")) {
         std::vector<std::string> ps;
         if (result.count("param")) ps = result["param"].as<std::vector<std::string>>();
-        return printPins(result["pins"].as<std::string>(), ps, result.count("json") != 0);
+        return printPins(ctx, result["pins"].as<std::string>(), ps, result.count("json") != 0);
     }
     if (result.count("param")) {
         std::cerr << "--param 只能配合 --pins 使用\n";

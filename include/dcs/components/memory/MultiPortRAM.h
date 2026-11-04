@@ -30,7 +30,7 @@ public:
                  int read_latency = 0);
 
     // 存储分配放在 prepare：构造只做参数校验和建引脚
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
 
     std::string genStructDef() const override {
         return "";

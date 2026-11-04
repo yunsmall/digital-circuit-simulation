@@ -28,8 +28,8 @@ std::map<std::string, std::string> CompositeComponent::effectiveParams(const Cir
     return p;
 }
 
-bool CompositeComponent::prepare(Context &ctx, std::string &error) {
-    if (_prepared)
+bool CompositeComponent::ensurePins(Context &ctx, std::string &error) {
+    if (_pins_built)
         return true;
 
     // 定义必须来自实例所在上下文的库，和 expandTo 用 parent.context().library()
@@ -49,7 +49,7 @@ bool CompositeComponent::prepare(Context &ctx, std::string &error) {
 
     if (!loadPinsFromDef(*def, effectiveParams(*def), error))
         return false;
-    _prepared = true;
+    _pins_built = true;
     return true;
 }
 
@@ -77,18 +77,24 @@ bool CompositeComponent::loadPinsFromDef(const CircuitDefinition &def,
         return w;
     };
 
+    // 先把所有位宽算出来再建引脚：中途失败不能留下半套引脚
+    std::vector<std::pair<std::string, int>> ins, outs;
     for (auto &[pin_name, ep]: def.input_expose) {
         const int bw = pin_width(ep, pin_name.c_str(), "输入");
         if (bw == 0)
             return false;
-        addInput(pin_name, bw);
+        ins.emplace_back(pin_name, bw);
     }
     for (auto &[pin_name, ep]: def.output_expose) {
         const int bw = pin_width(ep, pin_name.c_str(), "输出");
         if (bw == 0)
             return false;
-        addOutput(pin_name, bw);
+        outs.emplace_back(pin_name, bw);
     }
+    for (auto &[pin_name, bw]: ins)
+        addInput(pin_name, bw);
+    for (auto &[pin_name, bw]: outs)
+        addOutput(pin_name, bw);
     return true;
 }
 

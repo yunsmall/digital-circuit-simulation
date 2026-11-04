@@ -27,7 +27,7 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     addOutput("empty", 1, false, true);
 }
 
-bool FIFO::prepare(Context &, std::string &) {
+bool FIFO::prepareImpl(Context &, std::string &) {
     allocateMem();
     return true;
 }

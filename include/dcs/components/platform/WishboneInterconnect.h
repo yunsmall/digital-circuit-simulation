@@ -45,7 +45,7 @@ public:
     bool hasCombinational() const override { return true; }
     bool hasSequential() const override { return true; }
 
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }
@@ -61,7 +61,6 @@ public:
 private:
     std::vector<Segment> _segments;
     int _masters = 1;
-    bool _prepared = false;
 };
 
 } // namespace dsc

@@ -21,7 +21,6 @@ UartFeed::UartFeed(const std::string &name, int baud_div) :
 
 UartFeed::~UartFeed() = default;
 
-bool UartFeed::prepare(Context &, std::string &) { return true; }
 
 std::vector<Component::JitSymbol> UartFeed::extraJitSymbols() const {
     // 只有标志置位时 JIT 才会调用它，正常仿真里这条路径几乎不触发

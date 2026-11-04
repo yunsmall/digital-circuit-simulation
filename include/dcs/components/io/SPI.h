@@ -20,7 +20,6 @@ public:
     explicit SPI(const std::string &name, int clkdiv = 4);
     ~SPI() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -33,7 +32,6 @@ public:
 
 private:
     int _clkdiv = 4;
-    bool _prepared = false;
 };
 
 } // namespace dsc

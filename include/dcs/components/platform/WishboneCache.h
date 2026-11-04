@@ -19,7 +19,6 @@ public:
     explicit WishboneCache(const std::string &name, int lines = 16);
     ~WishboneCache() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -40,7 +39,6 @@ private:
 
     uint64_t _stats[2] = {0, 0};
     int _lines = 16;
-    bool _prepared = false;
 };
 
 } // namespace dsc

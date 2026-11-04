@@ -45,7 +45,7 @@ public:
     size_t memSize() const override { return (size_t) _depth; }
 
     // ---- Component 接口 ----
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
 
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;

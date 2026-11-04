@@ -153,32 +153,47 @@ public:
     //   构造函数：只做参数校验、setParam、addInput/addOutput 和少量标量字段初始化。
     //            不要分配大块存储、不要读文件、不要加载 DLL——--pins 这类工具
     //            可能只为了看引脚就构造一个临时实例。
-    //   prepare()：需要 Context 或重活的一次性准备（相对路径解析、大块存储分配、
-    //            读镜像、加载 DLL）。Circuit::addComponent 时调用；失败则元件不入电路。
+    //            引脚描述来自外部资源、构造期拿不到的元件（蓝图定义、DLL 导出表），
+    //            覆盖 ensurePins()，不要在构造函数里硬凑。
+    //   prepare()：统一入口，先 ensurePins() 再 prepareImpl()；外部只需要调它。
+    //   prepareImpl()：需要 Context 或重活的一次性准备（相对路径解析、大块存储分配、
+    //            读镜像、加载 DLL）。Circuit::addComponent 时经 prepare() 调用；
+    //            失败则元件不入电路。
     //   prepareForCompile()：deinit() 释放了外部资源后重新 compile 时重新绑定；
-    //            不重复创建引脚（引脚在构造函数或 prepare 里已经建好）。
+    //            不重复创建引脚。
     //   simInit() / simDeinit()：每次 Circuit::init()/deinit() 的运行期资源
     //            创建/释放，必须可重复调用；构造函数和 prepare 不能依赖它们先执行。
     //
-    // 就绪状态：构造完成（只有引脚和参数）到 prepare() 成功之间，元件处于未就绪
-    // 状态，行为未定义。需要外部资源的接口（存储裸指针、DLL 句柄等）在未就绪时
-    // 返回空/失败，而不是自己偷偷补做 prepare 里的工作——否则"构造后能不能用"
-    // 会取决于哪条路径恰好先分配过内存，prepare 再赋值时是否清掉预填数据也成了
-    // 隐式约定。框架侧（ELF 装载、测试布置数据）必须先 addComponent 再访问。
+    // 就绪状态：构造完成到 prepare() 成功之间，元件处于未就绪状态，行为未定义。
+    // 需要外部资源的接口（存储裸指针、DLL 句柄等）在未就绪时返回空/失败，而不是
+    // 自己偷偷补做 prepare 里的工作——否则"构造后能不能用"会取决于哪条路径恰好
+    // 先分配过内存，prepare 再赋值时是否清掉预填数据也成了隐式约定。框架侧
+    // （ELF 装载、测试布置数据）必须先 addComponent 再访问。
     [[nodiscard]] bool isPrepared() const {
         return _prepared;
     }
-    // 只由 Circuit::addComponent 在 prepare() 成功后置位；元件自己不要调用
-    void setPrepared(bool v) {
-        _prepared = v;
-    }
 
-    // 编译前准备（加载 DLL/镜像等外部资源），返回 false 则编译中止。
-    // 上下文显式传入：需要把参数里的相对路径按当前 JSON 目录解析的元件
-    // 用 ctx.resolvePath，元件不自己保存 Context 指针
-    virtual bool prepare(Context & /*ctx*/, std::string & /*error*/) {
+    // 统一入口：先确保引脚齐全，再做运行期准备。幂等；失败返回 false。
+    // 引脚由 ensurePins() 建，所以 prepare 成功后所有元件都能拿到完整引脚。
+    bool prepare(Context &ctx, std::string &error) {
+        if (_prepared)
+            return true;
+        if (!ensurePins(ctx, error))
+            return false;
+        if (!prepareImpl(ctx, error))
+            return false;
+        _prepared = true;
         return true;
     }
+
+    // 确保引脚定义完整，幂等。默认空实现：引脚在构造函数里建好了。
+    // 引脚描述来自外部资源的元件覆盖它（Composite 查蓝图、DLL 读导出表）；
+    // 工具只想知道引脚时可以直接调，不必分配存储或读镜像。
+    // 返回 false 表示引脚拿不到，此时不能留下半套引脚。
+    virtual bool ensurePins(Context & /*ctx*/, std::string & /*error*/) {
+        return true;
+    }
+
     // 每次 compile() 在静态检查和生成代码之前调用。prepare() 建好的外部资源
     // 可能被 deinit() 释放（DLL 卸载、磁盘关闭），重新编译时必须重新绑定，
     // 否则 JIT 符号表会拿到空地址、代码生成会看不到元件的能力。
@@ -240,6 +255,12 @@ public:
     [[nodiscard]] std::string genOutputWirePtrArray(std::string_view arr) const;
 
 protected:
+    // 需要 Context 或重活的一次性准备：相对路径解析、大块存储分配、读镜像。
+    // 只由 prepare() 在 ensurePins() 之后调用，子类覆盖实现
+    virtual bool prepareImpl(Context & /*ctx*/, std::string & /*error*/) {
+        return true;
+    }
+
     void setParam(const std::string &key, const std::string &value) {
         _params[key] = value;
     }

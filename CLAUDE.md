@@ -303,6 +303,12 @@ DCS_REGISTER_COMPONENT(
 - 调用 `addInput(name, bit_width)` / `addOutput(name, bit_width)` 创建引脚
 - 时序输出的引脚用 `addOutput(name, bw, false, true)`（`is_sequential=true`）
 
+引脚描述来自外部资源、构造期拿不到的元件（复合元件查蓝图定义、DLL 元件读导出表），
+不要在构造函数里硬凑：构造只记参数，覆盖 `Component::ensurePins(Context&, std::string&)`
+建引脚。它必须幂等，失败时不能留下半套引脚。`Component::prepare()` 会先调 ensurePins
+再调 `prepareImpl()`，所以 addComponent 成功后引脚一定齐全；`--pins` 这类工具也可以
+只调 ensurePins 拿引脚，不必分配存储或读镜像。
+
 ### C 代码生成辅助函数（定义于 Component.h）
 
 - `gen_read_wire(net_id, pin_w, net_w, var_name)` — 从 `_w[]` 读取值的 C 语句，变量自动声明并 `= 0` 初始化。生成形如：

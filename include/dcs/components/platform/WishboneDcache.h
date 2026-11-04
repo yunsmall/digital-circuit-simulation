@@ -29,7 +29,6 @@ public:
                             uint32_t size = 0x10000000u);
     ~WishboneDcache() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     [[nodiscard]] std::vector<JitSymbol> extraJitSymbols() const override {
         return {};
     }
@@ -70,7 +69,6 @@ private:
     int _lines;
     uint32_t _base;
     uint32_t _size;
-    bool _prepared = false;
     // 计数器放在 C++ 侧，JIT 通过 genStateDecl 暴露的指针累加
     uint64_t _stats[3] = {0, 0, 0};
 };

@@ -30,7 +30,7 @@ public:
     Memory(const std::string &name, int addr_width, int data_width, int read_latency = 0, int write_latency = 0);
 
     // 存储分配放在 prepare：--pins 这类工具只构造看引脚，不能顺手分配 2^addr_width 字节
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
 
     int depth() const {
         return _depth; // 容量（字节数）

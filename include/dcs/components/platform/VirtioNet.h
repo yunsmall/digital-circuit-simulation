@@ -41,7 +41,7 @@ public:
                        std::map<std::string, std::string> backend_opts = {});
     ~VirtioNet() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
+    bool prepareImpl(Context &ctx, std::string &error) override;
     void simInit() override;
     void simDeinit() override;
 

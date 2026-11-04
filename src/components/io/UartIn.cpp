@@ -70,7 +70,6 @@ UartIn::UartIn(const std::string &name, int baud_div) :
 
 UartIn::~UartIn() = default;
 
-bool UartIn::prepare(Context &, std::string &) { return true; }
 
 std::vector<Component::JitSymbol> UartIn::extraJitSymbols() const {
     return {{"_dcs_uart_in_fetch", reinterpret_cast<void *>(&UartIn::fetch)}};

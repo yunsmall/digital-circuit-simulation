@@ -256,7 +256,6 @@ public:
 
     bool hasCombinational() const override { return false; }
     bool hasSequential() const override { return true; }
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
     std::string genStructDef() const override { return ""; }
     std::string genStateDecl() const override;
@@ -434,7 +433,6 @@ private:
     };
 
     CpuState _state;
-    bool _prepared = false;
 
     static void cpuTick(void *state_ptr, const uint8_t *const *inputs)
             DCS_NO_STACK_PROTECTOR;

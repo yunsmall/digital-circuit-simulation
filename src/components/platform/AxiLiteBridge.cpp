@@ -51,10 +51,6 @@ AxiLiteBridge::AxiLiteBridge(const std::string &name) : SequentialComponent(name
 
 AxiLiteBridge::~AxiLiteBridge() = default;
 
-bool AxiLiteBridge::prepare(Context &, std::string &) {
-    _prepared = true;
-    return true;
-}
 
 std::string AxiLiteBridge::genStateDecl() const {
     return std::format(

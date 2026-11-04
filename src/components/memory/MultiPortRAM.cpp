@@ -45,7 +45,7 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
     addOutput("rd_valid", 1, false, true);
 }
 
-bool MultiPortRAM::prepare(Context &, std::string &) {
+bool MultiPortRAM::prepareImpl(Context &, std::string &) {
     allocateMem();
     return true;
 }

@@ -24,7 +24,6 @@ public:
     explicit DMA(const std::string &name);
     ~DMA() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -36,7 +35,6 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    bool _prepared = false;
 };
 
 } // namespace dsc

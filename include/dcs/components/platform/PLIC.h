@@ -23,7 +23,6 @@ public:
     explicit PLIC(const std::string &name, int num_sources = 8);
     ~PLIC() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -39,7 +38,6 @@ private:
     static constexpr int MAX_SOURCES = 31;
 
     int _num_sources = 8;
-    bool _prepared = false;
 };
 
 } // namespace dsc

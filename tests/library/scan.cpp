@@ -11,6 +11,7 @@
 
 #include <dcs/CircuitCheck.h>
 #include <dcs/Context.h>
+#include <dcs/components/platform/Composite.h>
 #include <nlohmann/json.hpp>
 
 using namespace dsc;
@@ -204,4 +205,23 @@ TEST(LibraryScan, MissingDirectoryIsReported) {
     std::string error;
     EXPECT_FALSE(importLibraryDirectory(ctx, "no/such/library/dir", -1, imported, error));
     EXPECT_NE(error.find("不存在"), std::string::npos) << error;
+}
+
+// --pins 走的路径：扫完库目录就能直接建 Composite 并 ensurePins 拿引脚，
+// 不需要构造整个电路
+TEST(LibraryScan, CompositeEnsurePinsAfterScan) {
+    Context ctx;
+    int imported = 0;
+    std::string error;
+    ASSERT_TRUE(importLibraryDirectory(ctx, DCS_LIBRARY_DIR, -1, imported, error)) << error;
+    ASSERT_GT(imported, 0);
+
+    CompositeComponent c("ha", "half_adder");
+    ASSERT_TRUE(c.ensurePins(ctx, error)) << error;
+    EXPECT_EQ(c.inputs().size(), 2u);
+    EXPECT_EQ(c.outputs().size(), 2u);
+    // 工具重复调用不能叠加引脚
+    ASSERT_TRUE(c.ensurePins(ctx, error)) << error;
+    EXPECT_EQ(c.inputs().size(), 2u);
+    EXPECT_EQ(c.outputs().size(), 2u);
 }

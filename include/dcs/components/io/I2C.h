@@ -21,7 +21,6 @@ public:
     explicit I2C(const std::string &name, int clkdiv = 8);
     ~I2C() override;
 
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
 
     std::string genStructDef() const override { return ""; }
@@ -34,7 +33,6 @@ public:
 
 private:
     int _clkdiv = 8;
-    bool _prepared = false;
 };
 
 } // namespace dsc

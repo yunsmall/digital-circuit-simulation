@@ -141,7 +141,7 @@ ROM::ROM(const std::string &name, int addr_width, int data_width, const std::fil
 
 ROM::~ROM() = default;
 
-bool ROM::prepare(Context &ctx, std::string &error) {
+bool ROM::prepareImpl(Context &ctx, std::string &error) {
     if (_filepath.empty()) {
         allocateMem();
         return true;

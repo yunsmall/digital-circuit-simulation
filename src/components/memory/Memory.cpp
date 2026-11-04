@@ -27,7 +27,7 @@ Memory::Memory(const std::string &name, int addr_width, int data_width, int read
     addOutput("busy", 1, false, true);
 }
 
-bool Memory::prepare(Context &, std::string &) {
+bool Memory::prepareImpl(Context &, std::string &) {
     allocateMem();
     return true;
 }

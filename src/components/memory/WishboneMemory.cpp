@@ -55,7 +55,7 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
 
 WishboneMemory::~WishboneMemory() = default;
 
-bool WishboneMemory::prepare(Context &, std::string & /*error*/) {
+bool WishboneMemory::prepareImpl(Context &, std::string & /*error*/) {
     allocateMem();
     return true;
 }

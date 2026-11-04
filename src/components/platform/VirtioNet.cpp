@@ -92,7 +92,7 @@ void VirtioNet::setBackend(const BackendOps &ops) {
     _ops = ops;
 }
 
-bool VirtioNet::prepare(Context &, std::string &error) {
+bool VirtioNet::prepareImpl(Context &, std::string &error) {
     if (_backend == "none" || _ops.create)
         return true;
     auto &reg = backendRegistry();

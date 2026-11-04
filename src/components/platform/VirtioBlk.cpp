@@ -129,7 +129,7 @@ bool VirtioBlk::setImagePath(Context &ctx, const std::string &path, std::string 
     return installBackend("file", {{"path", resolved}}, ctx, error);
 }
 
-bool VirtioBlk::prepare(Context &ctx, std::string &error) {
+bool VirtioBlk::prepareImpl(Context &ctx, std::string &error) {
     // 外部后端（setBackend / 测试注入）已经声明了容量和读写语义时优先用它；
     // 否则按 backend 名字走注册表。文件/ROM 的打开逻辑都在各自后端里
     if (!_ops.read && _backend != "none") {

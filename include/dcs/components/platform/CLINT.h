@@ -22,7 +22,6 @@ public:
     CLINT(const std::string &name);
 
     // ---- Component 接口 ----
-    bool prepare(Context &ctx, std::string &error) override;
     std::vector<JitSymbol> extraJitSymbols() const override;
 
     std::string genStructDef() const override { return ""; }
@@ -34,7 +33,6 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    bool _prepared = false;
 };
 
 } // namespace dsc
