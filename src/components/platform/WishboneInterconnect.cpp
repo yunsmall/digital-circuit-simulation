@@ -280,11 +280,10 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     for (int k = 0; k < 6; k++) {
         static const char *vals[6] = {"_adr", "_dat", "_we", "_sel", "_ss", "_sc"};
         const int w = outputs()[M * 2 + k]->bit_width();
+        // 按引脚宽度写，别改成 8 字节整写：下游按字节读同一根线，宽存储等不到存储转发。
+        // 超出引脚宽度的高字节从 init 起一直是 0，且这些线只由互连驱动，不用每拍再清
         const int b = byte_count(w);
-        // 按引脚宽度写，别改成 8 字节整写：下游按字节读同一根线，宽存储等不到存储转发
         c += std::format("        dcs_memcpy(_sn[{}], &{}, {});\n", k, vals[k], b);
-        if (b < 8)
-            c += std::format("        dcs_memset(_sn[{}] + {}, 0, {});\n", k, b, 8 - b);
     }
     // 换到别的从设备：上一根必须清零，否则它会一直看到上次的 stb。
     // 每条线只清自己写过的字节数——从设备按引脚宽度读线网，多清没用
@@ -362,10 +361,9 @@ std::string WishboneInterconnect::genFuncDef_comb() const {
     c += "        default: break;\n";
     c += "        }\n";
     c += std::format(
+            // 主设备侧应答线同样只写有效字节；高字节 init 后为 0，无第二驱动源
             "        dcs_memcpy(_mo[1], &_sd, 4);\n"
-            "        dcs_memset(_mo[1] + 4, 0, 4);\n"
             "        dcs_memcpy(_mo[2], &_sa, 1);\n"
-            "        dcs_memset(_mo[2] + 1, 0, 7);\n"
             "        if (_wbic_mlast_{} != _g) {{\n"
             "            if (_wbic_mlast_{} >= 0) {{\n"
             "                uint8_t *const *_old = _wbic_mn_{}[_wbic_mlast_{}];\n"

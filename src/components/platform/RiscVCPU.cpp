@@ -130,9 +130,8 @@ std::string RiscVCPU<XLEN>::genFuncDef_seq() const {
             "    if (!_cpu_po_v_{0} || _ca != _cpu_po_a_{0} || _cd != _cpu_po_d_{0} || _cf != _cpu_po_f_{0}) {{\n"
             "        _cpu_po_v_{0} = 1; _cpu_po_a_{0} = _ca; _cpu_po_d_{0} = _cd; _cpu_po_f_{0} = _cf;\n",
             id);
-    code += std::format("        dcs_memcpy({}, &_ca, 4);\n        dcs_memset({} + 4, 0, 4);\n", nid(O_ADR), nid(O_ADR));
-    code += std::format("        dcs_memcpy({}, &_cd, 4);\n        dcs_memset({} + 4, 0, 4);\n", nid(O_WDAT),
-                        nid(O_WDAT));
+    code += std::format("        dcs_memcpy({}, &_ca, 4);\n", nid(O_ADR));
+    code += std::format("        dcs_memcpy({}, &_cd, 4);\n", nid(O_WDAT));
     code += std::format("        {}[0] = (uint8_t) (_cf & 1u);\n", nid(O_WE));
     code += std::format("        {}[0] = (uint8_t) ((_cf >> 1) & 0x0Fu);\n", nid(O_SEL));
     code += std::format("        {}[0] = (uint8_t) ((_cf >> 5) & 1u);\n", nid(O_STB));
