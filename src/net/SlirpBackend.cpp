@@ -30,7 +30,8 @@ namespace dsc::net {
 namespace {
 
 struct Timer {
-    int64_t expire_ms = 0;
+    // libslirp 的 clock_get_ns 与 timer_mod 用同一个纳秒时间基，不能和毫秒混用
+    int64_t expire_ns = 0;
     void (*cb)(void *) = nullptr;
     void *opaque = nullptr;
     bool fired = false;
@@ -49,9 +50,10 @@ struct SlirpBackend {
     void run();
 };
 
-int64_t nowMs() {
+// 和 cbClockGetNs 同一时间基：timer_mod 传来的 expire_time 是纳秒
+int64_t nowNs() {
     using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
 #ifdef _WIN32
@@ -194,7 +196,7 @@ void *cbTimerNew(SlirpTimerCb cb, void *cb_opaque, void *opaque) {
         return nullptr;
     t->cb = cb;
     t->opaque = cb_opaque;
-    t->expire_ms = INT64_MAX;
+    t->expire_ns = INT64_MAX;
     try {
         be->timers.push_back(t);
     } catch (...) {
@@ -218,7 +220,7 @@ void cbTimerMod(void *timer, int64_t expire_time, void * /*opaque*/) {
     if (!timer)
         return;
     auto *t = static_cast<Timer *>(timer);
-    t->expire_ms = expire_time;
+    t->expire_ns = expire_time;
     t->fired = false;
 }
 
@@ -235,12 +237,12 @@ void SlirpBackend::run() {
             while ((n = net->popTxPacket(pkt, sizeof(pkt))) != 0)
                 slirp_input(slirp, pkt, (int) n);
 
-            const int64_t now = nowMs();
+            const int64_t now = nowNs();
             // 回调里可能新建或释放定时器（slirp 的 TCP 定时器会这么做），
             // 直接遍历 vector 会在回调中失效，先收集到期项再逐个调用
             std::vector<Timer *> due;
             for (auto *t: timers) {
-                if (!t->fired && t->expire_ms <= now) {
+                if (!t->fired && t->expire_ns <= now) {
                     t->fired = true;
                     due.push_back(t);
                 }

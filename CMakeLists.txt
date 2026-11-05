@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 4.2)
 project(digital_circuit_simulation VERSION 0.0.1)
+# 必须早于任何使用 CMAKE_INSTALL_* 的 target_include_directories：
+# 否则 $<INSTALL_INTERFACE:...> 展开成空，安装后的下游找不到 dcs 头文件
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 23)
 
@@ -394,7 +397,6 @@ endif()
 endif()
 
 # ---- 安装规则 ----
-include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 install(TARGETS dcs_lib EXPORT dcsTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
