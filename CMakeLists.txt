@@ -97,6 +97,9 @@ if(DCS_USE_TCC)
             NO_DEFAULT_PATH)
         if(_dcs_tcc_dll)
             set(DCS_TCC_DLL "${_dcs_tcc_dll}")
+        else()
+            message(WARNING "找到 libtcc 但没找到 libtcc.dll：dcs 运行时会因缺 DLL 启动失败；"
+                            "可以用 -DTCC_ROOT=<含 libtcc.dll 的目录> 指定")
         endif()
     endif()
 else()
@@ -208,6 +211,8 @@ endif()
 # 共享库能省磁盘：LLVM 静态链进 dcs_lib 一份，不必每个 exe 复制 90MB。
 # 但官方 LLVM 发行包用静态 CRT（/MT）编译，共享库必须配 /MD，链接器会报
 # /failifmismatch: RuntimeLibrary。只有自己用 /MD 重编 LLVM 时才能打开这个选项。
+# 非 Windows 上还要求静态 LLVM 以 PIC 编译（发行版一般是），否则链 .so 时
+# 会报 relocation R_X86_64_32S ... can not be used when making a shared object
 option(DCS_SHARED_LIB "把 dcs_lib 构建为共享库（要求 /MD 编译的 LLVM，官方包不满足）" OFF)
 if(DCS_SHARED_LIB)
     # 共享库必须配动态 CRT：Circuit 和 Component 对象跨 DLL 分配/释放，

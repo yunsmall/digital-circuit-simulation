@@ -12,10 +12,22 @@ import re
 import subprocess
 import sys
 
-VERILATOR_BIN = os.environ.get("VERILATOR_BIN", "E:/msys64/ucrt64/local/bin/verilator_bin.exe")
-VERILATOR_ROOT = os.environ.get("VERILATOR_ROOT", "E:/msys64/ucrt64/local/share/verilator")
+if sys.platform == "win32":
+    _DEFAULT_VERILATOR_BIN = "E:/msys64/ucrt64/local/bin/verilator_bin.exe"
+    _DEFAULT_VERILATOR_ROOT = "E:/msys64/ucrt64/local/share/verilator"
+else:
+    # 类 Unix 上 verilator_bin 一般在 PATH 里；VERILATOR_ROOT 用它自带的
+    # 安装布局，找不到就留空，由 VERILATOR_INCLUDE 显式指定
+    _DEFAULT_VERILATOR_BIN = "verilator_bin"
+    _DEFAULT_VERILATOR_ROOT = next(
+        (p for p in ("/usr/share/verilator", "/usr/local/share/verilator")
+         if (pathlib.Path(p) / "include").is_dir()), "")
+
+VERILATOR_BIN = os.environ.get("VERILATOR_BIN", _DEFAULT_VERILATOR_BIN)
+VERILATOR_ROOT = os.environ.get("VERILATOR_ROOT", _DEFAULT_VERILATOR_ROOT)
 VERILATOR_INCLUDE = os.environ.get(
-    "VERILATOR_INCLUDE", str(pathlib.Path(VERILATOR_ROOT) / "include"))
+    "VERILATOR_INCLUDE",
+    str(pathlib.Path(VERILATOR_ROOT) / "include") if VERILATOR_ROOT else "")
 
 DIR_MAP = {"INPUT": "input", "OUTPUT": "output", "INOUT": "inout"}
 
@@ -23,10 +35,18 @@ DIR_MAP = {"INPUT": "input", "OUTPUT": "output", "INOUT": "inout"}
 def run_verilator(args, workdir: pathlib.Path, *, verilator_bin=None, verilator_root=None) -> None:
     workdir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    env["VERILATOR_ROOT"] = verilator_root or VERILATOR_ROOT
+    root = verilator_root or VERILATOR_ROOT
+    if root:
+        env["VERILATOR_ROOT"] = root
     env.setdefault("LC_ALL", "C")
-    r = subprocess.run([verilator_bin or VERILATOR_BIN, *map(str, args)], env=env,
-                       capture_output=True, text=True)
+    exe = verilator_bin or VERILATOR_BIN
+    try:
+        r = subprocess.run([exe, *map(str, args)], env=env,
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"找不到 verilator 可执行文件：{exe}\n"
+            "请把它放进 PATH，或用 VERILATOR_BIN 指定完整路径")
     if r.returncode != 0:
         sys.stderr.write(r.stdout + r.stderr)
         raise SystemExit("verilator 失败")

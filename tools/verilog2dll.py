@@ -270,6 +270,12 @@ def main():
     ap.add_argument("-o", "--outdir", default=None, help="输出目录（默认 verilog_dll/<top>）")
     args = ap.parse_args()
 
+    # 生成的工程要直接编 ${VERILATOR_INCLUDE}/verilated.cpp，路径无效时
+    # 等到 cmake 配置才报错太绕，这里提前说清楚
+    if not VERILATOR_INCLUDE or not (pathlib.Path(VERILATOR_INCLUDE) / "verilated.cpp").is_file():
+        raise SystemExit("找不到 Verilator include 目录（需要其中的 verilated.cpp）："
+                         "请设置 VERILATOR_INCLUDE 或 VERILATOR_ROOT")
+
     # 输出目录默认带顶层模块名，而顶层要从 AST 算。没给 -o/--top 时先让 Verilator
     # 在临时目录里生成，拿到顶层后把 obj_dir 挪到 verilog_dll/<top>/obj_dir；
     # 大设计的 elaboration 很慢，不能为了拿名字再跑一遍
