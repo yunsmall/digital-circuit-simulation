@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <iostream>
@@ -78,17 +79,32 @@ void Circuit::deinit() {
     // 销毁元件状态（JIT circuit_deinit 中调用 dcs_dll_destroy）。
     // 用完置空：clear() 内部也会调 deinit()，用户显式 deinit() 之后再 clear()
     // 就会第二次执行 circuit_deinit，去访问已经被 simDeinit 卸载的 DLL 状态对象
+    // 回调可能抛（DLL destroy、线程 join）：先记下第一个异常，保证后面的
+    // simDeinit 仍会执行，最后再把异常抛给显式调用方；析构路径会吞掉它
+    std::exception_ptr first_error;
     if (_jit.deinit) {
         // 先注销再执行：circuit_deinit 抛异常时下次 deinit 不会重入，
         // 否则 DLL 状态对象已经被销毁过一次
         auto fn = _jit.deinit;
         _jit.deinit = nullptr;
-        fn();
+        try {
+            fn();
+        } catch (...) {
+            first_error = std::current_exception();
+        }
     }
 
     // 仿真结束通知（DLL: dcs_dll_deinit）。各元件自己保证可重复调用
-    for (auto &comp: _components)
-        comp->simDeinit();
+    for (auto &comp: _components) {
+        try {
+            comp->simDeinit();
+        } catch (...) {
+            if (!first_error)
+                first_error = std::current_exception();
+        }
+    }
+    if (first_error)
+        std::rethrow_exception(first_error);
 }
 
 void Circuit::clear() {
@@ -510,6 +526,26 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
                                         n->name(), driver_count[n->id()])};
             }
         }
+    }
+
+    // 直接 pin->setNet() 会绕过 connect() 的 _bus_nets 登记，而生成代码只对
+    // _bus_nets 里的线网做总线决议：不补登记的话，多个三态输出共线时会静默
+    // 变成"最后写的赢"，同时使能也不报 BUS_CONFLICT。这里按最终网表重建一次，
+    // 判定条件和 connect() 一致：同一线网上至少两个三态输出
+    {
+        std::map<int, std::vector<BusDriver>> bus;
+        for (auto &comp: _components)
+            for (int oi = 0; oi < (int) comp->outputs().size(); oi++) {
+                auto &p = comp->outputs()[oi];
+                if (p->net() && p->isTriState())
+                    bus[p->net()->id()].push_back({comp.get(), oi});
+            }
+        for (auto it = bus.begin(); it != bus.end();)
+            if (it->second.size() < 2)
+                it = bus.erase(it);
+            else
+                ++it;
+        _bus_nets = std::move(bus);
     }
 
     // 元件自己的接线检查：比如互连的某个从设备端口后面根本没接设备，访问那段地址

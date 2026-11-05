@@ -79,3 +79,29 @@ TEST(TriLoop, EnablingLoopIsDetectedInTheSameTick) {
     ASSERT_TRUE(f.c.hasError());
     EXPECT_EQ(f.c.tickError().code, ErrorCode::BUS_OSCILLATION);
 }
+
+// 直接 pin->setNet() 绕过 connect() 时，多三态驱动也必须做总线决议。
+// 不重建 _bus_nets 的话生成代码会各写各的，最后写的赢且不报冲突
+TEST(TriLoop, DirectSetNetTriDriversStillResolveBus) {
+    Circuit c;
+    Net *n = c.createNet("n");
+    Net *a = c.createNet("a"), *b = c.createNet("b"), *oe = c.createNet("oe");
+    auto *t1 = c.addComponent(std::make_unique<GateTSBUF>("t1", 8));
+    auto *t2 = c.addComponent(std::make_unique<GateTSBUF>("t2", 8));
+    c.connect(t1, "in", a);
+    c.connect(t1, "oe", oe);
+    c.connect(t2, "in", b);
+    c.connect(t2, "oe", oe);
+    // 绕过 connect：_bus_nets 不会登记这根线
+    t1->outputs()[0]->setNet(n);
+    t2->outputs()[0]->setNet(n);
+
+    ASSERT_EQ(c.compile().code, ErrorCode::OK);
+    c.init();
+    c.setWire(a->id(), {0x11, 0});
+    c.setWire(b->id(), {0x22, 0});
+    c.setWire(oe->id(), {1, 0});
+    c.tick();
+    ASSERT_TRUE(c.hasError()) << "两个三态输出同时驱动不同值必须报总线冲突";
+    EXPECT_EQ(c.tickError().code, ErrorCode::BUS_CONFLICT);
+}

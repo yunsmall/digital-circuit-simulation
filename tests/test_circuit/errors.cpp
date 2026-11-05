@@ -27,6 +27,28 @@ public:
         throw std::runtime_error("deinit boom");
     }
 };
+
+// 记录 simDeinit 是否被调用：验证一个元件抛异常不会跳过其它元件的清理
+class CleanupProbe : public dsc::CombinationalComponent {
+public:
+    CleanupProbe(const std::string &name, bool *flag) :
+        CombinationalComponent(name, "cleanup_probe"), _flag(flag) {
+        addOutput("y", 1);
+    }
+    std::string genFuncDef_comb() const override {
+        return std::format("static void {}() {{\n    const uint8_t _o = 0;\n{}\n}}\n", funcName_comb(),
+                           genOutputWrite(0, "_o", 1));
+    }
+    std::unique_ptr<dsc::Component> clone(const std::string &n) const override {
+        return std::make_unique<CleanupProbe>(n, _flag);
+    }
+    void simDeinit() override {
+        *_flag = true;
+    }
+
+private:
+    bool *_flag;
+};
 } // namespace
 
 TEST(ErrorTest, UnconnectedPinIsZero) {
@@ -114,4 +136,21 @@ TEST(ErrorTest, CompileSurvivesThrowingDeinit) {
     EXPECT_NE(err.message.find("销毁"), std::string::npos) << err.message;
     EXPECT_FALSE(c.isCompiled());
     c.tick(); // 不能继续执行已部分销毁的 JIT
+}
+
+// 一个元件的 deinit 回调抛异常不能跳过其它元件的清理
+TEST(ErrorTest, DeinitRunsAllSimDeinitWhenOneThrows) {
+    bool cleaned = false;
+    dsc::Circuit c;
+    auto *out = c.createNet("out");
+    auto *bomb = c.addComponent(std::make_unique<ThrowingDeinit>("bomb"));
+    c.addComponent(std::make_unique<CleanupProbe>("probe", &cleaned));
+    c.connect(bomb, "y", out);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    cleaned = false;
+
+    auto err = c.compile(); // 第二次 compile 先 deinit，bomb 在这里抛
+    EXPECT_EQ(err.code, dsc::ErrorCode::PREPARE_FAILED);
+    EXPECT_TRUE(cleaned) << "bomb 抛异常后 probe 的 simDeinit 仍必须执行";
 }
