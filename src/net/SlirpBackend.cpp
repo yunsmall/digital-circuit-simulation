@@ -254,7 +254,12 @@ void SlirpBackend::run() {
                     continue;
                 auto cb = t->cb;
                 void *opaque = t->opaque;
-                cb(opaque);
+                // 这是 C 回调，异常穿过 slirp 的 C 栈帧是未定义行为；
+                // 单个定时器出错不能把后台线程踢出循环（join 会等不到线程退出）
+                try {
+                    cb(opaque);
+                } catch (...) {
+                }
             }
 
             std::vector<PollEntry> entries;

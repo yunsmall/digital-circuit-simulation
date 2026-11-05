@@ -70,6 +70,19 @@ if(DCS_USE_TCC)
         set(DCS_TCC_DEFS "${TCC_ROOT}/include/tccdefs.h")
     elseif(TCC_INCLUDE_DIR AND EXISTS "${TCC_INCLUDE_DIR}/tccdefs.h")
         set(DCS_TCC_DEFS "${TCC_INCLUDE_DIR}/tccdefs.h")
+    elseif(TCC_INCLUDE_DIR)
+        # 有的发行版把 tccdefs.h 放在 lib/tcc/include 或 share/tcc 下
+        find_file(_dcs_tcc_defs tccdefs.h
+            PATHS "${TCC_INCLUDE_DIR}" "${TCC_INCLUDE_DIR}/../lib/tcc/include"
+                  "${TCC_INCLUDE_DIR}/../share/tcc"
+            NO_DEFAULT_PATH)
+        if(_dcs_tcc_defs)
+            set(DCS_TCC_DEFS "${_dcs_tcc_defs}")
+        endif()
+    endif()
+    if(NOT DCS_TCC_DEFS)
+        message(WARNING "未找到 tccdefs.h：若 libtcc 没有把预定义头内嵌进库，"
+                        "运行时会报找不到 tccdefs.h；可以用 -DTCC_ROOT=<路径> 指定")
     endif()
     if(WIN32 AND NOT DCS_TCC_DLL AND TCC_LIBRARY)
         get_filename_component(_dcs_tcc_lib_dir "${TCC_LIBRARY}" DIRECTORY)
@@ -222,7 +235,14 @@ target_include_directories(dcs_lib PRIVATE
 )
 # 后端库用 PRIVATE：它们已经静态链进 dcs_lib（或表现为运行时依赖的 TCC DLL），
 # 可执行文件只通过 dcs_lib 的接口调用，不必再链一遍——否则共享库省下的体积又还回去了
-target_link_libraries(dcs_lib PRIVATE ${DCS_BACKEND_LIBS})
+if(DCS_USE_TCC)
+    # libtcc 是 find_library 得到的绝对路径，直接写进静态库接口会让下游
+    # 指向构建机的路径。构建树里用绝对路径，安装接口交给 dcsConfig
+    # 用 find_library 重新定位（模板里的 DCS_EXPORT_NEEDS_TCC）
+    target_link_libraries(dcs_lib PRIVATE $<BUILD_INTERFACE:${DCS_BACKEND_LIBS}>)
+else()
+    target_link_libraries(dcs_lib PRIVATE ${DCS_BACKEND_LIBS})
+endif()
 target_link_libraries(dcs_lib PUBLIC nlohmann_json::nlohmann_json elfio::elfio)
 if(DCS_USE_TCC)
     target_compile_definitions(dcs_lib PRIVATE DCS_USE_TCC)
@@ -293,7 +313,12 @@ endif()
 
 # ---- 测试（gtest + vcpkg）----
 if(DCS_BUILD_TESTS)
-find_package(GTest QUIET)
+find_package(GTest CONFIG QUIET)
+# 打开了测试却静默不生成任何 test_*，ctest 空跑会被误当"测试通过"
+if(NOT GTest_FOUND)
+    message(FATAL_ERROR "DCS_BUILD_TESTS=ON，但找不到 GTest；请安装 gtest "
+                        "或改用 -DDCS_BUILD_TESTS=OFF")
+endif()
 if(GTest_FOUND)
     enable_testing()
 
@@ -455,6 +480,12 @@ set(DCS_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/dcs)
 set(DCS_EXPORT_NEEDS_LLVM OFF)
 if(NOT DCS_USE_TCC AND NOT DCS_SHARED_LIB)
     set(DCS_EXPORT_NEEDS_LLVM ON)
+endif()
+# 静态 TCC 构建同理：接口里不能带构建机的 libtcc 绝对路径，
+# 下游需要在安装环境里重新 find_library(libtcc)
+set(DCS_EXPORT_NEEDS_TCC OFF)
+if(DCS_USE_TCC AND NOT DCS_SHARED_LIB)
+    set(DCS_EXPORT_NEEDS_TCC ON)
 endif()
 configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/dcsConfig.cmake.in

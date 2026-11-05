@@ -17,6 +17,20 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/dcsTargets.cmake")
 
+# 静态 TCC 构建：dcs_lib 的接口里不带构建机的 libtcc 绝对路径
+# （target_link_libraries 用 $<BUILD_INTERFACE:...>），在安装环境重新定位。
+# 必须放在 include(dcsTargets) 之后，目标此时才存在
+if(@DCS_EXPORT_NEEDS_TCC@)
+    if(NOT DCS_TCC_LIBRARY)
+        find_library(DCS_TCC_LIBRARY NAMES tcc libtcc)
+    endif()
+    if(NOT DCS_TCC_LIBRARY)
+        message(FATAL_ERROR "这个 dcs 安装使用静态 TCC 后端：找不到 libtcc，"
+                            "请安装 libtcc-dev 或设置 -DDCS_TCC_LIBRARY=<路径>")
+    endif()
+    set_property(TARGET dcs::dcs_lib APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${DCS_TCC_LIBRARY}")
+endif()
+
 # 安装包通常只带一个构建配置（例如 Release）。VS 这类多配置生成器会为
 # Debug/MinSizeRel 等配置查找 IMPORTED_LOCATION，缺失时直接报错；把缺失的
 # 配置映射到已安装的那个，消费者不用迁就安装时的配置
