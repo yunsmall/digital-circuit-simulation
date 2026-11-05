@@ -6,6 +6,10 @@
 //
 // Wishbone 侧：wb_adr_i/wb_dat_i/wb_we_i/wb_sel_i/wb_stb_i/wb_cyc_i → wb_dat_o/wb_ack_o
 // 寄存器侧：addr(8)/wdata(32)/we/en ← rdata(32)/ready
+//
+// 复位会清掉在途事务（busy/ack 归零）。复位后主设备若仍保持 stb，桥会重新发起
+// 一笔事务；主设备已经撤销 stb 的话这笔事务就丢了，所以 circuit_reset 必须和
+// Wishbone 主设备的复位同步。
 #pragma once
 #include <cstdint>
 #include <string>

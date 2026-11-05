@@ -164,3 +164,21 @@ TEST(RegBridgeTest, ReadLatchesDataOnlyAfterReady) {
     f.end();
 }
 
+// ready 是电平且保持多拍时，rdata 可能随下游状态变化：ack 窗口里必须是
+// ready 第一次有效的那个值，不能被后续 ready 期间的 rdata 改写
+TEST(RegBridgeTest, LatchesDataOnReadyRisingEdge) {
+    RbFixture f;
+    f.begin(0x10, 0, false, false);
+    f.c->setWire(f.rdat->id(), {0xAA, 0xAA, 0xAA, 0xAA});
+    f.c->setWire(f.ready->id(), 1);
+    f.c->tick();
+    f.c->setWire(f.rdat->id(), {0xBB, 0xBB, 0xBB, 0xBB}); // ready 仍为高，数据变了
+    f.c->tick();
+    EXPECT_EQ(f.ack(), 1);
+    EXPECT_EQ(f.get32(f.o_dat), 0xAAAAAAAAu) << "ack 必须是 ready 第一次有效那拍的数据";
+    f.c->setWire(f.rdat->id(), {0xCC, 0xCC, 0xCC, 0xCC});
+    f.c->tick();
+    EXPECT_EQ(f.get32(f.o_dat), 0xAAAAAAAAu) << "ack 保持期间不能再被改写";
+    f.end();
+}
+

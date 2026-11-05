@@ -33,7 +33,7 @@ RegBridge::~RegBridge() = default;
 
 std::string RegBridge::genStateDecl() const {
     return std::format(
-            "static uint8_t _rb_busy_{0}, _rb_ack_{0};\n"
+            "static uint8_t _rb_busy_{0}, _rb_ack_{0}, _rb_prev_ready_{0};\n"
             "static uint32_t _rb_latched_{0};\n"
             // 事务期间 addr/wdata/we 必须保持稳定：元件可能要到几拍之后才给 ready
             "static uint32_t _rb_laddr_{0}, _rb_ldat_{0};\n"
@@ -43,7 +43,7 @@ std::string RegBridge::genStateDecl() const {
 
 std::string RegBridge::genInitCode() const {
     return std::format(
-            "    _rb_busy_{0} = 0; _rb_ack_{0} = 0; _rb_latched_{0} = 0;\n"
+            "    _rb_busy_{0} = 0; _rb_ack_{0} = 0; _rb_latched_{0} = 0; _rb_prev_ready_{0} = 0;\n"
             "    _rb_laddr_{0} = 0; _rb_ldat_{0} = 0; _rb_lwe_{0} = 0;\n",
             _id);
 }
@@ -64,10 +64,13 @@ std::string RegBridge::genFuncDef_seq() const {
             "    const bool _active = _stb && _cyc;\n"
             "    uint8_t _en = 0;\n"
             "    if (!_rb_busy_{0}) {{\n"
-            "        if (_active) {{ _en = 1; _rb_laddr_{0} = _adr & 0xFF; _rb_ldat_{0} = _dat; _rb_lwe_{0} = _we; _rb_busy_{0} = 1; _rb_ack_{0} = 0; }}\n"
+            "        if (_active) {{ _en = 1; _rb_laddr_{0} = _adr & 0xFF; _rb_ldat_{0} = _dat; _rb_lwe_{0} = _we; _rb_busy_{0} = 1; _rb_ack_{0} = 0; _rb_prev_ready_{0} = 0; }}\n"
             "    }} else {{\n"
-            "        if (_ready) {{ _rb_latched_{0} = _rdat; _rb_ack_{0} = 1; }}\n"
-            "        if (!_active) {{ _rb_busy_{0} = 0; _rb_ack_{0} = 0; }}\n"
+            // ready 只认第一次拉高那一拍的数据：下游 ready 若保持多拍，rdata 可能
+            // 已经变化，ack 窗口里必须给主设备稳定的、握手当拍的值
+            "        if (_ready && !_rb_prev_ready_{0} && !_rb_ack_{0}) {{ _rb_latched_{0} = _rdat; _rb_ack_{0} = 1; }}\n"
+            "        _rb_prev_ready_{0} = _ready;\n"
+            "        if (!_active) {{ _rb_busy_{0} = 0; _rb_ack_{0} = 0; _rb_prev_ready_{0} = 0; }}\n"
             "    }}\n",
             _id);
     c += "    " + genOutputWrite(O_DAT, "_rb_latched_" + std::to_string(_id), 32) + "\n";
