@@ -70,6 +70,24 @@ cmake -B build \
 
 Disable with `-DDCS_BUILD_VERILOG=OFF`.
 
+### Simulating your own Verilog (without rebuilding dcs)
+
+Installed copies ship `verilog2dll.py` in `<prefix>/share/dcs/tools/`. Pass one
+or more `.v` files (top + submodules):
+
+```bash
+PY=<prefix>/share/dcs/tools/verilog2dll.py
+python $PY top.v sub1.v sub2.v -o my_demo     # top auto-detected from the AST; --top overrides
+cmake -S my_demo -B my_demo/build
+cmake --build my_demo/build
+<prefix>/bin/dcs my_demo/top.json -t 20 -m    # every port is wired to a same-named net
+```
+
+`my_demo/top.json` is a smoke circuit — replace the `constant`/`clkgen` components
+with your own stimulus (port names, widths and comb/seq are read from Verilator's
+AST). Re-run the first command after editing Verilog; `<name>_wrapper.cpp` is kept
+when it already exists (delete it to regenerate for new ports).
+
 ### Generating components from Verilog
 
 `tools/verilog2dcs.py` turns a Verilog module into a native dcs component

@@ -131,7 +131,7 @@ cmake --build build_clang --parallel 6
 包装层编成动态库，由 `dll` 元件运行时加载。脚本只生成工程，不调编译器：
 
 ```bash
-python tools/verilog2dll.py my_top.v -o verilog_dll/my_top
+python tools/verilog2dll.py my_top.v [sub1.v ...] -o verilog_dll/my_top
 cmake -S verilog_dll/my_top -B verilog_dll/my_top/build
 cmake --build verilog_dll/my_top/build
 ./build/RelWithDebInfo/dcs verilog_dll/my_top/my_top.json -t 10 -m

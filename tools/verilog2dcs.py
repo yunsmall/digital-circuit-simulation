@@ -5,9 +5,10 @@
     python tools/verilog2dcs.py verilog_test/adder8.v [--top adder8] [--name Adder8] [--type adder8]
 
 流程:
-    1. verilator_bin --cc 生成 V<Top>.h（VERILATOR_ROOT 指向 share/verilator）；
-    2. 从 V<Top>.h 的 VL_IN/VL_OUT 宏提取端口名、方向、位宽；
-    3. 有 clk/clock 端口 -> 时序元件（在时钟上升沿 eval 一次），否则组合元件；
+    1. verilator_bin 导出 AST（VERILATOR_ROOT 指向 share/verilator），顶层模块从
+       AST 里"没被其它模块实例化"的模块判定，--top 只是显式覆盖；
+    2. 端口名、方向、位宽、以及有没有沿触发的 always 全部从 AST 读；
+    3. 有沿触发的 always -> 时序元件（每拍 eval 一次），否则组合元件；
     4. 元件每拍把输入打包进数组、调一次 C++ 回调（写端口 -> eval -> 读端口），
        再按输出引脚宽度写回线网。热路径上每个元件每拍只有一次跨 JIT 调用。
 
@@ -275,13 +276,14 @@ def main():
     args = ap.parse_args()
 
     src = pathlib.Path(args.vfile)
-    top = args.top or src.stem
+    # 顶层交给 Verilator/AST 判定，不能按文件名猜：--top 只是显式覆盖
+    work = pathlib.Path(args.workdir) if args.workdir else \
+        pathlib.Path("build_verilog_gen") / (args.top or src.stem)
+
+    ast, header, top = verilate(src, args.top, work)
     name = args.name or camel(top)
     type_name = args.type_name or top.lower()
     out = pathlib.Path(args.outdir)
-    work = pathlib.Path(args.workdir) if args.workdir else pathlib.Path("build_verilog_gen") / top
-
-    ast, header = verilate(src, top, work)
     ports, clocks = parse_design(ast, top)
 
     # Verilator 只把"简单三态结构"拆成 input+__en+__out；没拆开的话端口里不会有 __en，

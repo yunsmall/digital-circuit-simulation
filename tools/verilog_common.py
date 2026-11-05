@@ -32,23 +32,79 @@ def run_verilator(args, workdir: pathlib.Path, *, verilator_bin=None, verilator_
         raise SystemExit("verilator 失败")
 
 
-def verilate(src: pathlib.Path, top: str, workdir: pathlib.Path, *, verilator_bin=None,
+def detect_top(ast_path: pathlib.Path):
+    """从 AST 找出唯一没有被其它模块实例化的模块名。
+
+    不能交给 Verilator 自动选：存在多个文件时它按命令行顺序挑模块，和真实根模块
+    可能不一致。候选不是恰好一个时返回 None，由调用方要求 --top。
+    """
+    data = json.loads(ast_path.read_text(encoding="utf-8"))
+    mods = [m for m in as_list(data.get("modulesp")) if m.get("type") == "MODULE"]
+    if not mods:
+        return None
+    by_addr = {m["addr"]: (m.get("verilogName") or m.get("name"))
+               for m in mods if m.get("addr")}
+    names = [m.get("verilogName") or m.get("name") for m in mods]
+    instantiated = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "CELL":
+                ref = node.get("modp")
+                if isinstance(ref, list):
+                    ref = ref[0] if ref else None
+                # 正常是模块地址 "(J)"；个别版本展开后直接给模块名
+                target = by_addr.get(ref) or (ref if ref in names else None)
+                if target:
+                    instantiated.add(target)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    for m in mods:
+        walk(m)
+    tops = [n for n in names if n and n not in instantiated]
+    return tops[0] if len(tops) == 1 else None
+
+
+def verilate(src, top, workdir: pathlib.Path, *, verilator_bin=None,
              verilator_root=None):
-    """生成模型源码，并额外导出一份 AST（端口/时序信息都从 AST 读）。"""
+    """生成模型源码，并额外导出一份 AST（端口/时序信息都从 AST 读）。
+
+    src 可以是单个路径或路径列表：多文件模块（子模块、include 的 .v）要一起交给
+    Verilator，它按顶层模块名展开。top 为 None 时从 AST 判定顶层（不能按文件名猜：
+    顶层不一定在第一个文件里）。返回 (ast, header, top)。
+    """
+    if isinstance(src, (list, tuple)):
+        srcs = [pathlib.Path(s) for s in src]
+    else:
+        srcs = [pathlib.Path(src)]
+
+    # 先只导 AST。多文件里如果有一个以上没被实例化的模块，Verilator 自动选顶层
+    # 是按命令行顺序挑的，和真实根模块可能不一致，所以顶层一律从 AST 判定，
+    # 不给 --top 时也不省略下面的 --top-module（AST 本身包含全部模块，不受影响）
+    ast = workdir / "ast.json"
+    top_args = ["--top-module", top] if top else []
+    run_verilator([*top_args, "--json-only-output", ast, "--Mdir", workdir / "ast",
+                   *map(str, srcs)], workdir,
+                  verilator_bin=verilator_bin, verilator_root=verilator_root)
+    if not top:
+        top = detect_top(ast)
+        if not top:
+            raise SystemExit("无法从 AST 确定唯一的顶层模块（有多个模块没被实例化），"
+                             "请用 --top 指定")
+
     # --pins-inout-enables：顶层 inout 会被拆成 input + <name>__en + <name>__out，
     # 这是 Verilator 官方支持的双向端口建模方式，正好对应 dcs 的三态总线
-    common = ["--cc", "--pins-inout-enables", "--top-module", top, src]
-    run_verilator([*common, "--Mdir", workdir], workdir,
+    run_verilator(["--cc", "--pins-inout-enables", "--top-module", top,
+                   *map(str, srcs), "--Mdir", workdir], workdir,
                   verilator_bin=verilator_bin, verilator_root=verilator_root)
     header = workdir / f"V{top}.h"
     if not header.exists():
         raise SystemExit(f"没有生成 V{top}.h（--top 是否和模块名一致？）")
-
-    # --json-only-output 本身不产出 C++，所以要和上一步分开跑
-    ast = workdir / "ast.json"
-    run_verilator([*common, "--json-only-output", ast, "--Mdir", workdir / "ast"], workdir,
-                  verilator_bin=verilator_bin, verilator_root=verilator_root)
-    return ast, header
+    return ast, header, top
 
 
 def const_int(node):

@@ -70,6 +70,23 @@ cmake -B build \
 
 不需要时关掉：`-DDCS_BUILD_VERILOG=OFF`。
 
+### 用自己的 Verilog 跑仿真（不用重编译 dcs）
+
+安装版自带 `verilog2dll.py`（在 `<prefix>/share/dcs/tools/`）。一个或多个 `.v`
+（顶层 + 子模块）一起传给脚本：
+
+```bash
+PY=<prefix>/share/dcs/tools/verilog2dll.py
+python $PY top.v sub1.v sub2.v -o my_demo     # 顶层由 AST 自动识别，--top 可显式指定
+cmake -S my_demo -B my_demo/build
+cmake --build my_demo/build
+<prefix>/bin/dcs my_demo/top.json -t 20 -m    # 所有端口已接成同名线网，可直接冒烟
+```
+
+生成的 `my_demo/top.json` 是冒烟电路：把里面的 `constant`/`clkgen` 换成你的激励即可
+（端口名、位宽、组合/时序都从 Verilator AST 读取）。改 Verilog 后重跑第一条命令；
+`<name>_wrapper.cpp` 已存在时脚本会保留（删掉才会按新端口重新生成）。
+
 ### 从 Verilog 生成元件
 
 `tools/verilog2dcs.py` 把一个 Verilog 模块直接变成 dcs 元件（Verilator 模型 + 生成的包装代码），

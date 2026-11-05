@@ -2,7 +2,7 @@
 """把 Verilog 模块打包成运行时加载的 DLL 元件（不需要重新编译 dcs）。
 
 用法:
-    python tools/verilog2dll.py my_top.v [--top my_top] [--name my_top] [-o 输出目录]
+    python tools/verilog2dll.py my_top.v [sub1.v sub2.v ...] [--top my_top] [--name my_top] [-o 输出目录]
 
 和 verilog2dcs.py 的区别：verilog2dcs 生成 C++ 元件源码、编进库；这个脚本
 用 Verilator 生成模型，再生成一个实现 dcs_dll_interface.h 的包装层和一个
@@ -21,7 +21,9 @@
 import argparse
 import os
 import pathlib
+import shutil
 import sys
+import tempfile
 
 from verilog_common import VERILATOR_INCLUDE, parse_design, verilate
 
@@ -234,22 +236,43 @@ def find_dcs_include() -> pathlib.Path:
 
 def main():
     ap = argparse.ArgumentParser(description="把 Verilog 模块打包成 dcs 运行时加载的 DLL 元件")
-    ap.add_argument("vfile")
-    ap.add_argument("--top", default=None, help="顶层模块名（默认取文件名）")
+    ap.add_argument("vfiles", nargs="+", help="一个或多个 .v 文件（顶层 + 子模块）")
+    ap.add_argument("--top", default=None, help="顶层模块名（默认从 Verilator AST 自动识别）")
     ap.add_argument("--name", default=None, help="DLL 文件名/元件实例名（默认取顶层模块名）")
     ap.add_argument("--type", default=None, dest="type_name", help="描述符里的元件类型名")
     ap.add_argument("-o", "--outdir", default=None, help="输出目录（默认 verilog_dll/<top>）")
     args = ap.parse_args()
 
-    src = pathlib.Path(args.vfile)
-    top = args.top or src.stem
-    name = args.name or top
-    type_name = args.type_name or top
-    out = pathlib.Path(args.outdir) if args.outdir else pathlib.Path("verilog_dll") / top
+    # 输出目录默认带顶层模块名，而顶层要从 AST 算。没给 -o/--top 时先让 Verilator
+    # 在临时目录里生成，拿到顶层后把 obj_dir 挪到 verilog_dll/<top>/obj_dir；
+    # 大设计的 elaboration 很慢，不能为了拿名字再跑一遍
+    top = args.top
+    probe = None
+    ast = header = None
+    if args.outdir:
+        out = pathlib.Path(args.outdir)
+    elif top:
+        out = pathlib.Path("verilog_dll") / top
+    else:
+        base = pathlib.Path("verilog_dll")
+        base.mkdir(parents=True, exist_ok=True)
+        probe = pathlib.Path(tempfile.mkdtemp(prefix=".probe_", dir=base))
+        ast, header, top = verilate(args.vfiles, None, probe)
+        out = base / top
     out.mkdir(parents=True, exist_ok=True)
     obj_dir = out / "obj_dir"
-
-    ast, header = verilate(src, top, obj_dir)
+    if ast is not None and not obj_dir.exists():
+        probe.rename(obj_dir)
+        probe = None
+        # AST 和 V<top>.h 也跟着搬了，后面的读取要用新路径
+        ast = obj_dir / "ast.json"
+        header = obj_dir / f"V{top}.h"
+    else:
+        if probe is not None:
+            shutil.rmtree(probe, ignore_errors=True)
+        ast, header, top = verilate(args.vfiles, top, obj_dir)
+    name = args.name or top
+    type_name = args.type_name or top
     ports, clocks = parse_design(ast, top)
 
     # 和 verilog2dcs 同样的检查：Verilator 没拆开的 inout 无法生成
