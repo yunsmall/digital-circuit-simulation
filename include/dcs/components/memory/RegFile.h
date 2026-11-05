@@ -16,6 +16,13 @@ public:
 
     bool hasCombinational() const override { return true; }
     bool hasSequential() const override { return true; }
+    // rdata_i 只依赖 raddr_i；写口和 clk 是时序路径。默认实现会把所有输入都算作
+    // 组合依赖，"rdata → ALU → wdata" 这种寄存器堆的典型接法会被误判成组合环
+    [[nodiscard]] std::vector<int> getCombinationalDeps(int out_idx) const override {
+        if (out_idx < 0 || out_idx >= _read_ports)
+            return {};
+        return {1 + _write_ports * 3 + out_idx};
+    }
 
     std::string genStructDef() const override;
     std::string genStateDecl() const override;

@@ -176,6 +176,9 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
         dll_unload(_dll_path);
         _dll_handle = nullptr;
         _loaded = false;
+        // _desc 里的 inputs/outputs 指针指向 DLL 内部，卸载后必须清掉，
+        // 和 loadSymbols 的失败路径保持一致
+        _desc = {};
         error = std::move(msg);
         return false;
     };

@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include <dcs/Circuit.h>
+#include <dcs/components/combinational/Gates.h>
 #include <dcs/components/memory/RegFile.h>
 
 using namespace dsc;
@@ -169,4 +170,25 @@ TEST(RegFile, Width64) {
     Fx f(64, 4);
     f.write(1, 0xFEDCBA9876543210ull);
     EXPECT_EQ(f.read0(1), 0xFEDCBA9876543210ull);
+}
+
+// rdata → 组合逻辑 → wdata 是寄存器堆最典型的接法（ALU 直接接回写口）。
+// 组合依赖只能算 raddr，写口和 clk 是时序路径，否则会被误判成组合环
+TEST(RegFile, ReadToWritePathIsNotACombinationalLoop) {
+    dsc::Circuit c;
+    auto *rf = c.addComponent(std::make_unique<dsc::RegFile>("rf", 8, 4, 1, 1));
+    auto *buf = c.addComponent(std::make_unique<dsc::UnaryGate>("buf", 8, false));
+    Net *clk = c.createNet("clk"), *we = c.createNet("we"), *wa = c.createNet("wa");
+    Net *wd = c.createNet("wd"), *ra = c.createNet("ra"), *rd = c.createNet("rd");
+    c.connect(rf, "clk", clk);
+    c.connect(rf, "we0", we);
+    c.connect(rf, "waddr0", wa);
+    c.connect(rf, "wdata0", wd);
+    c.connect(rf, "raddr0", ra);
+    c.connect(rf, "rdata0", rd);
+    c.connect(buf, "in", rd);
+    c.connect(buf, "out", wd);
+
+    auto err = c.compile();
+    EXPECT_EQ(err.code, ErrorCode::OK) << err.message;
 }

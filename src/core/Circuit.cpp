@@ -605,11 +605,16 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
 
     // deinit() 可能释放了元件持有的外部资源（DLL 句柄、磁盘文件），重新编译前
     // 必须重新绑定。必须在静态检查之前做：Dll 的 hasCombinational/hasSequential
-    // 依赖函数指针，指针为空会被当成无逻辑元件而漏掉环路检测
-    for (auto &comp: _components) {
-        std::string err;
-        if (!comp->prepareForCompile(context(), err))
-            return {ErrorCode::PREPARE_FAILED, -1, {comp->id()}, err};
+    // 依赖函数指针，指针为空会被当成无逻辑元件而漏掉环路检测。
+    // 重新打开介质/加载 DLL 可能抛（内存不足、文件系统异常），API 必须把它转成错误
+    try {
+        for (auto &comp: _components) {
+            std::string err;
+            if (!comp->prepareForCompile(context(), err))
+                return {ErrorCode::PREPARE_FAILED, -1, {comp->id()}, err};
+        }
+    } catch (const std::exception &e) {
+        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("准备元件时异常: {}", e.what())};
     }
 
     std::vector<std::string> local_warnings;
@@ -683,9 +688,15 @@ void Circuit::init() {
     // 初始化等于一次冷启动，上一个电路残留的运行期错误不能带进新状态
     _tick_error = {};
     _stop_flag = 0;
-    // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）
-    for (auto &comp: _components)
-        comp->simInit();
+    // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）。
+    // 后端可能在这个阶段分配线程/大块内存并抛异常，不能让它穿到 main 触发 terminate
+    try {
+        for (auto &comp: _components)
+            comp->simInit();
+    } catch (const std::exception &e) {
+        _tick_error = {ErrorCode::PREPARE_FAILED, -1, {}, std::format("初始化元件时异常: {}", e.what())};
+        return;
+    }
     if (_jit.init)
         _jit.init();
 }

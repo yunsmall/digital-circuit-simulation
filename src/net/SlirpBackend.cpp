@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <thread>
 #include <vector>
 
@@ -184,15 +185,26 @@ int64_t cbClockGetNs(void * /*opaque*/) {
 
 void *cbTimerNew(SlirpTimerCb cb, void *cb_opaque, void *opaque) {
     auto *be = static_cast<SlirpBackend *>(opaque);
-    auto *t = new Timer;
+    // 这是 C 回调，异常穿过 slirp 的 C 栈帧是未定义行为：分配失败时返回空，
+    // 由 cbTimerMod/cbTimerFree 容忍（最坏情况是网络超时定时器不工作）
+    auto *t = new (std::nothrow) Timer;
+    if (!t)
+        return nullptr;
     t->cb = cb;
     t->opaque = cb_opaque;
     t->expire_ms = INT64_MAX;
-    be->timers.push_back(t);
+    try {
+        be->timers.push_back(t);
+    } catch (...) {
+        delete t;
+        return nullptr;
+    }
     return t;
 }
 
 void cbTimerFree(void *timer, void *opaque) {
+    if (!timer)
+        return;
     auto *be = static_cast<SlirpBackend *>(opaque);
     auto *t = static_cast<Timer *>(timer);
     auto &v = be->timers;
@@ -201,6 +213,8 @@ void cbTimerFree(void *timer, void *opaque) {
 }
 
 void cbTimerMod(void *timer, int64_t expire_time, void * /*opaque*/) {
+    if (!timer)
+        return;
     auto *t = static_cast<Timer *>(timer);
     t->expire_ms = expire_time;
     t->fired = false;

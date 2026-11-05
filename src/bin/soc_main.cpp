@@ -371,7 +371,9 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             while (feed_pos < feed_data.size() && uart_feed->push((uint8_t) feed_data[feed_pos]))
                 feed_pos++;
         }
-        if (tohost_addr) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
+        // 用 ELF 里的 tohost 符号判断有没有（可能是 0），不能用掩码后的地址：
+        // 符号地址低位全 0 时 tohost_addr 也是 0，会被误判成"没有 tohost"
+        if (img.tohost) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
             uint32_t r = 0;
             std::memcpy(&r, mem->writableMemPtr() + tohost_addr, 4);
             if (r) {

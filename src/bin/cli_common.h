@@ -65,6 +65,9 @@ inline bool parseAddrLen(const std::string &spec, size_t &addr, size_t &len, std
         auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, 16);
         if (s.empty() || ec != std::errc{} || ptr != s.data() + s.size())
             return false;
+        // 32 位宿主的 size_t 装不下 64 位地址，静默截断会让用户拿到错误地址
+        if (v > (uint64_t) SIZE_MAX)
+            return false;
         out = (size_t) v;
         return true;
     };
