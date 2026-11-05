@@ -87,6 +87,37 @@ unpacked 数组端口会按维展开成独立引脚，`inout` 用 Verilator 官�
 `--pins-inout-enables` 拆成输入 `pad_i` + 三态输出 `pad`，接同一条总线即可双向通信。
 生成的元件每拍调一次 Verilator 的 `eval()`，模型的寄存器状态由 Verilator 自己维护。
 
+### 把 Verilog 模块打包成运行时 DLL 元件（不重新编译 dcs）
+
+不想把模块编进库时，`tools/verilog2dll.py` 会生成一个独立的 CMake 工程，
+由 `dll` 元件在运行时加载动态库：
+
+```bash
+python tools/verilog2dll.py my_top.v -o verilog_dll/my_top
+cmake -S verilog_dll/my_top -B verilog_dll/my_top/build
+cmake --build verilog_dll/my_top/build
+./build/RelWithDebInfo/dcs verilog_dll/my_top/my_top.json -t 10 -m   # 冒烟
+```
+
+输出目录里的内容：
+
+- `obj_dir/`：Verilator 模型和 AST（保留，便于排查/重建）
+- `<name>_wrapper.cpp`：包装层，实现 `include/dcs/dll_interface.h`，可以直接改；
+  已存在时脚本不会覆盖
+- `CMakeLists.txt`：独立工程，编译器和生成器自选（MSVC / clang / gcc 都行），
+  产物固定输出到 `dist/`；单配置生成器默认 Release
+- `<name>.json`：把所有端口接成同名线网的冒烟电路，`path` 已经指向 `dist/<name>.dll`
+
+在电路里引用它：
+
+```json
+{"type": "dll", "name": "u0", "params": {"path": "dist/my_top.dll"},
+ "connections": {"a": "a", "b": "b", "y": "y"}}
+```
+
+`dcs --dll-info dist/my_top.dll` 可以先看 DLL 导出的引脚。限制：DLL 接口没有
+三态使能通道，`inout` 端口按常驱动处理；模块 parameter 只能使用源码默认值。
+
 ### CLI 用法
 
 ```bash

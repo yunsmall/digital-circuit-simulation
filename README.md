@@ -87,6 +87,34 @@ be named anything. Ports go up to 128 bits; unpacked arrays are expanded into
 individual pins, and `inout` ports are split into `pad_i` + tristate `pad`
 via Verilator's `--pins-inout-enables`, wired to the same net for bidirectional use.
 
+### Packaging a Verilog module as a runtime DLL component
+
+`tools/verilog2dll.py` generates a standalone CMake project that builds a shared
+library loaded by the `dll` component at runtime — no rebuild of dcs:
+
+```bash
+python tools/verilog2dll.py my_top.v -o verilog_dll/my_top
+cmake -S verilog_dll/my_top -B verilog_dll/my_top/build
+cmake --build verilog_dll/my_top/build
+./build/RelWithDebInfo/dcs verilog_dll/my_top/my_top.json -t 10 -m   # smoke test
+```
+
+The output directory contains the Verilator model (`obj_dir/`), the generated
+wrapper (`<name>_wrapper.cpp`, editable; never overwritten by the script),
+`CMakeLists.txt` (pick any compiler/generator; artifacts go to `dist/`), and a
+smoke-test circuit JSON whose `path` points at `dist/<name>.dll`.
+
+Reference it from a circuit with:
+
+```json
+{"type": "dll", "name": "u0", "params": {"path": "dist/my_top.dll"},
+ "connections": {"a": "a", "b": "b", "y": "y"}}
+```
+
+`dcs --dll-info dist/my_top.dll` prints the exported pins. Limitations: the DLL
+interface has no tristate-enable channel, so `inout` ports are always driven;
+module parameters keep their source defaults.
+
 ### CLI Usage
 
 ```bash

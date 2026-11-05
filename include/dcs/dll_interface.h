@@ -53,7 +53,7 @@ extern "C" {
 // 单个引脚的描述
 typedef struct {
     const char *name; // 引脚名称
-    int bit_width; // 位宽（1~64）
+    int bit_width; // 位宽（1~128，和线网槽一致）
     int is_tri_state; // 输出引脚：是否为三态（0=普通 1=三态）
     int is_sequential; // 输出引脚：是否依赖内部状态（0=组合 1=时序，输入引脚忽略）
 } dcs_dll_pin_desc_t;

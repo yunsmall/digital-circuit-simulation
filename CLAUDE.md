@@ -125,6 +125,24 @@ cmake --build build_clang --parallel 6
 - Windows 的 COFF 没有弱符号，`verilated.cpp` 弱引用 `sc_time_stamp()`，
   需要 `src/verilog_gen/verilated_stub.cpp` 提供定义，否则链接失败。
 
+### 把 Verilog 打包成运行时 DLL 元件（不重编库）
+
+`tools/verilog2dll.py` 走另一条路：生成一个独立 CMake 工程，把 Verilator 模型 +
+包装层编成动态库，由 `dll` 元件运行时加载。脚本只生成工程，不调编译器：
+
+```bash
+python tools/verilog2dll.py my_top.v -o verilog_dll/my_top
+cmake -S verilog_dll/my_top -B verilog_dll/my_top/build
+cmake --build verilog_dll/my_top/build
+./build/RelWithDebInfo/dcs verilog_dll/my_top/my_top.json -t 10 -m
+```
+
+产物在 `dist/`，生成的 JSON 里 `path` 已指好；`<name>_wrapper.cpp` 是可直接改的
+包装层（脚本不覆盖已有文件）。Verilator 调用、端口/位宽/时序解析与
+`verilog2dcs.py` 共用 `tools/verilog_common.py`，两条路的引脚定义必须一致。
+已知限制：DLL 接口没有三态使能通道（`inout` 按常驱动处理），模块 parameter 只能
+用源码默认值。
+
 ## 测试
 
 ```bash
