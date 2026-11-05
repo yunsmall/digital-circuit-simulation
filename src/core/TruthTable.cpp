@@ -90,6 +90,12 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
         }
         for (int i = 0; i < SETTLE; i++)
             c.tick();
+        // 运行期错误（三态反馈环振荡、总线冲突）后 tick 会变成 no-op，
+        // 继续枚举只会把"停住时的残值"当成真值表输出
+        if (c.hasError()) {
+            error = c.tickError().message;
+            return false;
+        }
         auto v = c.getWire(out_net->id());
         out.values[combo] = v.empty() ? 0 : (uint8_t) (v[0] & 1u);
     }

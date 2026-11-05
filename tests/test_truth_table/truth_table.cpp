@@ -265,3 +265,25 @@ TEST(TruthTable, RejectsSequential) {
     EXPECT_FALSE(computeTruthTable(c, {"d"}, "y", t, err));
     EXPECT_NE(err.find("时序"), std::string::npos) << err;
 }
+
+// 三态反馈环只在 tick 时才报振荡：真值表必须把运行错误传出去，
+// 不能拿 tick 停住后的残值继续枚举
+TEST(TruthTable, ReportsRuntimeTickError) {
+    Circuit c;
+    auto *n = c.createNet("n"), *nx = c.createNet("nx"), *en = c.createNet("en");
+    auto *buf = c.addComponent(std::make_unique<GateTSBUF>("buf", 1));
+    auto *inv = c.addComponent(std::make_unique<UnaryGate>("inv", 1, true));
+    c.connect(buf, "in", nx);
+    c.connect(buf, "out", n);
+    c.connect(buf, "oe", en);
+    c.connect(inv, "in", n);
+    c.connect(inv, "out", nx);
+    mustCompile(c);
+    c.init();
+    c.setWire(en->id(), {0});
+
+    TruthTable t;
+    std::string err;
+    EXPECT_FALSE(computeTruthTable(c, {"en"}, "n", t, err));
+    EXPECT_FALSE(err.empty()) << "运行期错误必须原样报出";
+}

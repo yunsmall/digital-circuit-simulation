@@ -405,6 +405,21 @@ install(DIRECTORY examples/
 )
 if(DCS_BUILD_EXECUTABLE)
     install(TARGETS dcs DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(WIN32 AND DCS_BUILD_NET)
+        # vcpkg 的 applocal deploy 已经把 libslirp 及其 glib/iconv 依赖放在
+        # 可执行文件旁边，安装时原样带上，否则装完的 dcs.exe 启动缺 DLL。
+        # 用显式文件列表而不是 install(DIRECTORY)：后者会把构建目录里的
+        # CMakeFiles/generated 等子目录也一起建出来
+        install(FILES
+            "$<TARGET_FILE_DIR:dcs>/slirp-0.dll"
+            "$<TARGET_FILE_DIR:dcs>/glib-2.0-0.dll"
+            "$<TARGET_FILE_DIR:dcs>/intl-8.dll"
+            "$<TARGET_FILE_DIR:dcs>/iconv-2.dll"
+            "$<TARGET_FILE_DIR:dcs>/pcre2-8d.dll"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+            OPTIONAL
+        )
+    endif()
 endif()
 # Windows TCC：运行时 DLL 也需安装到 bin/；tccdefs.h 必须放在 exe 同目录的
 # shim/ 下（Circuit 的 shim 路径探测），否则 TCC 编译生成代码时报找不到 tccdefs.h。

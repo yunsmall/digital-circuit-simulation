@@ -175,7 +175,9 @@ int printPins(dsc::Context &ctx, const std::string &type, const std::vector<std:
 
     // 工厂对没声明过的参数是静默忽略的；查引脚时这样会把拼错的参数当成默认值，
     // 结果看起来"能用"实际是另一个元件形态，必须提醒
-    if (meta) {
+    // allow_extra_params 的类型（virtio 的 backend_opts.*）本来就接受这类键，
+    // 在这里报"未知参数已忽略"会和工厂的实际行为矛盾
+    if (meta && !meta->allow_extra_params) {
         for (auto &[k, v]: params) {
             bool known = std::any_of(meta->params.begin(), meta->params.end(),
                                      [&](const dsc::ComponentFactory::ParamMeta &pm) { return pm.name == k; });
@@ -347,7 +349,14 @@ int jsonToC(const std::string &path, dsc::Context &ctx) {
         if (!netlist_ready)
             return 1;
     }
-    std::cout << circuit->generateC();
+    try {
+        std::cout << circuit->generateC();
+    } catch (const std::exception &e) {
+        // compile() 里的生成有兜底，这里是第二次生成（导出 C），同样不能把
+        // 异常穿到 main
+        std::cerr << std::format("生成 C 代码时异常: {}\n", e.what());
+        return 1;
+    }
     return err.code == dsc::ErrorCode::OK ? 0 : 1;
 }
 
@@ -440,6 +449,23 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     auto circuit = dcs_cli::loadCircuit(path, ctx);
     if (!circuit)
         return 1;
+
+    // --dump-mem 的格式和"电路里有没有 WishboneMemory"在仿真前就要检查：
+    // 放到循环后面会让几十秒的仿真白跑，和 dcs_soc 的行为也不一致
+    dsc::WishboneMemory *dump_target = nullptr;
+    size_t dump_addr = 0, dump_len = 0;
+    if (!dump_mem.empty()) {
+        dump_target = dcs_cli::findFirstComponent<dsc::WishboneMemory>(*circuit);
+        if (!dump_target) {
+            std::cerr << "错误: 电路里没有 WishboneMemory，无法导出\n";
+            return 1;
+        }
+        std::string perr;
+        if (!dcs_cli::parseAddrLen(dump_mem, dump_addr, dump_len, perr)) {
+            std::cerr << "错误: " << perr << "\n";
+            return 1;
+        }
+    }
 
     auto err = circuit->compile();
     if (err.code != dsc::ErrorCode::OK) {
@@ -550,21 +576,9 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
 
     // 调试用：把存储器里的一段原样导出来。跑内核实测时，串口还没初始化
     // 之前内核的日志只在 printk 环形缓冲区里，只能靠它看到内核到底走到哪了
-    if (!dump_mem.empty()) {
-        auto *dm = dcs_cli::findFirstComponent<dsc::WishboneMemory>(*circuit);
-        if (!dm) {
-            std::cerr << "错误: 电路里没有 WishboneMemory，无法导出\n";
-            return 1;
-        }
-        size_t addr, len;
-        std::string perr;
-        if (!dcs_cli::parseAddrLen(dump_mem, addr, len, perr)) {
-            std::cerr << "错误: " << perr << "\n";
-            return 1;
-        }
-        const size_t cap = dm->memSize();
-        const uint8_t *p = dm->writableMemPtr();
-        dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
+    if (dump_target) {
+        const size_t cap = dump_target->memSize();
+        dsc::dumpMemoryHex(std::cout, dump_target->writableMemPtr(), cap, dump_addr, dump_len);
     }
 
     circuit->deinit();
@@ -594,7 +608,7 @@ int checkFile(const std::string &path, dsc::Context &ctx) {
             std::cout << "  " << d << "\n";
     }
     for (auto &w: report.warnings)
-        std::cout << std::format("警告: {}\n", w);
+        std::cerr << std::format("警告: {}\n", w);
     std::cout << "校验通过\n";
     return 0;
 }
@@ -620,8 +634,7 @@ int listDefinitions(const std::string &path, dsc::Context &ctx) {
 }
 
 // ---- 递归列出目录下的蓝图元件（--list-library）----
-int listLibrary(const std::string &dir, int max_depth, bool as_json) {
-    dsc::Context ctx;
+int listLibrary(dsc::Context &ctx, const std::string &dir, int max_depth, bool as_json) {
     std::string error;
     int imported = 0;
     if (!dsc::importLibraryDirectory(ctx, dir, max_depth, imported, error)) {
@@ -687,7 +700,7 @@ int main(int argc, char *argv[]) {
             "t,ticks", "仿真 tick 数（默认 10）", cxxopts::value<uint64_t>()->default_value("10"))(
             "forever", "一直仿真直到 Ctrl+C（忽略 --ticks，循环留在 JIT 里）")(
             "d,delay", "每 tick 间隔毫秒（默认 0；逐拍观察时用 -m 配合较大的值）",
-            cxxopts::value<int>()->default_value("0"))("m,monitor", "逐 tick 打印线网值")(
+            cxxopts::value<int>()->default_value("0"))("m,monitor", "逐 tick 打印非零线网值（每拍先打印 Tick 分隔行）")(
             "dump-mem", "仿真结束后按 addr:len（十六进制，物理地址）导出存储器内容",
             cxxopts::value<std::string>())(
             "vcd", "把线网变化导出为 VCD 波形（可用 GTKWave 打开）", cxxopts::value<std::string>());
@@ -764,7 +777,7 @@ int main(int argc, char *argv[]) {
     if (result.count("list-definitions"))
         return listDefinitions(result["list-definitions"].as<std::string>(), ctx);
     if (result.count("list-library"))
-        return listLibrary(result["list-library"].as<std::string>(), result["depth"].as<int>(), result.count("json") != 0);
+        return listLibrary(ctx, result["list-library"].as<std::string>(), result["depth"].as<int>(), result.count("json") != 0);
 
     if (result.count("pins")) {
         std::vector<std::string> ps;
