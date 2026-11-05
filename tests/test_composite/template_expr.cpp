@@ -48,9 +48,11 @@ TEST(TemplateExpr, EmptyExpressionIsRejected) {
     }
 }
 
-// 没有右花括号时沿用老行为：整段当普通文本，不报错
-TEST(TemplateExpr, UnterminatedStaysLiteral) {
-    EXPECT_EQ(ok("a${b", {}), "a${b");
+// 未闭合的 ${ 不能原样流进元件名/线网名，否则蓝图展开只会表现为“莫名少一根线”
+TEST(TemplateExpr, UnterminatedIsRejected) {
+    auto e = err("a${b", {});
+    EXPECT_TRUE(e.failed);
+    EXPECT_FALSE(e.error.empty());
 }
 
 TEST(TemplateExpr, AdjacentSubstitutionsConcatenate) {

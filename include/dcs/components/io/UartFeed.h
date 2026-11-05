@@ -47,9 +47,11 @@ private:
         uint8_t ch;
         // 单生产者单消费者环形队列：head 只由生产者写，tail 只由消费者写。
         // JIT 每拍用 dcs_load_acq 比较两者，非空才回调；不再另设"有数据"标志——
-        // 标志的"判空后清零"会被并发的 push 覆盖，导致字节永久卡在队列里
-        std::atomic<uint32_t> head;
-        std::atomic<uint32_t> tail;
+        // 标志的"判空后清零"会被并发的 push 覆盖，导致字节永久卡在队列里。
+        // 字段保持普通 uint32_t：JIT 用 dcs_load_acq 读同一块存储，宿主侧用
+        // atomic_ref 做原子访问。声明成 std::atomic 再把地址交给 JIT，等于通过
+        // 非 atomic 指针访问 atomic 对象，标准上属于 UB（和 UartIn 一致）
+        uint32_t head, tail;
         uint8_t buf[CAP];
     };
     FeedState _state{};

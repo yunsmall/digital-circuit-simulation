@@ -115,8 +115,7 @@ TEST(StorageLifecycle, FailedPrepareStaysNotReady) {
 }
 
 // clone 不再依赖构造函数已分配：复制出来的数据要一直保留到加入电路
-TEST(StorageLifecycle, RomCloneCopiesPreloadedData) {
-    Circuit c;
+TEST(StorageLifecycle, RomCloneCopiesPreloadedData) {    Circuit c;
     auto *rom = static_cast<ROM *>(c.addComponent(std::make_unique<ROM>("r", 4, 8)));
     ASSERT_NE(rom, nullptr);
     rom->writableMemPtr()[0] = 0xAA;
@@ -146,3 +145,33 @@ TEST(StorageLifecycle, VirtioBlkMemCloneKeepsSize) {
     EXPECT_EQ(d->memSize(), 4096u);
     EXPECT_EQ(d->writableMemPtr(), nullptr);
 }
+
+// 所有存储类的 clone 语义一致：连存储内容一起复制
+TEST(StorageLifecycle, AllClonesCopyStorage) {
+    Circuit c;
+
+    auto *mem = static_cast<Memory *>(c.addComponent(std::make_unique<Memory>("m", 4, 8)));
+    mem->writableMemPtr()[1] = 0x11;
+    auto *mem2 = static_cast<Memory *>(c.addComponent(mem->clone("m2")));
+    ASSERT_NE(mem2, nullptr);
+    EXPECT_EQ(mem2->data()[1], 0x11);
+
+    auto *fifo = static_cast<FIFO *>(c.addComponent(std::make_unique<FIFO>("f", 16, 4)));
+    fifo->writableMemPtr()[0] = 0x22;
+    auto *fifo2 = static_cast<FIFO *>(c.addComponent(fifo->clone("f2")));
+    ASSERT_NE(fifo2, nullptr);
+    EXPECT_EQ(fifo2->data()[0], 0x22);
+
+    auto *ram = static_cast<MultiPortRAM *>(c.addComponent(std::make_unique<MultiPortRAM>("r", 4, 32, 2, 1)));
+    ram->writableMemPtr()[2] = 0x33;
+    auto *ram2 = static_cast<MultiPortRAM *>(c.addComponent(ram->clone("r2")));
+    ASSERT_NE(ram2, nullptr);
+    EXPECT_EQ(ram2->readOnlyMemPtr()[2], 0x33);
+
+    auto *wbm = static_cast<WishboneMemory *>(c.addComponent(std::make_unique<WishboneMemory>("wm", 4, 32)));
+    wbm->writableMemPtr()[3] = 0x44;
+    auto *wbm2 = static_cast<WishboneMemory *>(c.addComponent(wbm->clone("wm2")));
+    ASSERT_NE(wbm2, nullptr);
+    EXPECT_EQ(wbm2->readOnlyMemPtr()[3], 0x44);
+}
+

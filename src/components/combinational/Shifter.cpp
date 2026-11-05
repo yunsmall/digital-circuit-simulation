@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -23,6 +24,8 @@ Shifter::Shifter(const std::string &name, int bit_width, ShiftMode mode) :
     CombinationalComponent(name, shift_mode_str(mode)), _bit_width(bit_width),
     _mode(mode) {
     setParam("bit_width", std::to_string(bit_width));
+    if (bit_width < 1 || bit_width > 64)
+        throw std::invalid_argument("位宽必须在1-64之间");
     // 移位量要能表示 0..bit_width-1：bit_width(x)-1 等于 floor(log2)，非 2 的幂位宽会少一位
     int shift_bits = (int) std::ceil(std::log2((double) bit_width));
     if (shift_bits < 1) shift_bits = 1;

@@ -78,3 +78,43 @@ TEST(SeipTest, ZeroWhenPinLow) {
     f.run(30, false);
     EXPECT_EQ(f.cpu->reg(7) & (1u << 9), 0u) << "seip 为低时 mip.SEIP 应为 0";
 }
+
+// 规范 3.1.9：mip.SEIP 是软件可写的，M 态写它向 S 态投递外部中断。
+// 写进去的位必须能读回，不能下一拍被外部 seip 引脚覆盖
+TEST(SeipTest, SoftwareWritableSeip) {
+    Fx f;
+    f.load({
+        0x20000093u,   // addi x1, x0, 0x200  (mip.SEIP)
+        0x34409073u,   // csrrw x0, mip, x1
+        0x344023F3u,   // csrrs x7, mip, x0
+        0x0000006Fu,
+    });
+    f.run(30, false);
+    EXPECT_NE(f.cpu->reg(7) & (1u << 9), 0u) << "软件写入的 SEIP 应能读回";
+}
+
+// 写 mip=0 只能清软件位，本拍外部引脚给出的 SEIP 必须保留
+TEST(SeipTest, ClearingMipKeepsExternalSeip) {
+    Fx f;
+    f.load({
+        0x00000093u,   // addi x1, x0, 0
+        0x34409073u,   // csrrw x0, mip, x1
+        0x344023F3u,   // csrrs x7, mip, x0
+        0x0000006Fu,
+    });
+    f.run(30, true);
+    EXPECT_NE(f.cpu->reg(7) & (1u << 9), 0u) << "外部 SEIP 不能被软件写 0 清掉";
+}
+
+// 没有 Sstc 时 STIP 也是软件可写的
+TEST(SeipTest, SoftwareWritableStip) {
+    Fx f;
+    f.load({
+        0x02000093u,   // addi x1, x0, 0x20  (mip.STIP)
+        0x34409073u,   // csrrw x0, mip, x1
+        0x344023F3u,   // csrrs x7, mip, x0
+        0x0000006Fu,
+    });
+    f.run(30, false);
+    EXPECT_NE(f.cpu->reg(7) & (1u << 5), 0u) << "软件写入的 STIP 应能读回";
+}

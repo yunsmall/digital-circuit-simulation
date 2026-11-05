@@ -42,14 +42,16 @@ std::unordered_map<std::string, VirtioNet::BackendOps> &backendRegistry() {
 
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioNet::State *>(ctx);
-    if (s->reset_fn)
+    // backend_ctx 为空表示后端创建失败：不能假设后端实现自己会做空检查
+    if (s->reset_fn && s->backend_ctx)
         s->reset_fn(s->backend_ctx);
 }
 } // namespace
 
 void VirtioNet::kickThunk(void *state) {
     auto *s = static_cast<State *>(state);
-    if (s->kick_fn)
+    // backend_ctx 为空表示后端创建失败；不能假设后端实现自己会做空检查
+    if (s->kick_fn && s->backend_ctx)
         s->kick_fn(s->backend_ctx);
 }
 
@@ -118,10 +120,11 @@ void VirtioNet::simInit() {
         _state->backend_ctx = nullptr;
     }
     // create 拿到设备本身，后端可以在自己的线程里直接 pushRxPacket/popTxPacket
-    if (_ops.create)
-        _state->backend_ctx = _ops.create(this);
+    _state->backend_ctx = _ops.create ? _ops.create(this) : nullptr;
     _state->reset_fn = _ops.reset;
-    _state->kick_fn = _ops.kick;
+    // create 失败（socket 或 slirp 初始化失败）时 backend_ctx 为空，不能留 kick：
+    // 驱动照常写 notify，kickThunk 会拿空指针调进后端实现
+    _state->kick_fn = _state->backend_ctx ? _ops.kick : nullptr;
 }
 
 void VirtioNet::simDeinit() {
@@ -150,7 +153,9 @@ bool VirtioNet::pushRxPacket(const uint8_t *data, uint32_t len) {
     // 单生产者环：后端线程写 head，JIT 写 tail，两边用 acquire/release 交接数据
     const uint32_t head = std::atomic_ref<uint32_t>(s.rx_head).load(std::memory_order_relaxed);
     const uint32_t tail = std::atomic_ref<uint32_t>(s.rx_tail).load(std::memory_order_acquire);
-    if ((head + 1) % State::PKT_RING == tail % State::PKT_RING)
+    // 差值判满，避免 head+1 在 UINT32_MAX 处回绕导致的误判，见 VirtioInput::pushInputEvent
+    const uint32_t used = head - tail;
+    if (used >= State::PKT_RING - 1)
         return false;
     std::memcpy(s.rx_pkts[head % State::PKT_RING], data, len);
     s.rx_len[head % State::PKT_RING] = len;
@@ -313,7 +318,7 @@ virtio_gen::DeviceSpec VirtioNet::makeSpec() const {
             "                if (_th - _tl < {4} && _c)\n"
             "                    dcs_memcpy((char *)_vio_state_{1} + {6} + (_th % {4}) * {5} + _qv->written,\n"
             "                               _vio_mp_buf_{1}, _c);\n"
-            "                _qv->written += _qv->chunk;\n"
+            "                _qv->written += _c;\n"
             "                _qv->off += _qv->chunk;\n"
             "                if (_qv->off >= _qv->dlen) {{\n"
             "                    if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->off = 0; _qv->phase = {7}; }}\n"

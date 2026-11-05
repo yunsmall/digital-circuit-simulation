@@ -11,6 +11,7 @@
 #include "dcs/components/memory/WishboneROM.h"
 #include <cstring>
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -25,6 +26,11 @@ WishboneROMAdapter::WishboneROMAdapter(const std::string &name, int addr_width, 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));
     setParam("read_latency", std::to_string(read_latency));
+    if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
+        throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));
+    // 适配器的等待拍数是 read_latency + 2，负值会和实际上接的 ROM 时序对不上
+    if (read_latency < 0 || read_latency > 1024)
+        throw std::invalid_argument("读延迟必须在0-1024之间");
 
     addInput("wb_adr_i", addr_width);
     addInput("wb_dat_i", data_width);

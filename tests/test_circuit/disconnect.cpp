@@ -240,3 +240,12 @@ TEST(DisconnectTest, TickErrorClearedOnRecompile) {
     c.tick();
     EXPECT_EQ(c.getWire(n_bus->id())[0], 0x5A) << "旧的总线冲突错误把新电路卡死了";
 }
+
+// connect 对空指针有检查，disconnect/removeComponent 对空指针也不能崩
+TEST(DisconnectTest, NullComponentIsIgnored) {
+    dsc::Circuit c;
+    c.disconnect(nullptr, "in");
+    c.disconnectAll(nullptr);
+    c.removeComponent(nullptr);
+    SUCCEED();
+}

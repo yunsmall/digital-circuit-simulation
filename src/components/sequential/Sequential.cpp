@@ -75,17 +75,23 @@ std::string DFlipFlop::genFuncDef_seq() const {
 
     std::string edge = std::format("bool _rising = (_clk && !{}.prev_clk);", st);
 
+    // 预置位整字节写 0xFF 后，最后一字节要按有效位掩掉高位。q[] 是 uint8_t，
+    // 直接 &= 宽掩码（如 0xFFF）会先提升成 int 算完再截断回 0xFF，等于没清
+    const int tail_bits = _bit_width % 8;
+    const std::string preset_mask =
+            tail_bits == 0 ? std::string()
+                           : std::format("        {}.q[{} - 1] &= 0x{:X}u;\n", st, bytes, (1u << tail_bits) - 1);
+
     std::string update;
     if (_has_rst && _has_preset) {
         update = std::format(R"(    if (_rst) {{
         dcs_memset({0}.q, 0, {1});
     }} else if (_pre) {{
         dcs_memset({0}.q, 0xFF, {1});
-        {0}.q[{1} - 1] &= {2};
-    }} else if (_rising && _en) {{
+{2}    }} else if (_rising && _en) {{
         dcs_memcpy({0}.q, &_dval, {1});
     }})",
-                             st, bytes, gen_mask(_bit_width));
+                             st, bytes, preset_mask);
     }
     else if (_has_rst) {
         update = std::format(R"(    if (_rst) {{
@@ -98,11 +104,10 @@ std::string DFlipFlop::genFuncDef_seq() const {
     else if (_has_preset) {
         update = std::format(R"(    if (_pre) {{
         dcs_memset({0}.q, 0xFF, {1});
-        {0}.q[{1} - 1] &= {2};
-    }} else if (_rising && _en) {{
+{2}    }} else if (_rising && _en) {{
         dcs_memcpy({0}.q, &_dval, {1});
     }})",
-                             st, bytes, gen_mask(_bit_width));
+                             st, bytes, preset_mask);
     }
     else {
         update = std::format(R"(    if (_rising && _en) {{
@@ -778,9 +783,17 @@ std::unique_ptr<Component> ClockDivider::clone(const std::string &n) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"dff", {{"bit_width", "8"}}, {"d", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "D触发器，clk上升沿采样d输出到q"},
+    {"dff",
+     {{"bit_width", "8"}, {"has_en", "0"}, {"has_rst", "0"}, {"has_preset", "0"}},
+     {"d", "clk"},
+     {"q"},
+     dsc::ComponentCategory::Sequential,
+     "D触发器，clk上升沿采样d输出到q"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-                           return std::make_unique<dsc::DFlipFlop>(n, dsc::paramInt(p, "bit_width", 8));
+                           return std::make_unique<dsc::DFlipFlop>(n, dsc::paramInt(p, "bit_width", 8),
+                                                                   dsc::paramInt(p, "has_en", 0) != 0,
+                                                                   dsc::paramInt(p, "has_rst", 0) != 0,
+                                                                   dsc::paramInt(p, "has_preset", 0) != 0);
                        });
 
 DCS_REGISTER_COMPONENT(
@@ -796,9 +809,12 @@ DCS_REGISTER_COMPONENT(
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"register", {{"bit_width", "8"}}, {"d", "clk"}, {"q"}, dsc::ComponentCategory::Sequential, "寄存器，clk上升沿采样d"},
+    {"register", {{"bit_width", "8"}, {"has_en", "0"}, {"has_rst", "0"}}, {"d", "clk"}, {"q"},
+     dsc::ComponentCategory::Sequential, "寄存器，clk上升沿采样d"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-                           return std::make_unique<dsc::Register>(n, dsc::paramInt(p, "bit_width", 8));
+                           return std::make_unique<dsc::Register>(n, dsc::paramInt(p, "bit_width", 8),
+                                                                  dsc::paramInt(p, "has_en", 0) != 0,
+                                                                  dsc::paramInt(p, "has_rst", 0) != 0);
                        });
 
 DCS_REGISTER_COMPONENT(

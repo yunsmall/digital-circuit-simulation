@@ -51,6 +51,8 @@ constexpr int O_ADR = 0, O_WDAT = 1, O_WE = 2, O_SEL = 3, O_STB = 4, O_CYC = 5, 
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
+    // xlen 必须导出：工厂按这个参数选模板实例，缺了往返会静默降级成 RV32
+    setParam("xlen", XLEN == 64 ? "64" : "32");
     addInput("clk", 1); addInput("rst", 1);
     addInput("wb_dat_i", 32);
     addInput("wb_ack_i", 1);
@@ -241,9 +243,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
     if (s.phase == Phase::WAIT_MEM && s.acc_stage <= 1 && !in.ack && !ext_irq && !(s.mip & EXT_MASK) &&
         !(s.mideleg & RV::IRQ_STI) && !(s.mip & RV::IRQ_STI) && !s.wfi_halted)
         return;
-    // 没有外部中断、mip 里这几位的旧值也是 0 时，这次读改写什么都不改，直接跳过
+    // 没有外部中断、mip 里这几位的旧值也是 0 时，这次读改写什么都不改，直接跳过。
+    // SEIP 的软件可写位（mip_sw）不随外部信号一起覆盖，要并回来
     if (ext_irq || (s.mip & EXT_MASK))
-        s.mip = (s.mip & ~EXT_MASK) | ext_irq;
+        s.mip = (s.mip & ~EXT_MASK) | ext_irq | (s.mip_sw & RV::IRQ_SEI);
     // 规范 3.1.8：mideleg[5] 把 STI 委托给 S 态。硬件把 MTI 反映成 STIP：
     // 只声明 mideleg.STIP 可写却不产生 STIP，会让等待 S 态定时器中断的软件永久挂起。
     // 除了 CLINT 的 MTI，SBI set_timer 到期的那个时刻也要并进 STIP——
@@ -256,6 +259,9 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         // 就会收到一个与定时器状态无关的假中断
         s.mip &= ~RV::IRQ_STI;
     }
+    // 规范 3.1.9：没有 Sstc 时 mip.STIP 是软件可写的，M 态靠它向 S 态投递定时器中断。
+    // 软件位独立于上面的 MTI 镜像，清镜像不能连它一起清
+    if (s.mip_sw & RV::IRQ_STI) s.mip |= RV::IRQ_STI;
     // 与 WFI 的停机条件保持一致：只有 mie 里本地使能的挂起中断才唤醒，
     // 否则会在"唤醒 - 发现无法处理 - 重新停机"之间反复抖动。
     // 这里刻意不看 mstatus.MIE：全局关闭时也要退出 WFI，由后续中断判定决定去留
@@ -882,8 +888,9 @@ inline double roundByRm(double x, uint32_t rm) {
 }
 
 // Dekker 拆分：把 x 拆成 hi + lo，两半各占一半有效位，使乘积的误差项可以精确算出。
-// 不用 std::fma：基线 x86-64 没有 FMA 指令，库里的 fma 是软件实现，
-// 一次要上百个周期——浮点基准里它是最大的一笔开销
+// 不用 std::fma：部分宿主（例如基线 x86-64）没有 FMA 指令，库里的 fma 是软件实现，
+// 一次要上百个周期——浮点基准里它是最大的一笔开销。Dekker 拆分在所有宿主上都是同样的
+// 几条 IEEE 乘减，行为一致
 inline void splitDouble(double x, double &hi, double &lo) {
     const double c = 134217729.0 * x;   // 2^27 + 1
     hi = c - (c - x);
@@ -979,7 +986,12 @@ inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
     // 更负的方向走（绝对值变大），RUP 反之。规范 6.1.2 表 26：RDN=向 -∞，RUP=向 +∞
     const uint32_t rm_abs = (neg && (rm == 2 || rm == 3)) ? (5u - rm) : rm;
     double n = roundByRm(x, rm_abs);
-    if (n != x) fflags |= 0x01;                                   // NX
+    if (n != x) {
+        fflags |= 0x01;                                          // NX
+        // UF 的判据是"舍入后 tiny 且不精确"：结果仍是次正规数或 0 才算；
+        // 舍入进位到最小正规数（n == 1024）时结果已经不小，不能报 UF
+        if (n < 1024.0) fflags |= 0x02;
+    }
     if (n == 0.0) return sign;
 
     uint16_t out;
@@ -1000,6 +1012,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                        XLenOf<XLEN> &wb_adr, uint32_t &wb_dat, bool &wb_we,
                        uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc, bool &need_mem) {
     s.regs[0]=0; need_mem=false;
+    // 上一条指令若因 trap 提前返回（没走到行尾），标记会留在这里；
+    // 本条指令正常计数，不能继承那条指令的"不计数"
+    s.instret_skip = false;
     uint32_t op=(inst>>RV::SH_OP)&RV::M_OP, rd=(inst>>RV::SH_RD)&RV::M_RD;
     uint32_t f3=(inst>>RV::SH_F3)&RV::M_F3, rs1=(inst>>RV::SH_RS1)&RV::M_RS1;
     uint32_t rs2=(inst>>RV::SH_RS2)&RV::M_RS2, f7=(inst>>RV::SH_F7)&RV::M_F7;
@@ -1450,14 +1465,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
                 break;
             }
-            if ((f7 & ~1u) == 0x10u) {   // sh1add.uw / sh2add.uw / sh3add.uw
-                const XLen base = (XLen)(uint32_t) v1;
-                if (f3 == 2) s.regs[rd] = (XLen)(base << 1) + v2;
-                else if (f3 == 4) s.regs[rd] = (XLen)(base << 2) + v2;
-                else if (f3 == 6) s.regs[rd] = (XLen)(base << 3) + v2;
-                else [[unlikely]] { takeTrap(s, RV::EXC_II, inst); return; }
-                break;
-            }
             if (f7 == 0x30) {   // rolw / rorw
                 const uint32_t sh2 = (uint32_t)(v2 & 31);
                 uint32_t r;
@@ -1543,6 +1550,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (p + n > 4) {
         const XLen a2 = (pa & ~(XLen)3) + 4;
         if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        // 8 字节非对齐访问还要第三段（p=1..3）；它的地址同样不能用 32 位总线回绕到 0
+        if (p + n > 8) {
+            const XLen a3 = (pa & ~(XLen)3) + 8;
+            if (a3 < pa || a3 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+        }
         }
         
         if (_paging_active && ((va & 0xFFF) + n > 0x1000)) {
@@ -1584,6 +1596,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (p + n > 4) {
         const XLen a2 = (pa & ~(XLen)3) + 4;
         if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
+        // 第三段地址也不能用 32 位总线回绕到 0（8 字节非对齐写，p=1..3）
+        if (p + n > 8) {
+            const XLen a3 = (pa & ~(XLen)3) + 8;
+            if (a3 < pa || a3 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
+        }
         }
         
         if (_paging_active && ((va & 0xFFF) + n > 0x1000)) {
@@ -1683,6 +1700,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (f3 == 3) {
             const XLen a2 = (pa & ~(XLen)3) + 4;
             if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+            // 非对齐 FLD 还要第三段（p=1..3），地址同样不能回绕
+            if (pa & 3) {
+                const XLen a3 = (pa & ~(XLen)3) + 8;
+                if (a3 < pa || a3 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_LAM, va); return; }
+            }
         }
         // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
         // 地址要抹掉低两位，具体取哪半由 acc_va 在读回时移位决定
@@ -1710,6 +1732,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         if (f3 == 3) {
             const XLen a2 = (pa & ~(XLen)3) + 4;
             if (a2 < pa || a2 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
+            // 非对齐 FSD 还要第三段（p=1..3），地址同样不能回绕
+            if (pa & 3) {
+                const XLen a3 = (pa & ~(XLen)3) + 8;
+                if (a3 < pa || a3 > (XLen)0xFFFFFFFF) { takeTrap(s, RV::EXC_SAM, va); return; }
+            }
         }
         // 同 hart 写覆盖保留地址所在的字即失效（规范 5.2 的保守实现）；
         // FSD 跨两个字（4 字节对齐时也一样），两个字都要查
@@ -1732,7 +1759,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     case 0x43: case 0x47: case 0x4B: case 0x4F: {
         if (((s.mstatus >> 13) & 3u) == 0) { takeTrap(s, RV::EXC_II, inst); return; } // FS=Off 时禁止浮点指令
         // FMA 的 rm 在 funct3：5/6 是保留编码，7 表示取 fcsr.frm
-        if ((f3 == 7 ? ((s.fcsr >> 5) & 7u) : f3) > 4) { takeTrap(s, RV::EXC_II, inst); return; }
+        const uint32_t fma_rm = (f3 == 7) ? ((s.fcsr >> 5) & 7u) : f3;
+        if (fma_rm > 4) { takeTrap(s, RV::EXC_II, inst); return; }
         // 把操作数当浮点数用时才检查 NaN-box：高 32 位不是全 1 说明这不是合法的
         // 单精度值，按规范整体当作 canonical NaN。FMV.X.W / FCLASS.S 直接读位模式，
         // 走的是 s.fregs[rs1] 不经过这里，所以不受影响
@@ -1760,8 +1788,15 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 return ((h >> 10) & 0x1F) == 0x1F && (h & 0x3FF) != 0 && !(h & 0x200);
             };
             double a = readH(rs1), b = readH(rs2), c = readH(rs3h);
-            double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
-                                                  : std::fma(-a, b, (op == 0x4B) ? c : -c);
+            // 把四条 FMA 统一成 aa*b + cc：FMADD=a*b+c、FMSUB=a*b-c、
+            // FNMSUB=-a*b+c、FNMADD=-a*b-c
+            const double fma_a = (op == 0x4B || op == 0x4F) ? -a : a;
+            const double fma_c = (op == 0x43 || op == 0x4B) ? c : -c;
+            // half 输入的乘积在 double 里是精确的，可以直接用它判断"精确抵消成零"
+            const double fma_prod = fma_a * b;
+            const bool fma_cancel = (fma_c == -fma_prod)
+                                    && (fma_prod != 0.0 || std::signbit(fma_prod) != std::signbit(fma_c));
+            double m = std::fma(fma_a, b, fma_c);
             {
                 double p = a * b;
                 double pe = std::fma(a, b, -p);
@@ -1781,6 +1816,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 if (snan_h(rs1) || snan_h(rs2) || snan_h(rs3h) || mul_invalid || !any_nan)
                     s.fcsr |= 0x10;
             }
+            // 精确抵消成零时 IEEE 754 只有 RDN 给 -0，宿主 RNE 的 std::fma 给的是 +0
+            else if (m == 0.0 && fma_cancel && rmv == 2) s.fregs[rd] = 0xFFFFFFFFFFFF8000ULL;
             else s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (uint64_t) doubleToHalf(m, rmv, s.fcsr);
             s.mstatus |= (3u << 13); // 写 freg，FS 置 Dirty
             break;
@@ -1797,19 +1834,40 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     return ((u >> 52) & 0x7FF) == 0x7FF && (u & 0xFFFFFFFFFFFFFULL) != 0
                         && !(u & 0x8000000000000ULL);
                 };
-                // 按 op 决定是 a*b±c 还是 -(a*b)±c
-                double m = (op == 0x43 || op == 0x47) ? std::fma(a, b, (op == 0x43) ? c : -c)
-                                                      : std::fma(-a, b, (op == 0x4B) ? c : -c);
-                // fma 的结果本身是舍入过的，拿不到"是否精确"。用两条余项拼出精确误差：
-                // pe 是 a*b 的余项，se 是 p+c 的 TwoSum 余项
-                {
-                    double p = a * b;
-                    double pe = std::fma(a, b, -p);
-                    double sp = p + c;
-                    double bb = sp - p;
-                    double se = (p - (sp - bb)) + (c - bb);
-                    if (std::isfinite(m) && (pe + se) != 0.0) s.fcsr |= 0x01;   // NX
+                // 按 op 把四条指令统一成 aa*b + cc：FMADD=a*b+c、FMSUB=a*b-c、
+                // FNMSUB=-a*b+c、FNMADD=-a*b-c
+                const double aa = (op == 0x4B || op == 0x4F) ? -a : a;
+                const double cc = (op == 0x43 || op == 0x4B) ? c : -c;
+                double m = std::fma(aa, b, cc);   // 宿主 RNE 的舍入结果
+                double rem = 0.0;                 // 精确结果与 m 之差
+                double pe = 0.0;
+                const double p = twoProduct(aa, b, pe);   // 积及其精确余项
+                if (std::isfinite(p)) {
+                    // TwoProduct/TwoSum 把精确值展开成 p + pe + cc = sp + se + pe，
+                    // 再用两次 TwoSum 整理成 h + he + ue（h 是 RNE 结果）。
+                    // 这样才拿得到"是否不精确"和按 rm 调整方向所需的信息
+                    const double pe = std::fma(aa, b, -p);
+                    const double sp = p + cc;
+                    const double bv = sp - p;
+                    const double se = (p - (sp - bv)) + (cc - bv);
+                    const double u = se + pe;
+                    const double ub = u - se;
+                    const double ue = (se - (u - ub)) + (pe - ub);
+                    const double h = sp + u;
+                    const double hb = h - sp;
+                    const double he = (sp - (h - hb)) + (u - hb);
+                    const double lo = he + ue;
+                    // 统一到 m 上：rem = (h - m) + lo
+                    const double d = h - m;
+                    const double dbb = d - h;
+                    const double de = (h - (d - dbb)) + (-m - dbb);
+                    const double f = d + lo;
+                    const double fbb = f - d;
+                    const double fe = (d - (f - fbb)) + (lo - fbb);
+                    rem = f + fe + de;
                 }
+                // p 溢出成 inf 但精确结果有限是极窄的边界：此时无法展开余项，
+                // 退回宿主的 RNE 结果，只保证数值正确
                 if (std::isnan(m)) {
                     s.fregs[rd] = 0x7FF8000000000000ULL;
                     // 规范 6.1.6：∞×0 必须置 NV，即使加数是 qNaN；
@@ -1819,8 +1877,42 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     if (is_snan_d(s.fregs[rs1]) || is_snan_d(s.fregs[rs2]) || is_snan_d(s.fregs[rs3d])
                         || mul_invalid || !any_nan)
                         s.fcsr |= 0x10;
+                } else if (std::isinf(m) && std::isfinite(a) && std::isfinite(b) && std::isfinite(c)) {
+                    // 溢出：RNE/RMM 给 inf，RTZ 和朝反方向的模式退回最大有限值
+                    const bool neg = std::signbit(m);
+                    const bool to_inf = (fma_rm == 0) || (fma_rm == 4)
+                                     || (fma_rm == 2 && neg) || (fma_rm == 3 && !neg);
+                    s.fregs[rd] = d2u(to_inf ? m : (neg ? -std::numeric_limits<double>::max()
+                                                        : std::numeric_limits<double>::max()));
+                    s.fcsr |= 0x04 | 0x01;   // OF | NX
+                } else if (std::isinf(m)) {
+                    s.fregs[rd] = d2u(m);    // 输入本身含 Inf，不是溢出
+                } else {
+                    // 精确结果是否为零：a*b 与 c 精确抵消（p + pe 与 cc 相等）。
+                    // 乘积小到 double 表示不了时 p 是 0、pe 也丢了，展开不再可信，
+                    // 那种情况精确结果不可能为零（除非 cc 也是 0，见下面的符号代理）
+                    const bool prod_underflow = (p == 0.0 && aa != 0.0 && b != 0.0);
+                    const bool exact_zero = !prod_underflow && (p == -cc) && (pe == 0.0);
+                    const bool cancel = exact_zero
+                            && (p != 0.0 || std::signbit(p) != std::signbit(cc));
+                    double r = adjustByRm(m, rem, fma_rm);
+                    if (prod_underflow && m == 0.0 && cc == 0.0) {
+                        // 乘积小于 double 的次正规下限：用一个符号代理让 RDN/RUP
+                        // 按方向给出最小次正规数，其余模式舍入到 0
+                        const bool neg = std::signbit(aa) != std::signbit(b);
+                        r = adjustByRm(0.0, neg ? -1e-300 : 1e-300, fma_rm);
+                        rem = 1.0;   // 结果不精确
+                    }
+                    s.fregs[rd] = d2u(r);
+                    if (rem != 0.0) {
+                        s.fcsr |= 0x01;   // NX
+                        // UF：舍入后 tiny 且不精确
+                        if (std::fabs(r) < std::numeric_limits<double>::min()) s.fcsr |= 0x02;
+                    } else if (r == 0.0 && cancel) {
+                        // 精确抵消成零：只有 RDN 给 -0
+                        s.fregs[rd] = d2u(fma_rm == 2 ? -0.0 : 0.0);
+                    }
                 }
-                else s.fregs[rd] = d2u(m);
                 // 写了 freg 就必须把 FS 置 Dirty，否则上下文切换不会保存浮点寄存器；
                 // 这里的 break 跳过了单精度路径末尾的同一句，不能漏
                 s.mstatus |= (3u << 13);
@@ -1944,6 +2036,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         && !(s.fregs[rs1] & 0x8000000000000ULL)) s.fcsr |= 0x10;   // sNaN
                     break;
                 }
+                // ±Inf 转单精度是精确的，不能落进下面的溢出分支去置 OF/NX
+                if (std::isinf(dv)) {
+                    const uint32_t u = std::signbit(dv) ? 0xFF800000u : 0x7F800000u;
+                    s.fregs[rd] = 0xFFFFFFFF00000000ULL | u;
+                    break;
+                }
                 {
                     const double fmax = (double) std::numeric_limits<float>::max();
                     const double half_fmax = std::ldexp(1.0, 128) - std::ldexp(1.0, 103);
@@ -1984,6 +2082,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                                      : (std::fmod((double) lower, 2.0) == 0.0 ? lower : upper);
                             fv = pick;
                             s.fcsr |= 0x01;   // NX
+                            // 规范 6.1.4：tininess 在舍入后判断，舍入结果是次正规数或 0
+                            // 且本次不精确才置 UF
+                            if (std::fabs((double) fv) < (double) std::numeric_limits<float>::min())
+                                s.fcsr |= 0x02;
                         }
                     }
                     s.fregs[rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) 0;
@@ -2008,7 +2110,27 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 std::memcpy(&s.fregs[rd], &dv, 8);
             } else {
                 // 涉及 half 的转换：half→S/D 精确（float/double 都能表示所有 half 值），
-                // S/D→half 由 fregWrite 里的 doubleToHalf 按 rm 舍入
+                // S/D→half 由 fregWrite 里的 doubleToHalf 按 rm 舍入。
+                // 转换也是浮点运算，signaling NaN 源必须置 NV。但 halfToDouble 会把
+                // half 的 sNaN 统一成 quiet NaN，float→double 的隐式转换也会先 quiet 掉
+                // sNaN，所以只能在源寄存器位模式上判断
+                bool src_snan = false;
+                if (src == 0) {
+                    const uint32_t u = (uint32_t) s.fregs[rs1];
+                    src_snan = ((s.fregs[rs1] >> 32) == 0xFFFFFFFFu)
+                            && ((u >> 23) & 0xFF) == 0xFF && (u & 0x7FFFFFu) != 0
+                            && !(u & 0x400000u);
+                } else if (src == 1) {
+                    const uint64_t u = s.fregs[rs1];
+                    src_snan = ((u >> 52) & 0x7FF) == 0x7FF
+                            && (u & 0xFFFFFFFFFFFFFULL) != 0 && !(u & 0x8000000000000ULL);
+                } else {
+                    const uint64_t u = s.fregs[rs1];
+                    src_snan = ((u >> 16) == 0xFFFFFFFFFFFFULL)
+                            && (((u >> 10) & 0x1F) == 0x1F) && (u & 0x3FF) != 0
+                            && !(u & 0x200);
+                }
+                if (src_snan) s.fcsr |= 0x10;
                 fregWrite(rd, dst, fregRead(rs1, src));
             }
             break;
@@ -2032,11 +2154,15 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             };
             // 算术运算产生 NaN 且输入里没有 NaN，说明是无效运算（inf-inf、0*inf、
             // 0/0、inf/inf、sqrt 负数），规范要求置 NV
-            auto setHalfOp = [&](double v) {
+            auto setHalfOp = [&](double v, bool cancelled_to_zero = false) {
                 if (std::isnan(v)) {
                     const bool invalid = !std::isnan(ha) && (op == RV::F7_FSQRT || !std::isnan(hb));
                     s.fregs[rd] = 0xFFFFFFFFFFFF7E00ULL;
                     if (hsnan || invalid) s.fcsr |= 0x10;
+                } else if (v == 0.0 && cancelled_to_zero) {
+                    // 精确抵消成零：IEEE 754 只有 RDN 给 -0，其余模式强制 +0。
+                    // 宿主 double 加法固定按 RNE 给 +0，必须在这里补符号
+                    s.fregs[rd] = 0xFFFFFFFFFFFF0000ULL | (xrm == 2 ? 0x8000ULL : 0ULL);
                 } else {
                     setHalf(v);
                 }
@@ -2058,10 +2184,19 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 }
             };
             switch (op) {
-            case RV::F7_FADD: setHalfOp(ha + hb); break;
-            case RV::F7_FSUB: setHalfOp(ha - hb); break;
+            case RV::F7_FADD:
+                setHalfOp(ha + hb, ha == -hb && (ha != 0.0 || std::signbit(ha) != std::signbit(hb)));
+                break;
+            case RV::F7_FSUB:
+                setHalfOp(ha - hb, ha == hb && (ha != 0.0 || std::signbit(ha) == std::signbit(hb)));
+                break;
             case RV::F7_FMUL: setHalfOp(ha * hb); break;
-            case RV::F7_FDIV: setHalfOp(ha / hb); break;
+            case RV::F7_FDIV:
+                // 与单/双精度一致：DZ 只针对"有限非零被除数 / 零"，
+                // Inf/0 和 0/0 分别走精确 Inf 与无效运算
+                if (hb == 0.0 && std::isfinite(ha) && ha != 0.0) s.fcsr |= 0x08;
+                setHalfOp(ha / hb);
+                break;
             case RV::F7_FSQRT: setHalfOp(std::sqrt(ha)); break;
             case RV::F7_FSGNJ: {
                 // 非 NaN-boxed 的寄存器按规范整体当作 canonical NaN，其符号位为 0；
@@ -2107,8 +2242,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 if (rs2 >= 4 || (rs2 >= 2 && XLEN != 64)) { takeTrap(s, RV::EXC_II, inst); return; }
                 double r = cvtToIntHalf(ha);
                 if (std::isnan(r)) { s.fcsr |= 0x10; }
-                // 截掉小数部分（或舍入改变数值）就是不精确
-                if (std::isfinite(ha) && std::isfinite(r) && r != ha) s.fcsr |= 0x01;
                 if (rs2 == 0) {
                     if (std::isnan(r) || r >= 2147483648.0) { s.regs[rd] = (XLen)(SXLen)0x7FFFFFFF; s.fcsr |= 0x10; }
                     else if (r < -2147483648.0) { s.regs[rd] = (XLen)(SXLen)(int32_t)0x80000000; s.fcsr |= 0x10; }
@@ -2126,6 +2259,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     else if (r < 0.0) { s.regs[rd] = 0; s.fcsr |= 0x10; }
                     else s.regs[rd] = (XLen) r;
                 }
+                // 规范 6.1.7：Invalid 未置位时，舍入结果与原值不同才置 NX
+                if (!((s.fcsr & ~hflags_before) & 0x10) && std::isfinite(ha) && r != ha)
+                    s.fcsr |= 0x01;
                 break;
             }
             case RV::F7_FCVT_S_W: {
@@ -2143,6 +2279,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     // FMV.X.H：把低 16 位符号扩展到 XLEN
                     s.regs[rd] = (XLen)(SXLen)(int16_t)(uint16_t) s.fregs[rs1];
                 } else if (f3 == 1) {
+                    // 规范 6.2.2：除 load/store/FMV 这类位传输外，使用窄值的浮点操作
+                    // 要先检查 NaN-boxing；高 48 位不是全 1 时输入按 canonical NaN 处理
+                    if ((s.fregs[rs1] >> 16) != 0xFFFFFFFFFFFFULL) {
+                        s.regs[rd] = 1u << 9; // canonical qNaN 的分类位
+                        break;
+                    }
                     uint16_t u = (uint16_t) s.fregs[rs1], cls = 0;
                     const bool sign = (u >> 15) != 0;
                     const uint32_t e = (u >> 10) & 0x1F, m = u & 0x3FF;
@@ -2212,21 +2354,39 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 }
             };
             auto setd = [&](double v) { s.fregs[rd] = d2u(v); };
-            // 双精度没有更宽的宿主类型可用（long double 在 MSVC/clang-cl 上也是 64 位），
+            // 双精度没有可移植的"更宽宿主类型"：long double 的宽度随平台变
+            // （MSVC/clang-cl 上是 64 位，arm64 Linux 是 binary128），
             // 所以"结果是否不精确"不能靠比较舍入前后——hi 本身已经是舍入过的值。
             // 每个运算额外给出精确余项 lo（TwoSum / fma），真实结果就是 hi + lo：
             // lo != 0 即不精确，非 RNE 模式再靠 lo 的符号决定往哪个方向补一个 ulp
-            auto setd_flags = [&](double hi, double lo, double ox = 0.0, double oy = 0.0) {
+            auto setd_flags = [&](double hi, double lo, double ox = 0.0, double oy = 0.0,
+                                  bool cancelled_to_zero = false) {
                 if (std::isnan(hi)) {
                     s.fregs[rd] = 0x7FF8000000000000ULL;   // canonical NaN
                     if (dsnan || (!std::isnan(da) && !std::isnan(db))) s.fcsr |= 0x10;
                     return;
                 }
-                double r = std::isinf(hi) ? hi : adjustByRm(hi, lo, eff_rm);
+                // 有限输入算出 ±Inf 是溢出。宿主 RNE 给出 inf 说明精确结果已经达到
+                // 溢出中点，非 RNE 模式只需决定是退回最大有限值还是保留 inf
+                if (std::isinf(hi) && std::isfinite(ox) && std::isfinite(oy)) {
+                    const bool neg = std::signbit(hi);
+                    const bool to_inf = (eff_rm == 0) || (eff_rm == 4)
+                                     || (eff_rm == 2 && neg) || (eff_rm == 3 && !neg);
+                    setd(to_inf ? hi : (neg ? -std::numeric_limits<double>::max()
+                                            : std::numeric_limits<double>::max()));
+                    s.fcsr |= 0x04 | 0x01;   // OF | NX
+                    return;
+                }
+                double r = adjustByRm(hi, lo, eff_rm);
                 setd(r);
                 if (std::isinf(r)) {
                     // 有限输入算出无穷才是溢出；hi 本身可能已是 inf，不能用它判断
                     if (std::isfinite(ox) && std::isfinite(oy)) { s.fcsr |= 0x04; s.fcsr |= 0x01; }
+                    return;
+                }
+                // 精确抵消成零时 IEEE 754 只有 RDN 给 -0，宿主 double 运算给的是 +0
+                if (cancelled_to_zero && r == 0.0 && lo == 0.0) {
+                    setd(eff_rm == 2 ? -0.0 : 0.0);
                     return;
                 }
                 if (lo != 0.0) {
@@ -2246,13 +2406,18 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             case RV::F7_FADD: {
                 double lo;
                 double hi = two_sum(da, db, lo);
-                setd_flags(hi, lo, da, db);
+                // 精确抵消成零的判据与单精度路径一致：(-x) + x，以及异号零相加
+                const bool cancel = (db == -da)
+                        && (da != 0.0 || std::signbit(da) != std::signbit(db));
+                setd_flags(hi, lo, da, db, cancel);
                 break;
             }
             case RV::F7_FSUB: {
                 double lo;
                 double hi = two_sum(da, -db, lo);
-                setd_flags(hi, lo, da, -db);
+                const bool cancel = (db == da)
+                        && (da != 0.0 || std::signbit(da) == std::signbit(db));
+                setd_flags(hi, lo, da, -db, cancel);
                 break;
             }
             case RV::F7_FMUL: {
@@ -2373,10 +2538,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                     else if (r < 0.0) { s.regs[rd] = 0; s.fcsr |= 0x10; }
                     else s.regs[rd] = (XLen) r;
                 }
-                // NX 只在没有饱和时才有意义：饱和路径规范只要求 NV，
-                // 拿回写值和原值比较会把"饱和"误判成"不精确"
-                if (s.fcsr & 0x10) { /* 已置 NV，不再补 NX */ }
-                else if (std::isfinite(da) && r != da) s.fcsr |= 0x01;
+                // 规范 6.1.7：只有当 Invalid 未置位时，舍入结果与原值不同才置 NX。
+                // 必须看"本次操作"是否置了 NV：用累计的 s.fcsr.NV 会把旧标志当成本次的
+                if (!((s.fcsr & ~dflags_before) & 0x10) && std::isfinite(da) && r != da)
+                    s.fcsr |= 0x01;
                 break;
             }
             case RV::F7_FCVT_S_W: {
@@ -2552,11 +2717,12 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 if (a == 0.0f && b == 0.0f) s.fregs[rd] = s.fregs[rs1] | s.fregs[rs2]; // -0 优先
                 else setf(a < b ? a : b);
             } else {
-                // FMAX 对任何两个零都要给 +0（F 扩展 12.2），
-                // 但位与对 (-0,-0) 的结果是 -0，所以要先排掉这种组合
+                // FMAX(-0,-0) 的结果是 -0，其余含 +0 的组合都是 +0（F 扩展 6.1.6），
+                // 两个位模式按位与正好给出这个结果。必须保留高 32 位的 NaN-box，
+                // 整体赋值 0 会让后续单精度指令把这个合法结果当成非 boxed 的 NaN
                 if (a == 0.0f && b == 0.0f) {
-                    uint32_t ua = s.fregs[rs1], ub = s.fregs[rs2];
-                    s.fregs[rd] = ((ua | ub) == 0x80000000u) ? 0u : (ua & ub);
+                    const uint32_t lo = (uint32_t) s.fregs[rs1] & (uint32_t) s.fregs[rs2];
+                    s.fregs[rd] = 0xFFFFFFFF00000000ULL | lo;
                 } else setf(a > b ? a : b);
             }
             break;
@@ -2598,7 +2764,6 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 break;
             }
             }
-            if (std::isfinite(a) && std::isfinite(r) && r != a) s.fcsr |= 0x01; // 截掉小数部分即不精确
             if (rs2 == 0) { // FCVT.W.S
                 // RV64 的 FCVT.W.S 要把 32 位结果符号扩展到 XLEN，负值不能零扩展
                 XLen out;
@@ -2623,6 +2788,10 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 else if (r < 0.0f) { s.regs[rd] = 0; s.fcsr |= 0x10; }
                 else s.regs[rd] = (XLen) r;
             }
+            // 规范 6.1.7：Invalid 未置位时，舍入结果与原值不同才置 NX。
+            // 判"本次"是否置 NV，不能用累计的标志
+            if (!((s.fcsr & ~flags_before) & 0x10) && std::isfinite(a) && r != a)
+                s.fcsr |= 0x01;
             break;
         }
         case RV::F7_FCVT_S_W: {
@@ -2646,6 +2815,11 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                 // RV64 下要把低 32 位符号扩展到 XLEN，否则负的位模式会变成大正数
                 s.regs[rd] = (XLen)(SXLen)(int32_t) s.fregs[rs1];
             } else if (f3 == 1) { // FCLASS.S（f3 >= 2 是保留编码）
+                // 规范 6.2.2：非 NaN-boxed 的窄值作为浮点操作数使用时按 canonical NaN 处理
+                if ((s.fregs[rs1] >> 32) != 0xFFFFFFFFu) {
+                    s.regs[rd] = 1u << 9;
+                    break;
+                }
                 uint32_t u = s.fregs[rs1], cls = 0;
                 bool sign = (u >> 31) != 0;
                 uint32_t exp = (u >> 23) & 0xFF, frac = u & 0x7FFFFF;
@@ -2861,6 +3035,14 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         } else {
             if (f3 == 4) [[unlikely]] { takeTrap(s, RV::EXC_II, inst); npc = s.pc; break; } // funct3=4 未定义
             uint32_t csr_addr=(inst>>20)&RV::M_F12; XLen csr_val=csrRead(s, csr_addr);
+            // mip.SEIP/STIP 读回的是"软件位 | 外部信号"，但 CSRRS/CSRRC 的读改写
+            // 只能作用于软件位（规范 3.1.9）：把外部信号带进写回值会让
+            // "csrrs mip, x0" 之外的操作凭空置位软件位，或者清不掉真正需要清的那些
+            XLen csr_rmw_base = csr_val;
+            if (csr_addr == RV::CSR_MIP) {
+                constexpr uint32_t kSw = RV::IRQ_SEI | RV::IRQ_STI;
+                csr_rmw_base = (XLen)((csr_val & ~kSw) | (s.mip_sw & kSw));
+            }
             // 访问未实现的 CSR、或写只读 CSR（csr[11:10]==3 且确实是写类指令）都是非法指令
             // 只有 CSRRW/CSRRWI 一定写；CSRRS/CSRRC/CSRRSI/CSRRCI 在源操作数为 0 时只是读
             bool csr_write = (f3 == RV::F3_CSRRW || f3 == RV::F3_CSRRWI) || (rs1 != 0);
@@ -2890,8 +3072,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             }
             switch(f3){
             case RV::F3_CSRRW: case RV::F3_CSRRWI: csrWrite(s, csr_addr, wval); break;                              // CSR 写入不依赖 rd
-            case RV::F3_CSRRS: case RV::F3_CSRRSI: if(rs1!=0) csrWrite(s, csr_addr, csr_val|wval); break;           // rs1=0 时不写 CSR
-            case RV::F3_CSRRC: case RV::F3_CSRRCI: if(rs1!=0) csrWrite(s, csr_addr, csr_val&~wval); break;
+            case RV::F3_CSRRS: case RV::F3_CSRRSI: if(rs1!=0) csrWrite(s, csr_addr, csr_rmw_base|wval); break;           // rs1=0 时不写 CSR
+            case RV::F3_CSRRC: case RV::F3_CSRRCI: if(rs1!=0) csrWrite(s, csr_addr, csr_rmw_base&~wval); break;
             }
             s.regs[rd]=csr_val;
         }
@@ -2903,11 +3085,9 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
 
     // ---- PC 更新 ----
     s.regs[0]=0; s.pc=npc;
-    // 规范允许"是否把 trap 的指令计入"由实现决定；这里凡是走到尾部收尾的都计，
-    // 少数提前 return 的错误路径不计，属于同一取舍下的正常差异
-    // 规范：写入 minstret 的值就是紧接着那条指令读到的值，
-    // 所以写指令本身不能递增
-    if (s.instret_written) s.instret_written = false; else s.instret++;
+    // 规范：以同步异常结束的指令不算 retire，写 minstret 的指令也不递增
+    // （让紧接着那条读取拿到写入值），这两种情况都由 instret_skip 表示
+    if (s.instret_skip) s.instret_skip = false; else s.instret++;
     if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
 }
 
@@ -2980,7 +3160,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
         // UXL/SXL 在 RV64 恒为 2（64 位），只读：S/U 态与本核 M 态同宽
         XLen uxl_sxl = 0;
         if constexpr (XLEN == 64) uxl_sxl = ((XLen) 2 << 32) | ((XLen) 2 << 34);
-        return s.mstatus | uxl_sxl | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen) 1 << (XLEN - 1)) : 0u);
+        return s.mstatus | uxl_sxl | ((((s.mstatus >> 13) & 3u) == 3u) ? ((XLen) 1 << (XLEN - 1)) : 0u);
     }
     // MXL=1(RV32) | I(8) | M(12) | A(0) | F(5) | S(18) | U(20) —— 与实现的指令集和特权级一一对应
     // MXL 字段必须反映实际位宽：RV32 是 1、RV64 是 2。
@@ -3016,7 +3196,7 @@ XLenOf<XLEN> RiscVCPU<XLEN>::csrRead(const CpuState &s, uint32_t addr) {
     case RV::CSR_SSTATUS: {
         XLen uxl = 0;
         if constexpr (XLEN == 64) uxl = (XLen) 2 << 32;
-        return (s.mstatus & 0x000DE122u) | uxl | ((((s.mstatus >> 13) & 3u) != 0) ? ((XLen) 1 << (XLEN - 1)) : 0u);
+        return (s.mstatus & 0x000DE122u) | uxl | ((((s.mstatus >> 13) & 3u) == 3u) ? ((XLen) 1 << (XLEN - 1)) : 0u);
     }
     case RV::CSR_SIE:     return s.mie & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI);
     case RV::CSR_STVEC:   return s.stvec;
@@ -3047,9 +3227,9 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_MCYCLE: s.cycles = (XLEN == 64) ? (uint64_t) val
                                         : ((s.cycles & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
     case RV::CSR_MCYCLEH: s.cycles = (s.cycles & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
-    case RV::CSR_MINSTRET: s.instret_written = true; s.instret = (XLEN == 64) ? (uint64_t) val
+    case RV::CSR_MINSTRET: s.instret_skip = true; s.instret = (XLEN == 64) ? (uint64_t) val
                                          : ((s.instret & 0xFFFFFFFF00000000ULL) | (uint64_t) val); break;
-    case RV::CSR_MINSTRETH: s.instret_written = true; s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
+    case RV::CSR_MINSTRETH: s.instret_skip = true; s.instret = (s.instret & 0x00000000FFFFFFFFULL) | ((uint64_t) val << 32); break;
     case RV::CSR_MCOUNTEREN: s.mcounteren = (uint32_t) val & 7u;
         break;
     case RV::CSR_SCOUNTEREN: s.scounteren = (uint32_t) val & 7u; break; // 只有 CY/TM/IR 三位有定义
@@ -3066,8 +3246,9 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
         s.mstatus = v;
         break;
     }
-    // bit 11（M 态 ecall）按规范不能委托，必须硬连 0
-    case RV::CSR_MEDELEG: s.medeleg = val & 0xF7FFu; break;
+    // bit11（M 态 ecall）按规范不能委托，硬连 0；
+    // bit14 在 mcause 表里是 Reserved，没有对应异常，也必须只读零
+    case RV::CSR_MEDELEG: s.medeleg = val & 0xB7FFu; break;
     case RV::CSR_MIDELEG: s.mideleg = val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI); break;
     case RV::CSR_MIE:     s.mie = val & (RV::IRQ_SSI|RV::IRQ_MSI|RV::IRQ_STI|RV::IRQ_MTI|RV::IRQ_SEI|RV::IRQ_MEI); break;
     case RV::CSR_MTVEC:   s.mtvec = val & ~(XLen)2; break; // 保留 bit0（MODE），只清保留位 bit1
@@ -3079,11 +3260,18 @@ void RiscVCPU<XLEN>::csrWrite(CpuState &s, uint32_t addr, XLenOf<XLEN> val) {
     case RV::CSR_MTVAL:   s.mtval = val; break;
     case RV::CSR_SSTATUS: s.mstatus = (s.mstatus & ~(XLen)0x000C6122u) | (val & (XLen)0x000C6122u); break; // 去掉 XS[1:0]，SD(bit31) 只读
     case RV::CSR_SIE:     s.mie = (s.mie & ~(RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)) | (val & (RV::IRQ_SSI|RV::IRQ_STI|RV::IRQ_SEI)); break;
-    // 软件能改的挂起位只有 SSIP。MSIP/STIP/SEIP 都由外部源驱动
-    //（CLINT 的 msip/mtimecmp、PLIC 的 SEIP），每个 tick 会被输入信号覆盖，
-    // 这里允许写入只会让软件以为写成功了
-    case RV::CSR_MIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break;
-    case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break; // 只允许改 SSIP
+    // 规范 3.1.9：M 态可写 mip.SEIP；没有 Sstc 时 mip.STIP 也是软件可写的。
+    // 这两个位用于向 S 态投递中断。写只改软件位，mip 里本拍的外部信号要保留，
+    // 读回值始终是"软件位 | 外部信号"
+    case RV::CSR_MIP: {
+        constexpr uint32_t kSw = RV::IRQ_SEI | RV::IRQ_STI;
+        const uint32_t hw = s.mip & ~s.mip_sw & kSw;   // 外部/定时器驱动的那部分
+        s.mip_sw = (s.mip_sw & ~kSw) | (val & kSw);
+        s.mip = (s.mip & ~(RV::IRQ_SSI | kSw)) | (val & RV::IRQ_SSI) | hw | (s.mip_sw & kSw);
+        break;
+    }
+    // sip.SEIP/STIP 对 S 态是只读的，S 态只能改 SSIP
+    case RV::CSR_SIP:     s.mip = (s.mip & ~RV::IRQ_SSI) | (val & RV::IRQ_SSI); break;
     case RV::CSR_STVEC:   s.stvec = val & ~(XLen)2; break;
     case RV::CSR_SSCRATCH:s.sscratch = val; break;
     // 与 MEPC 同理：有 C 扩展后返回地址可以是 4n+2，只能清 bit0
@@ -3162,6 +3350,9 @@ bool RiscVCPU<XLEN>::takeInterrupt(CpuState &s, XLenOf<XLEN> &trap_cause) {
 // ============================================================
 template<int XLEN> requires SupportedXlen<XLEN>
 bool RiscVCPU<XLEN>::takeTrap(CpuState &s, XLenOf<XLEN> cause, XLenOf<XLEN> tval) {
+    // 触发同步异常的指令不算 retire；本标志由 execute 行尾消费。
+    // 中断（没有对应指令）也置位，但 execute 入口会先清零，不影响下一条指令
+    s.instret_skip = true;
     bool is_irq = (cause >> (XLEN - 1)) != 0;
     uint8_t target_priv = RV::PRIV_M;
 

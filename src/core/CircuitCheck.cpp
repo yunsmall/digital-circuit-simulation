@@ -65,6 +65,11 @@ std::vector<std::string> describeDefinitions(const CircuitLibrary &lib) {
 // （那是文件自己声明的规范名字，与普通导入一样会覆盖同名定义）
 std::string keyForUnnamedBlueprint(const CircuitLibrary &lib, const fs::path &p) {
     std::string base = p.stem().string();
+    // 临时键会作为定义名登记进库；只保留标识符字符，避免文件名里的空格、
+    // 冒号、Unicode 流进定义名（将来若有代码用定义名拼 C 标识符会出事）
+    for (char &ch: base)
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'))
+            ch = '_';
     if (base.empty())
         base = "blueprint";
     std::string key = base;

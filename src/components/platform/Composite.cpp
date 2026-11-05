@@ -121,8 +121,12 @@ std::unique_ptr<Component> CompositeComponent::clone(const std::string &n) const
 void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
     // 以父电路的上下文为准：同一个蓝图名在不同 Context 里可以是不同定义
     auto *def = parent.context().library().find(_def_name);
-    if (!def)
+    if (!def) {
+        // ensurePins 时检查过定义存在，但 expandTo 是独立入口，Context 换过之后
+        // 定义可能已经找不到了。静默返回会让调用方把整个复合元件当成展开成功删掉
+        out.error = std::format("复合元件 '{}': 定义 '{}' 不存在", name(), _def_name);
         return;
+    }
 
     const auto params = effectiveParams(*def);
     // 所有配方/线网里的 ${name} 在展开时一次性替换；缺参数直接报错，
@@ -211,8 +215,10 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
         }
 
         std::string create_err;
-        auto comp = ComponentFactory::instance().createUnchecked(recipe.type_name, prefix + inst_name,
-                                                                 recipe_params, &create_err);
+        // 配方参数来自蓝图 JSON（用户可控），必须走带 valid_values 校验的入口；
+        // 内部 API 无校验版本会让非法值拖到生成 C 代码时才抛异常
+        auto comp = ComponentFactory::instance().create(recipe.type_name, prefix + inst_name, recipe_params,
+                                                        create_err);
         if (!comp) {
             // 类型名写错或参数非法时静默跳过，电路会少一个子元件，运行期表现为
             // "莫名其妙不工作"，而且编译期没有任何提示。必须当成展开失败报出来

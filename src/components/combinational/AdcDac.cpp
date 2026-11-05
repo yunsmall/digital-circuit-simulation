@@ -74,6 +74,8 @@ std::string Adc::genFuncDef_comb() const {
     // vref 为 0 时没有可定义的量化关系，直接给 0，避免除零产生 inf 再转整数是 UB
     c += "    if (_vref > 0.0) {\n";
     c += "        double _q = (double) _analog / _vref * _full;\n";
+    // NaN 与任何浮点比较都为假，会绕过下面的钳位直接进整数转换，那是 C 的 UB
+    c += "        if (_q != _q) _q = 0.0;\n";
     c += "        if (_q < 0.0) _q = 0.0; // 负电压和超量程都饱和，不让整数转换越界\n";
     c += "        else if (_q > _full) _q = _full;\n";
     // 先转有符号再转无符号：值域上界是 2^32-1，远在 int64 之内。TCC 的内存编译

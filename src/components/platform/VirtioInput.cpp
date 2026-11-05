@@ -56,7 +56,8 @@ constexpr const char *kResetSymbol = "dcs_virtio_input_reset";
 
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioInput::State *>(ctx);
-    if (s->ops.reset)
+    // 后端创建失败时 ctx 为空，不能指望后端实现自己防御
+    if (s->ops.reset && s->ops.ctx)
         s->ops.reset(s->ops.ctx);
 }
 } // namespace
@@ -116,11 +117,13 @@ bool VirtioInput::pushInputEvent(const InputEvent &ev) {
     // 否则弱内存序下 JIT 可能先看到 head 前进、读到还没写完的事件
     const uint32_t head = std::atomic_ref<uint32_t>(s.evt_head).load(std::memory_order_relaxed);
     const uint32_t tail = std::atomic_ref<uint32_t>(s.evt_tail).load(std::memory_order_acquire);
-    const uint32_t next = head + 1;
-    if (next % State::EVT_RING == tail % State::EVT_RING)
-        return false; // 环满
+    // 用差值判满而不是 head+1 取模：head 到 UINT32_MAX 后自增回绕，
+    // 取模比较会在 tail 恰好对齐时误判成满；差值按无符号回绕永远正确
+    const uint32_t used = head - tail;
+    if (used >= State::EVT_RING - 1)
+        return false; // 环满（留一个空槽区分满和空）
     s.events[head % State::EVT_RING] = ev;
-    std::atomic_ref<uint32_t>(s.evt_head).store(next, std::memory_order_release);
+    std::atomic_ref<uint32_t>(s.evt_head).store(head + 1, std::memory_order_release);
     return true;
 }
 

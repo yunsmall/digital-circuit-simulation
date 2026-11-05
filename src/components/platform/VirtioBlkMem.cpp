@@ -2,6 +2,7 @@
 
 #include "dcs/ComponentFactory.h"
 
+#include <charconv>
 #include <format>
 #include <stdexcept>
 
@@ -17,7 +18,9 @@ void noopReset(void *) {}
 
 VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
     SequentialComponent(name, "virtio_blk_mem"), _size_bytes(size_bytes & ~511ull) {
-    setParam("size_kb", std::to_string(size_bytes / 1024));
+    // 导出对齐后的精确字节数：size_kb 向下取整，1536 字节会导成 1 KB，
+    // 回读后容量缩水；size_bytes 是唯一能精确往返的口径
+    setParam("size_bytes", std::to_string(_size_bytes));
     addInput("clk", 1);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
@@ -116,12 +119,22 @@ std::unique_ptr<Component> VirtioBlkMem::clone(const std::string &new_name) cons
 
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"virtio_blk_mem", {{"size_kb", "1024"}},
+    {"virtio_blk_mem", {{"size_kb", "1024"}, {"size_bytes", ""}},
      {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "m_dat_i", "m_ack_i"},
      {"wb_dat_o", "wb_ack_o", "irq", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Bus,
      "virtio-blk：介质是设备自带存储，JIT 直接读写；框架可用 IStorage 装载镜像"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
+        // size_bytes 优先：导出的 JSON 用它，能精确还原非整 KB 的容量
+        const std::string sb = dsc::paramStr(p, "size_bytes", "");
+        if (!sb.empty()) {
+            uint64_t bytes = 0;
+            auto [ptr, ec] = std::from_chars(sb.data(), sb.data() + sb.size(), bytes);
+            // 构造会把容量向下对齐到 512 字节扇区，小于 512 的输入会变成 0 容量
+            if (ec != std::errc{} || ptr != sb.data() + sb.size() || bytes < 512 || bytes > 4ull * 1024 * 1024 * 1024)
+                throw std::invalid_argument("size_bytes 必须在 512..4294967296 之间（按 512 字节扇区对齐）");
+            return std::make_unique<dsc::VirtioBlkMem>(n, bytes);
+        }
         const int kb = dsc::paramInt(p, "size_kb", 1024);
         // 负数转成 uint64 会回绕成天文数字，最后只在 assign 里炸出一句实现细节；
         // 上下限在这里挡掉，报错才说得清是参数问题

@@ -69,6 +69,16 @@ DllComponent::DllComponent(const std::string &name, const std::string &dll_path)
     setParam("path", _dll_path);
 }
 
+DllComponent::~DllComponent() {
+    // 只调 ensurePins 的路径（--pins、GUI 引脚查询）不会走 simDeinit，
+    // 句柄引用必须在这里归还；正常电路 simDeinit 已把 _loaded 清掉，不会重复卸载
+    if (_loaded) {
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        _loaded = false;
+    }
+}
+
 // ============================================================
 // ensurePins — 加载 DLL、读取描述符、创建引脚
 // ============================================================
@@ -101,31 +111,32 @@ bool DllComponent::loadSymbols(std::string &error) {
     }
     _desc = *desc_ptr;
 
-    if (!loadSym(DCS_DLL_INIT, _init_fn)) {
-        error = "DLL 缺少: dcs_dll_init";
+    // 描述符里的数组指针指向 DLL 内部；后面任何符号缺失都会导致调用方卸载
+    // DLL，此时必须把描述符清回零值，不能留下悬空指针
+    auto need = [&](const char *sym, auto &fn_ptr) -> bool {
+        if (loadSym(sym, fn_ptr))
+            return true;
+        _desc = {};
+        error = std::format("DLL 缺少: {}", sym);
         return false;
-    }
-    if (!loadSym(DCS_DLL_DEINIT, _deinit_fn)) {
-        error = "DLL 缺少: dcs_dll_deinit";
+    };
+
+    if (!need(DCS_DLL_INIT, _init_fn))
         return false;
-    }
-    if (!loadSym(DCS_DLL_CREATE, _create_fn)) {
-        error = "DLL 缺少: dcs_dll_create";
+    if (!need(DCS_DLL_DEINIT, _deinit_fn))
         return false;
-    }
-    if (!loadSym(DCS_DLL_DESTROY, _destroy_fn)) {
-        error = "DLL 缺少: dcs_dll_destroy";
+    if (!need(DCS_DLL_CREATE, _create_fn))
         return false;
-    }
-    if (!loadSym(DCS_DLL_RESET, _reset_fn)) {
-        error = "DLL 缺少: dcs_dll_reset";
+    if (!need(DCS_DLL_DESTROY, _destroy_fn))
         return false;
-    }
+    if (!need(DCS_DLL_RESET, _reset_fn))
+        return false;
 
     // tick_comb 和 tick_seq 至少加载一个
     loadSym(DCS_DLL_TICK_COMB, _tick_comb_fn);
     loadSym(DCS_DLL_TICK_SEQ, _tick_seq_fn);
     if (!_tick_comb_fn && !_tick_seq_fn) {
+        _desc = {};
         error = "DLL 必须至少导出 dcs_dll_tick_comb 或 dcs_dll_tick_seq";
         return false;
     }
@@ -152,6 +163,26 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
         _dll_handle = nullptr;
         error = sym_err;
         return false;
+    }
+
+    // 引脚描述来自 DLL（外部输入）：位宽非法时 addInput 里的 assert 在 Release
+    // 构建不生效，会拖到生成 C 代码才炸。先整体校验，再建引脚
+    auto fail = [&](std::string msg) {
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        _loaded = false;
+        error = std::move(msg);
+        return false;
+    };
+    for (int i = 0; i < _desc.num_inputs; i++) {
+        const int bw = _desc.inputs[i].bit_width;
+        if (bw < 1 || bw > 128)
+            return fail(std::format("DLL 输入 '{}' 的位宽 {} 无效（1..128）", _desc.inputs[i].name, bw));
+    }
+    for (int i = 0; i < _desc.num_outputs; i++) {
+        const int bw = _desc.outputs[i].bit_width;
+        if (bw < 1 || bw > 128)
+            return fail(std::format("DLL 输出 '{}' 的位宽 {} 无效（1..128）", _desc.outputs[i].name, bw));
     }
 
     for (int i = 0; i < _desc.num_inputs; i++)

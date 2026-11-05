@@ -8,6 +8,7 @@
 #include "dcs/components/platform/WishboneInterconnect.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <format>
@@ -16,6 +17,25 @@
 #include <stdexcept>
 
 namespace dsc {
+
+// 地址段数值：十进制或 0x/0b 前缀。解析失败给出原文，不让 stoull 的泛化消息流露出去
+static uint32_t parseSegValue(const std::string &s, const std::string &token) {
+    const char *first = s.data();
+    const char *last = first + s.size();
+    int base = 10;
+    if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        first += 2;
+        base = 16;
+    } else if (s.size() > 2 && s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) {
+        first += 2;
+        base = 2;
+    }
+    uint64_t v = 0;
+    auto [ptr, ec] = std::from_chars(first, last, v, base);
+    if (first == last || ec != std::errc{} || ptr != last || v > UINT32_MAX)
+        throw std::invalid_argument(std::format("无效地址段: {}", token));
+    return (uint32_t) v;
+}
 
 // 互连卡死检测的宿主回调；实现在本文件末尾
 extern "C" void dcs_wb_trace(uint32_t adr, uint32_t grant, uint32_t si, uint32_t stb, uint32_t cyc, uint32_t busy);
@@ -34,8 +54,8 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
         auto colon = token.find(':');
         if (colon == std::string::npos)
             throw std::invalid_argument(std::format("无效地址段格式: {}", token));
-        uint32_t base = (uint32_t) std::stoull(token.substr(0, colon));
-        uint32_t size = (uint32_t) std::stoull(token.substr(colon + 1));
+        uint32_t base = parseSegValue(token.substr(0, colon), token);
+        uint32_t size = parseSegValue(token.substr(colon + 1), token);
         if (size == 0)
             throw std::invalid_argument("地址段大小不能为 0");
         _segments.push_back({base, size});

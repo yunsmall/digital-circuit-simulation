@@ -350,19 +350,27 @@ TEST(LinuxBoot, MstatusWriteKeepsLowWritableBits) {
         csrrw(0, CSR_MSTATUS, 1),
         csr_rd(3, CSR_MSTATUS),
         sw(3, 0, 0x100),
-        lui(1, 0x2),             // x1 = 0x2000 → FS=1
+        lui(1, 0x2),             // x1 = 0x2000 → FS=1（Initial，尚未 Dirty）
         csrrw(0, CSR_MSTATUS, 1),
         csr_rd(4, CSR_MSTATUS),
         enc_shift_i(5, 5, 4, 32), // RV64 的 SD 在 bit63，取高 32 位来看
         sw(5, 0, 0x108),
+        lui(1, 0x6),             // x1 = 0x6000 → FS=3（Dirty）
+        csrrw(0, CSR_MSTATUS, 1),
+        csr_rd(6, CSR_MSTATUS),
+        enc_shift_i(7, 5, 6, 32),
+        sw(7, 0, 0x10C),
         spin(),
     });
     f.run(200);
     // 可写位掩码写成常量，和实现里的掩码同步退化时这里会报出来
     EXPECT_EQ(f.mem32(0x100) & 0x007E79AAu, 0x007E79AAu)
         << "mstatus 的可写位没有全部写进去";
-    EXPECT_TRUE((f.mem32(0x108) & 0x80000000u) != 0)
-        << "FS 非 0 时 SD 必须为 1，软件靠它判断要不要保存浮点上下文";
+    // 规范 3.1.6.7：SD = (FS==3) || (XS==3) || (VS==3)，只有 Dirty 才算
+    EXPECT_EQ(f.mem32(0x108) & 0x80000000u, 0u)
+        << "FS=Initial 时 SD 必须为 0";
+    EXPECT_TRUE((f.mem32(0x10C) & 0x80000000u) != 0)
+        << "FS=Dirty 时 SD 必须为 1，软件靠它判断要不要保存浮点上下文";
 }
 
 TEST(LinuxBoot, SstatusReportsUxlAndKeepsSFields) {

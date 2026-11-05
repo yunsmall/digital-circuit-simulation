@@ -38,10 +38,10 @@ bool TemplateExpr::resolve(std::string &out) {
             break;
         }
         const size_t end = _text.find('}', start + 2);
-        if (end == std::string::npos) {
-            out.append(_text, pos, std::string::npos);
-            break;
-        }
+        if (end == std::string::npos)
+            // 原样输出会让未闭合的 ${ 流进元件名/线网名，最后表现为“莫名其妙少根线”，
+            // 必须在求值阶段就拒绝
+            return fail("模板里有未闭合的 '${'");
         out.append(_text, pos, start - pos);
 
         std::string_view inner = _text.substr(start + 2, end - start - 2);

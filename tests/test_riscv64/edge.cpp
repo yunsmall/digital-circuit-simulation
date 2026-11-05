@@ -1,6 +1,8 @@
 // 官方测试覆盖不到、或者覆盖了也说不清行为的地方，单独钉住。
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "platform64.h"
 
 // 非对齐 SD 要写满 8 字节：8 字节跨 3 个总线字，两段事务只能覆盖 7 字节
@@ -268,4 +270,46 @@ TEST(Rv64Edge, CsrsCsrcCanSetAndClearFsBits) {
     f.run(40);
     EXPECT_EQ(((uint64_t) f.cpu->reg(2) >> 13) & 3, 3ULL) << "csrs 没能把 FS 置成 Dirty";
     EXPECT_EQ(((uint64_t) f.cpu->reg(3) >> 13) & 3, 0ULL) << "csrc 没能把 FS 清成 Off";
+}
+
+// 8 字节非对齐访存跨 3 个总线字。前两段的越界检查曾经漏掉第三段：
+// 基址 0xFFFFFFF8 时第三段地址是 0x100000000，被 uint32_t 总线截成 0，
+// 访问会悄悄读到地址 0 而不是按实现的地址空间上限触发异常
+TEST(Rv64Edge, UnalignedLdThirdSegmentDoesNotWrap) {
+    Rv64Fixture f;
+    std::vector<uint32_t> prog(70, 0);
+    prog[0] = addi(1, 0, 1);               // x1 = 1
+    prog[1] = enc_shift_i(1, 1, 1, 32);    // x1 = 0x100000000
+    prog[2] = addi(1, 1, -7);              // x1 = 0xFFFFFFF9
+    prog[3] = addi(2, 0, 0x100);
+    prog[4] = csrrw(0, 0x305, 2);          // mtvec = 0x100
+    prog[5] = enc_i(0x03, 5, 3, 1, 0);     // ld x5, 0(x1)：跨到地址空间之外
+    prog[6] = spin();
+    prog[64] = csrrs(6, 0x342, 0);         // mcause
+    prog[65] = csrrs(7, 0x343, 0);         // mtval
+    prog[66] = spin();
+    f.load(prog);
+    f.run(200);
+    EXPECT_EQ((uint64_t) f.cpu->reg(6), 4ULL) << "应为 load address misaligned";
+    EXPECT_EQ((uint64_t) f.cpu->reg(7), 0xFFFFFFF9ULL) << "mtval 应为原始虚拟地址";
+}
+
+// 写方向同样处理
+TEST(Rv64Edge, UnalignedSdThirdSegmentDoesNotWrap) {
+    Rv64Fixture f;
+    std::vector<uint32_t> prog(70, 0);
+    prog[0] = addi(1, 0, 1);
+    prog[1] = enc_shift_i(1, 1, 1, 32);
+    prog[2] = addi(1, 1, -7);
+    prog[3] = addi(2, 0, 0x100);
+    prog[4] = csrrw(0, 0x305, 2);
+    prog[5] = enc_s(3, 1, 2, 0);           // sd x2, 0(x1)
+    prog[6] = spin();
+    prog[64] = csrrs(6, 0x342, 0);
+    prog[65] = csrrs(7, 0x343, 0);
+    prog[66] = spin();
+    f.load(prog);
+    f.run(200);
+    EXPECT_EQ((uint64_t) f.cpu->reg(6), 6ULL) << "应为 store/AMO address misaligned";
+    EXPECT_EQ((uint64_t) f.cpu->reg(7), 0xFFFFFFF9ULL);
 }

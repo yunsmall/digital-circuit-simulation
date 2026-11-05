@@ -95,6 +95,10 @@ void Circuit::clear() {
 }
 
 void Circuit::reset() {
+    // 和 tick/setWire 一样：元件增删或 deinit 之后，旧 JIT 代码里硬编码的
+    // this 指针和地址已经失效，执行 reset 会访问已释放的资源
+    if (!_compiled)
+        return;
     _tick_error = {};
     _stop_flag = 0;
     if (_jit.reset)
@@ -132,7 +136,16 @@ Net *Circuit::createNet(const std::string &name) {
 Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *error) {
     // 加入电路时立即准备元件（ensurePins 建动态引脚、分配存储、加载 DLL 等）
     std::string prep_err;
-    if (!comp->prepare(context(), prep_err)) {
+    bool prepared = false;
+    try {
+        prepared = comp->prepare(context(), prep_err);
+    } catch (const std::exception &e) {
+        // 参数直接决定分配量（addr_width 大就是几 GB），bad_alloc 不能穿透到 main
+        if (error)
+            *error = {ErrorCode::PREPARE_FAILED, -1, {}, e.what()};
+        return nullptr;
+    }
+    if (!prepared) {
         if (error)
             *error = {ErrorCode::PREPARE_FAILED, -1, {}, prep_err};
         return nullptr;
@@ -218,6 +231,8 @@ CircuitError Circuit::connect(Component *comp, const std::string &pin_name, Net 
 }
 
 void Circuit::disconnect(Component *comp, const std::string &pin_name) {
+    if (!comp)
+        return;
     Pin *pin = findPin(comp, pin_name);
     if (!pin || !pin->net())
         return; // 未连接，无需操作
@@ -253,6 +268,8 @@ void Circuit::disconnect(Component *comp, const std::string &pin_name) {
 }
 
 void Circuit::disconnectAll(Component *comp) {
+    if (!comp)
+        return;
     // 先断输出（清理 _bus_nets），再断输入
     for (auto &p : comp->outputs())
         disconnect(comp, p->name());
@@ -261,6 +278,8 @@ void Circuit::disconnectAll(Component *comp) {
 }
 
 void Circuit::removeComponent(Component *comp) {
+    if (!comp)
+        return;
     // 旧 JIT 的 circuit_deinit 会对即将销毁的 Dll 调用 dcs_dll_destroy，
     // 而 Dll 的句柄引用计数只有在 simDeinit 里归还。先完整走一遍 deinit，
     // 保证卸载顺序正确；之后结构已变，必须重新 compile 才能 tick
@@ -507,8 +526,14 @@ bool Circuit::dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vec
 // ============================================================
 
 CircuitError Circuit::expandComposites() {
+    // 无环蓝图森林的展开层数不会超过定义总数。内联定义 A↔B 互相引用时
+    // 每轮都会生成新的复合元件，没有上限就会挂死（错误信息还无从下手）
+    const size_t max_rounds = context().library().definitions().size() + 2;
+    size_t round = 0;
     bool found = true;
     while (found) {
+        if (++round > max_rounds)
+            return {ErrorCode::PREPARE_FAILED, -1, {}, "蓝图定义存在循环引用，展开不收敛"};
         found = false;
         std::vector<CompositeComponent *> comps;
         for (auto &c: _components)

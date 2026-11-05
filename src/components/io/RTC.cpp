@@ -96,7 +96,10 @@ std::string RTC::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> RTC::clone(const std::string &new_name) const {
-    return std::make_unique<RTC>(new_name, _ns_per_tick);
+    auto r = std::make_unique<RTC>(new_name, _ns_per_tick);
+    // 时间基准是配置而不是运行期状态，不复制会让 clone 出来的 RTC 从 epoch 开始
+    r->setBaseNs(_base_ns);
+    return r;
 }
 
 } // namespace dsc

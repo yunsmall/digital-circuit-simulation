@@ -233,12 +233,14 @@ public:
     uint64_t icacheMisses() const { return _state.ic_misses; }
     // 最近 8 次取指缺失的地址，供性能分析
     const uint32_t *icacheRecentMisses() const { return _state.ic_miss_pc; }
-    uint32_t mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
-    uint32_t mepc() const { return _state.mepc; }
-    uint32_t mtval() const { return _state.mtval; }
+    // 调试/测试接口：RV64 下 mcause 的最高位表示中断、mepc/mtval 可能是 64 位地址，
+    // 返回 uint32_t 会截断，必须用 XLen
+    XLen mcause() const { return _state.mcause; } // 仅供调试/测试判断 trap 原因
+    XLen mepc() const { return _state.mepc; }
+    XLen mtval() const { return _state.mtval; }
     // 当前特权级与 mstatus，供调试/测试核对 trap 语义
     uint8_t priv() const { return _state.priv; }
-    uint32_t mstatus() const { return _state.mstatus; }
+    XLen mstatus() const { return _state.mstatus; }
     // 最近执行过的 64 条指令地址，按时间顺序返回（最早的在前）。
     // 内核查不出问题时靠它看 PC 在哪些函数间打转
     std::vector<uint32_t> pcTrace() const {
@@ -277,15 +279,19 @@ private:
         // 总线只有 32 位，要拆成低半、高半两笔事务（LO/HI 各有一拍拉低 stb 的发起相位）
         MMU_WALK_LO, WAIT_MMU_LO, MMU_WALK_HI, WAIT_MMU_HI,
         // RV64 的 .D 原子操作要读写各两段（总线只有 32 位）：
-        // 读完低半再读高半、写低半再写高半，中间都隔一个 GAP 结束事务
-        AMO_READ_HI, AMO_GAP_HI, AMO_WRITE_HI
+        // 读完低半再读高半、写低半再写高半，中间都隔一个 GAP 结束事务。
+        // 高半事务复用 AMO_GAP/AMO_WRITE，靠 amo_hi_write 区分，没有独立相位
+        AMO_READ_HI
     };
 
     struct CpuState {
         XLen regs[32], pc;
         // 64 位计数器：RV32 上 cycle/instret 由低高两个 CSR 拼成，硬件内部必须按 64 位递增
         uint64_t cycles, instret;
-        bool instret_written;   // 写 minstret 的那条指令不递增，好让紧接着的读取拿到写入值
+        // 本条指令不递增 instret：写 minstret 的那条指令（让紧接着的读取拿到写入值），
+        // 以及任何以同步异常结束的指令（规范：ECALL/EBREAK 等 trap 指令不算 retire）。
+        // 每个 execute 入口清零，takeTrap 置位
+        bool instret_skip;
         // 浮点寄存器按 IEEE754 位模式存放，避免来回转换。D 扩展要 64 位，
         // F 指令只读写低 32 位
         uint64_t fregs[32];
@@ -307,6 +313,9 @@ private:
         // mie/mip 的中断位都在低 12 位，保持 32 位
         XLen mstatus;
         uint32_t mie, mip;
+        // mip.SEIP/STIP 的软件可写部分（规范 3.1.9：M 态写它们向 S 态投递中断）。
+        // mip 里存的是"软件位 | 外部信号"的合成值；写 CSR 只改这里，不能清掉外部信号
+        uint32_t mip_sw;
         // mscratch/sscratch 存的是内核栈虚拟地址，必须是 XLEN 宽，否则
         // 0xFFFFFFFF801xxxxx 会被截成 0x801xxxxx 的物理地址，trap 入口立刻写飞
         XLen mscratch;
@@ -359,7 +368,8 @@ private:
         uint64_t mmu_pte_lo;     // Sv39 已读回的低 32 位，等高半拼成完整 PTE
         uint8_t mmu_level;       // 当前遍历到第几级：Sv32 从 1 到 0，Sv39 从 2 到 0
 
-        // LR/SC 保留地址
+        // LR/SC 保留地址。本核只有单个主端口，看不到其他 hart 或 DMA 设备对内存的写，
+        // 因此保留集只能被本 hart 的写失效；真正多主系统需要平台层向核提供 snoop 信号
         uint32_t lr_addr;
         bool lr_valid;
 

@@ -20,6 +20,8 @@ namespace dsc {
 class DllComponent : public Component {
 public:
     DllComponent(const std::string &name, const std::string &dll_path);
+    // 兜住只调 ensurePins 的路径（--pins、GUI 引脚查询）：它们不会走 simDeinit
+    ~DllComponent() override;
 
     // --- Component 接口 ---
     bool hasCombinational() const override {

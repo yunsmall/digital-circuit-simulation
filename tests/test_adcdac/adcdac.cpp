@@ -101,6 +101,14 @@ TEST(Adc, Endpoints) {
     EXPECT_EQ(f.run(5.0f), 255u);
 }
 
+// NaN 与任何比较都为假，会绕过钳位直接进整数转换；生成代码必须单独处理
+TEST(Adc, NaNAndInfinity) {
+    AdcFx f(8, 5.0);
+    EXPECT_EQ(f.run(std::numeric_limits<float>::quiet_NaN()), 0u);
+    EXPECT_EQ(f.run(std::numeric_limits<float>::infinity()), 255u);
+    EXPECT_EQ(f.run(-std::numeric_limits<float>::infinity()), 0u);
+}
+
 TEST(Adc, QuantizesAndRounds) {
     AdcFx f(8, 5.0);
     // 2.5V 正好半量程

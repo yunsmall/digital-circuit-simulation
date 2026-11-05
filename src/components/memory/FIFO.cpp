@@ -141,7 +141,10 @@ std::string FIFO::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> FIFO::clone(const std::string &n) const {
-    return std::make_unique<FIFO>(n, _data_width, _depth, _has_rst);
+    auto f = std::make_unique<FIFO>(n, _data_width, _depth, _has_rst);
+    // 存储内容和其它存储类一样要带过去，见 Memory::clone
+    f->_mem = _mem;
+    return f;
 }
 
 } // namespace dsc

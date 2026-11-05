@@ -1,4 +1,6 @@
 #pragma once
+#include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -7,6 +9,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <dcs/Circuit.h>
@@ -47,15 +50,29 @@ inline std::unique_ptr<dsc::Circuit> loadCircuit(const std::string &path, dsc::C
     return circuit;
 }
 
-// --dump-mem 的 addr:len（十六进制）
+// --dump-mem 的 addr:len（十六进制）。用 from_chars 而不是 stoull：非法输入
+// 要变成一条错误信息，不能让异常穿到 main 触发 terminate
 inline bool parseAddrLen(const std::string &spec, size_t &addr, size_t &len, std::string &error) {
     const auto colon = spec.find(':');
     if (colon == std::string::npos) {
         error = "--dump-mem 格式应为 addr:len（十六进制）";
         return false;
     }
-    addr = std::stoull(spec.substr(0, colon), nullptr, 0);
-    len = std::stoull(spec.substr(colon + 1), nullptr, 0);
+    auto parse = [](std::string_view s, size_t &out) {
+        if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+            s.remove_prefix(2);
+        uint64_t v = 0;
+        auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, 16);
+        if (s.empty() || ec != std::errc{} || ptr != s.data() + s.size())
+            return false;
+        out = (size_t) v;
+        return true;
+    };
+    const std::string_view view(spec);
+    if (!parse(view.substr(0, colon), addr) || !parse(view.substr(colon + 1), len)) {
+        error = "--dump-mem 的 addr/len 必须是十六进制整数: " + spec;
+        return false;
+    }
     return true;
 }
 

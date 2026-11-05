@@ -30,6 +30,10 @@ WishboneDcache::WishboneDcache(const std::string &name, int lines, uint32_t base
         throw std::invalid_argument("缓存行数不能超过 8192");
     if (size == 0)
         throw std::invalid_argument("可缓存地址段大小不能为 0");
+    // 段判断在生成代码里是 32 位回绕比较：base + size 越过 4 GiB 会让段外地址
+    // 也被判成命中（例如 base=0xFFFFF000, size=0x2000 时地址 0 会落进段内）
+    if ((uint64_t) base + size > 0x100000000ull)
+        throw std::invalid_argument("可缓存地址段 base + size 超出 32 位地址空间");
     setParam("lines", std::to_string(lines));
     setParam("base", std::to_string(base));
     setParam("size", std::to_string(size));
@@ -74,6 +78,8 @@ std::string WishboneDcache::genStateDecl() const {
             "static uint8_t  _dc_v_{0}[{1}];\n"
             // busy: 0 空闲, 1 读填充, 2 写直通
             "static uint8_t  _dc_busy_{0}, _dc_rsp_{0}, _dc_done_{0}, _dc_snprev_{0}, _dc_pact_{0};\n"
+            // 填充窗口内其它主设备写了目标行：这次填充读到的是旧值，不能标有效
+            "static uint8_t  _dc_fill_abort_{0};\n"
             "static uint32_t _dc_padr_{0}, _dc_pdat_{0}, _dc_rdat_{0};\n"
             "static uint8_t  _dc_pwe_{0}, _dc_psel_{0};\n"
             // 自己的写直通也会出现在监听总线上，用它把这条回波认出来
@@ -89,6 +95,7 @@ std::string WishboneDcache::genInitCode() const {
             "    dcs_memset(_dc_data_{0}, 0, sizeof(_dc_data_{0}));\n"
             "    dcs_memset(_dc_v_{0}, 0, sizeof(_dc_v_{0}));\n"
             "    _dc_busy_{0} = 0; _dc_rsp_{0} = 0; _dc_done_{0} = 0; _dc_snprev_{0} = 0; _dc_pact_{0} = 0;\n"
+            "    _dc_fill_abort_{0} = 0;\n"
             "    _dc_own_{0} = 0; _dc_ownadr_{0} = 0;\n"
             "    _dc_stats_{0}[0] = 0; _dc_stats_{0}[1] = 0; _dc_stats_{0}[2] = 0;\n"
             "    _dc_padr_{0} = 0; _dc_pdat_{0} = 0; _dc_rdat_{0} = 0; _dc_pwe_{0} = 0; _dc_psel_{0} = 0;\n",
@@ -233,6 +240,7 @@ std::string WishboneDcache::genFuncDef_seq() const {
             "        }}\n"
             "        _dc_padr_{0} = _madr; _dc_pdat_{0} = _mdat; _dc_pwe_{0} = _mwe; _dc_psel_{0} = _msel;\n"
             "        _dc_busy_{0} = _mwe ? 2 : 1;\n"
+            "        _dc_fill_abort_{0} = 0;\n"
             "        if (_mwe) {{ _dc_own_{0} = 1; _dc_ownadr_{0} = _madr; }}\n"
             "    }}\n",
             _id);
@@ -245,10 +253,16 @@ std::string WishboneDcache::genFuncDef_seq() const {
             "            const uint32_t _li = (_dc_padr_{0} >> 4) & (_DC_LINES_{0} - 1u);\n"
             "            const uint32_t _wi = (_dc_padr_{0} >> 2) & 3u;\n"
             "            const uint32_t _tag = _dc_padr_{0} >> 4;\n"
+            // 填充窗口内有其它主设备写了这一行：读回来的是写之前的旧值，
+            // 不能把它标成有效，否则后续读会命中过时数据
+            "            if (_dc_fill_abort_{0}) {{\n"
+            "                _dc_fill_abort_{0} = 0;\n"
+            "            }} else {{\n"
             // 换 tag 的时候旧行的有效位必须整体作废
-            "            if (_dc_tag_{0}[_li] != _tag) {{ _dc_tag_{0}[_li] = _tag; _dc_v_{0}[_li] = 0; }}\n"
-            "            dcs_memcpy(&_dc_data_{0}[_li][_wi * 4u], &_mdat_i, 4);\n"
-            "            _dc_v_{0}[_li] |= (uint8_t)(1u << _wi);\n"
+            "                if (_dc_tag_{0}[_li] != _tag) {{ _dc_tag_{0}[_li] = _tag; _dc_v_{0}[_li] = 0; }}\n"
+            "                dcs_memcpy(&_dc_data_{0}[_li][_wi * 4u], &_mdat_i, 4);\n"
+            "                _dc_v_{0}[_li] |= (uint8_t)(1u << _wi);\n"
+            "            }}\n"
             "            _dc_rdat_{0} = _mdat_i;\n"
             "        }}\n"
             "        _dc_rsp_{0} = 1;\n"
@@ -261,9 +275,13 @@ std::string WishboneDcache::genFuncDef_seq() const {
     // 用"写事务期间记住的地址"认出来，而不是用 busy 状态——回波可能正好落在
     // 完成那一拍，那时 busy 已经清了
     c += std::format(
-            "    if (_sn_rise && _sn_we && !(_dc_own_{0} && _dc_ownadr_{0} == (_sn_adr & ~3u))) {{\n"
+            "    if (_sn_rise && _sn_we && (uint8_t)((_sn_adr - _DC_BASE_{0}) < _DC_SIZE_{0}) &&\n"
+            "        !(_dc_own_{0} && _dc_ownadr_{0} == (_sn_adr & ~3u))) {{\n"
             "        const uint32_t _sli = (_sn_adr >> 4) & (_DC_LINES_{0} - 1u);\n"
-            "        if (_dc_tag_{0}[_sli] == (_sn_adr >> 4)) _dc_v_{0}[_sli] = 0;\n"
+            "        const uint32_t _stag = _sn_adr >> 4;\n"
+            // 正在填充的行 tag 还没写进去，直接按目标地址认出来，让这次填充作废
+            "        if (_dc_busy_{0} == 1 && (_dc_padr_{0} >> 4) == _stag) _dc_fill_abort_{0} = 1;\n"
+            "        if (_dc_tag_{0}[_sli] == _stag) _dc_v_{0}[_sli] = 0;\n"
             "    }}\n",
             _id);
     // 应答被上游领取（或撤销）后清掉，下一笔事务才能重新开始
@@ -273,7 +291,11 @@ std::string WishboneDcache::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> WishboneDcache::clone(const std::string &new_name) const {
-    return std::make_unique<WishboneDcache>(new_name, _lines, _base, _size);
+    auto d = std::make_unique<WishboneDcache>(new_name, _lines, _base, _size);
+    // 和 WishboneCache::clone 保持一致：统计随元件一起复制
+    for (int i = 0; i < 3; i++)
+        d->_stats[i] = _stats[i];
+    return d;
 }
 
 std::vector<int> WishboneDcache::getCombinationalDeps(int out_idx) const {

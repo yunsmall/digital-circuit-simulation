@@ -163,7 +163,8 @@ std::string WishboneMemory::genFuncDef_seq() const {
 
 std::unique_ptr<Component> WishboneMemory::clone(const std::string &new_name) const {
     auto m = std::make_unique<WishboneMemory>(new_name, _addr_width, _data_width);
-    std::memcpy(m->_mem.data(), _mem.data(), _mem.size());
+    // 新对象还没 prepare，存储是空的；整体赋值才能带容量和数据一起过去
+    m->_mem = _mem;
     return m;
 }
 

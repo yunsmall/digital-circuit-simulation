@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include "dcs/Circuit.h"
 #include "dcs/ComponentFactory.h"
+#include "dcs/components/platform/VirtioBlkMem.h"
 using namespace dsc;
 
 TEST(JsonRoundTrip, FromFactory) {
@@ -176,4 +177,127 @@ TEST(JsonRoundTrip, MemoryDataWidthMatchesDeclaration) {
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(err.find("data_width"), std::string::npos)
         << "应该由 Meta 的参数校验拦下，而不是构造后才报位宽错误: " << err;
+}
+
+// paramInt 解析失败会回退默认值，加载期必须在 validateParams 拦住，
+// 否则 "bit_width": "abc" 会静默按默认位宽跑
+TEST(JsonRoundTrip, NonNumericIntParamIsRejected) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("and", "g", {{"inputs", "2"}, {"bit_width", "abc"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("整数"), std::string::npos) << err;
+}
+
+// typeName 必须是工厂注册键：有符号乘/除原来导出成 smul/sdiv，回读直接找不到类型
+TEST(JsonRoundTrip, SignedMulDivRoundTrip) {
+    auto &f = ComponentFactory::instance();
+    for (const char *type: {"mul", "div"}) {
+        std::string err;
+        auto c = f.create(type, "dut", {{"bit_width", "8"}, {"signed", "1"}}, err);
+        ASSERT_NE(c, nullptr) << err;
+        EXPECT_EQ(c->typeName(), type);
+        EXPECT_EQ(c->exportParams()["signed"], "1");
+        auto again = f.create(c->typeName(), "dut2", c->exportParams(), err);
+        EXPECT_NE(again, nullptr) << "导出后回读失败: " << err;
+        EXPECT_EQ(again->exportParams()["signed"], "1");
+    }
+}
+
+// 有符号加法器的 cout 语义（溢出 vs 进位）必须随 JSON 往返保留
+TEST(JsonRoundTrip, SignedAdderRoundTrip) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("adder", "a", {{"bit_width", "8"}, {"signed", "1"}}, err);
+    ASSERT_NE(c, nullptr) << err;
+    EXPECT_EQ(c->exportParams()["signed"], "1");
+    auto again = f.create(c->typeName(), "a2", c->exportParams(), err);
+    ASSERT_NE(again, nullptr) << err;
+    EXPECT_EQ(again->exportParams()["signed"], "1");
+}
+
+// xlen 不导出的话，RV64 电路导出再导入会静默变成 RV32
+TEST(JsonRoundTrip, CpuXlenIsExported) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("riscv_cpu", "cpu", {{"xlen", "64"}}, err);
+    ASSERT_NE(c, nullptr) << err;
+    ASSERT_EQ(c->exportParams().count("xlen"), 1u);
+    EXPECT_EQ(c->exportParams()["xlen"], "64");
+    auto again = f.create("riscv_cpu", "cpu2", c->exportParams(), err);
+    ASSERT_NE(again, nullptr) << err;
+    EXPECT_EQ(again->exportParams()["xlen"], "64");
+}
+
+// Constant 的 value 支持十六进制，加载期的整数校验不能用十进制规则拒绝它
+TEST(JsonRoundTrip, ConstantHexValue) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("constant", "k", {{"bit_width", "16"}, {"value", "0x10"}}, err);
+    ASSERT_NE(c, nullptr) << err;
+    EXPECT_EQ(c->exportParams()["value"], "16");
+}
+
+// 延迟直接是生成代码里静态数组的维度，必须有上界
+TEST(JsonRoundTrip, LatencyUpperBound) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    EXPECT_EQ(f.create("memory", "m", {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "100000"}}, err),
+              nullptr);
+    EXPECT_EQ(f.create("mpram", "r", {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "100000"}}, err),
+              nullptr);
+}
+
+// base + size 越过 4 GiB 会让 32 位回绕的段判断误命中
+TEST(JsonRoundTrip, DcacheSegmentOverflowRejected) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("wb_dcache", "d", {{"lines", "16"}, {"base", "4294963200"}, {"size", "8192"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("32 位"), std::string::npos) << err;
+}
+
+// ROM / ROM 适配器的读延迟同样进入生成代码的数组维度或等待拍数
+TEST(JsonRoundTrip, RomLatencyUpperBound) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    EXPECT_EQ(f.create("rom", "r", {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "-1"}}, err), nullptr);
+    EXPECT_EQ(f.create("rom", "r", {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "100000"}}, err),
+              nullptr);
+    EXPECT_EQ(f.create("wishbone_rom_adapter", "a",
+                       {{"addr_width", "4"}, {"data_width", "8"}, {"read_latency", "-5"}}, err),
+              nullptr);
+}
+
+// size_kb 向下取整会把 1536 字节导成 1 KB，回读后容量缩水；size_bytes 必须精确往返
+TEST(JsonRoundTrip, VirtioBlkMemSizeBytesRoundTrip) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    dsc::VirtioBlkMem dev("vd", 1536);
+    ASSERT_EQ(dev.memSize(), 1536u);
+    auto again = f.create("virtio_blk_mem", "vd2", dev.exportParams(), err);
+    ASSERT_NE(again, nullptr) << err;
+    EXPECT_EQ(static_cast<dsc::VirtioBlkMem *>(again.get())->memSize(), 1536u);
+}
+
+// 小于扇区大小的容量对齐后会变成 0，必须在工厂里拒绝
+TEST(JsonRoundTrip, VirtioBlkMemRejectsSubSectorSize) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    EXPECT_EQ(f.create("virtio_blk_mem", "vd", {{"size_bytes", "511"}}, err), nullptr);
+    EXPECT_NE(err.find("512"), std::string::npos) << err;
+}
+
+// 可选引脚参数必须能从 JSON 表达，否则 --pins 和反序列化都拿不到 en/rst/pre
+TEST(JsonRoundTrip, DffOptionalPinsFromJson) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto dff = f.create("dff", "d", {{"bit_width", "8"}, {"has_en", "1"}, {"has_rst", "1"}, {"has_preset", "1"}}, err);
+    ASSERT_NE(dff, nullptr) << err;
+    EXPECT_EQ(dff->inputs().size(), 5u); // d clk en rst pre
+    EXPECT_EQ(dff->outputs().size(), 1u);
+
+    auto reg = f.create("register", "r", {{"bit_width", "8"}, {"has_en", "1"}, {"has_rst", "1"}}, err);
+    ASSERT_NE(reg, nullptr) << err;
+    EXPECT_EQ(reg->inputs().size(), 4u); // d clk en rst
 }

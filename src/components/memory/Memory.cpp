@@ -13,6 +13,9 @@ Memory::Memory(const std::string &name, int addr_width, int data_width, int read
     _wr_stages(write_latency + 1) {
     if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
         throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));
+    // 延迟直接是生成代码里静态数组的维度，不设上限时一个笔误就是几十万行
+    if (read_latency < 0 || read_latency > 1024 || write_latency < 0 || write_latency > 1024)
+        throw std::invalid_argument("读写延迟必须在0-1024之间");
 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));
@@ -189,7 +192,11 @@ std::string Memory::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> Memory::clone(const std::string &n) const {
-    return std::make_unique<Memory>(n, _addr_width, _data_width, _read_latency, _write_latency);
+    auto m = std::make_unique<Memory>(n, _addr_width, _data_width, _read_latency, _write_latency);
+    // clone 要连存储内容一起复制，和 ROM/WishboneMemory/VirtioBlkMem 保持一致；
+    // allocateMem 容量一致时不清零，prepare 不会把这里的数据清掉
+    m->_mem = _mem;
+    return m;
 }
 
 

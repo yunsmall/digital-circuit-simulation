@@ -92,6 +92,8 @@ std::string Mux::genFuncDef_comb() const {
 Adder::Adder(const std::string &name, int bit_width, bool is_signed) :
     CombinationalComponent(name, "adder"), _bit_width(bit_width), _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
+    // 有符号模式必须导出：JSON 往返后 cout 的语义（溢出 vs 进位）依赖它
+    setParam("signed", is_signed ? "1" : "0");
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("a", bit_width);
@@ -458,7 +460,8 @@ std::unique_ptr<Component> Subtractor::clone(const std::string &n) const {
 // ============================================================
 
 Multiplier::Multiplier(const std::string &name, int bit_width, bool is_signed) :
-    CombinationalComponent(name, is_signed ? "smul" : "mul"), _bit_width(bit_width), _signed(is_signed) {
+    // typeName 必须是工厂注册键：写成 smul 会让导出的 JSON 回读时找不到类型
+    CombinationalComponent(name, "mul"), _bit_width(bit_width), _signed(is_signed) {
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
     setParam("bit_width", std::to_string(bit_width));
@@ -560,7 +563,8 @@ std::unique_ptr<Component> Multiplier::clone(const std::string &n) const {
 // ============================================================
 
 Divider::Divider(const std::string &name, int bit_width, bool is_signed) :
-    CombinationalComponent(name, is_signed ? "sdiv" : "div"), _bit_width(bit_width), _signed(is_signed) {
+    // 同 Multiplier：typeName 固定用注册键，有符号性只走 signed 参数
+    CombinationalComponent(name, "div"), _bit_width(bit_width), _signed(is_signed) {
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("除法器位宽必须在1-64之间");
     setParam("bit_width", std::to_string(bit_width));
@@ -622,6 +626,8 @@ std::unique_ptr<Component> Divider::clone(const std::string &n) const {
 Abs::Abs(const std::string &name, int bit_width) :
     CombinationalComponent(name, "abs"), _bit_width(bit_width) {
     setParam("bit_width", std::to_string(bit_width));
+    if (bit_width < 1 || bit_width > 64)
+        throw std::invalid_argument("位宽必须在1-64之间");
     addInput("in", bit_width);
     addOutput("out", bit_width);
 }
@@ -654,6 +660,8 @@ MinMax::MinMax(const std::string &name, int bit_width, bool is_max, bool is_sign
     CombinationalComponent(name, is_max ? "max" : "min"),
     _bit_width(bit_width), _is_max(is_max), _signed(is_signed) {
     setParam("bit_width", std::to_string(bit_width));
+    if (bit_width < 1 || bit_width > 64)
+        throw std::invalid_argument("位宽必须在1-64之间");
     // 不导出 mode：min/max 是两个类型（工厂各自硬编码 is_max），
     // 再导出一个 mode 只会在和 type 冲突时被静默忽略
     setParam("signed", std::to_string(is_signed));
@@ -740,9 +748,10 @@ DCS_REGISTER_COMPONENT(
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"adder", {{"bit_width", "8"}}, {"a", "b", "cin"}, {"sum", "cout"}, dsc::ComponentCategory::Arithmetic, "全加器，sum=a+b+cin, cout=进位"},
+    {"adder", {{"bit_width", "8"}, {"signed", "0"}}, {"a", "b", "cin"}, {"sum", "cout"}, dsc::ComponentCategory::Arithmetic, "全加器，sum=a+b+cin, cout=有符号时表示溢出"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-                           return std::make_unique<dsc::Adder>(n, dsc::paramInt(p, "bit_width", 8));
+                           return std::make_unique<dsc::Adder>(n, dsc::paramInt(p, "bit_width", 8),
+                                                               dsc::paramInt(p, "signed", 0) != 0);
                        });
 
 DCS_REGISTER_COMPONENT(

@@ -218,6 +218,8 @@ std::string genDone(const DeviceSpec &s) {
         c += "            case 2: { // avail.ring\n";
         c += std::format("                _qv->head = (uint32_t)_vio_mp_buf_{0}[0] | ((uint32_t)_vio_mp_buf_{0}[1] << 8);\n", s.id);
         c += "                _qv->idx = _qv->head;\n";
+        // 每个请求在进 desc 链之前清零 written：desc 处理里“dlen 不足直接完成”的
+        // 分支不会再写它，used.len 必须报 0，不能带上一个请求的字节数
         c += "                _qv->written = 0; _qv->pkt = 0; _qv->step = 0;\n";
         c += "                _qv->phase = 3;\n";
         c += "                break;\n";

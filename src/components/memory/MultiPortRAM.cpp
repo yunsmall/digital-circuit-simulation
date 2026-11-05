@@ -18,6 +18,9 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
         throw std::invalid_argument("读端口数必须在1-4之间");
     if (num_write_ports < 1 || num_write_ports > 2)
         throw std::invalid_argument("写端口数必须在1-2之间");
+    // 读延迟是生成代码里静态数组的维度（×读端口数），不设上限会炸掉编译
+    if (read_latency < 0 || read_latency > 1024)
+        throw std::invalid_argument("读延迟必须在0-1024之间");
 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));
@@ -195,7 +198,10 @@ std::string MultiPortRAM::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> MultiPortRAM::clone(const std::string &n) const {
-    return std::make_unique<MultiPortRAM>(n, _addr_width, _data_width, _num_read, _num_write, _read_latency);
+    auto r = std::make_unique<MultiPortRAM>(n, _addr_width, _data_width, _num_read, _num_write, _read_latency);
+    // 存储内容和其它存储类一样要带过去，见 Memory::clone
+    r->_mem = _mem;
+    return r;
 }
 
 } // namespace dsc

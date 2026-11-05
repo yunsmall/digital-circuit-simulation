@@ -242,6 +242,10 @@ FloatToInt::FloatToInt(const std::string &name, int fp, int int_width, bool s) :
     setParam("fp", std::to_string(fp));
     setParam("int_width", std::to_string(int_width));
     setParam("signed", std::to_string(s));
+    if (int_width < 1 || int_width > 64)
+        throw std::invalid_argument("整数位宽必须在1-64之间");
+    // 精度在构造期就校验，别拖到生成 C 代码时才在 float_info 里抛
+    float_info(fp);
     addInput("in", fp);
     addOutput("out", int_width);
 }
@@ -300,6 +304,9 @@ IntToFloat::IntToFloat(const std::string &name, int int_width, int fp, bool s) :
     setParam("int_width", std::to_string(int_width));
     setParam("fp", std::to_string(fp));
     setParam("signed", std::to_string(s));
+    if (int_width < 1 || int_width > 64)
+        throw std::invalid_argument("整数位宽必须在1-64之间");
+    float_info(fp);
     addInput("in", int_width);
     addOutput("out", fp);
 }

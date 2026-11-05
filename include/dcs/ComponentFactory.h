@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -141,17 +142,37 @@ public:
 
     // 校验失败时返回错误信息；成功时 error 为空
     static std::string validateParams(const Meta &meta, const std::unordered_map<std::string, std::string> &params) {
+        // 默认值是整数的参数，用户给的值也必须是整数：paramInt 解析失败
+        // 会静默回退默认值，不拦住的话 "bit_width": "abc" 会按默认位宽跑。
+        // 解析规则要和 Creator 一致：Constant 的 value 支持 0x/0b 前缀，
+        // 用 64 位整数是因为 wb_dcache 的 base 默认值 2^31 超出 int32
+        auto is_int = [](const std::string &s) {
+            std::string_view v(s);
+            int base = 10;
+            if (v.size() > 2 && v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) {
+                v.remove_prefix(2);
+                base = 16;
+            } else if (v.size() > 2 && v[0] == '0' && (v[1] == 'b' || v[1] == 'B')) {
+                v.remove_prefix(2);
+                base = 2;
+            }
+            int64_t out = 0;
+            auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), out, base);
+            return !v.empty() && ec == std::errc{} && ptr == v.data() + v.size();
+        };
         for (auto &pm: meta.params) {
-            if (pm.valid_values.empty())
-                continue;
             auto it = params.find(pm.name);
             if (it == params.end())
                 continue; // 缺省用默认值，不校验
-            if (std::find(pm.valid_values.begin(), pm.valid_values.end(), it->second) == pm.valid_values.end()) {
-                std::string valid;
-                for (size_t i = 0; i < pm.valid_values.size(); i++)
-                    valid += (i ? ", " : "") + pm.valid_values[i];
-                return std::format("参数 {} 的值 \"{}\" 无效，允许: {}", pm.name, it->second, valid);
+            if (!pm.valid_values.empty()) {
+                if (std::find(pm.valid_values.begin(), pm.valid_values.end(), it->second) == pm.valid_values.end()) {
+                    std::string valid;
+                    for (size_t i = 0; i < pm.valid_values.size(); i++)
+                        valid += (i ? ", " : "") + pm.valid_values[i];
+                    return std::format("参数 {} 的值 \"{}\" 无效，允许: {}", pm.name, it->second, valid);
+                }
+            } else if (is_int(pm.default_val) && !is_int(it->second)) {
+                return std::format("参数 {} 必须是整数，给定 \"{}\"", pm.name, it->second);
             }
         }
         return "";

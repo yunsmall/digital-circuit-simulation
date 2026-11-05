@@ -14,8 +14,9 @@ UartFeed::UartFeed(const std::string &name, int baud_div) :
     setParam("baud_div", std::to_string(_baud_div));
     addInput("clk", 1);
     addOutput("rx", 1, false, true);
-    _state.head.store(0);
-    _state.tail.store(0);
+    // 构造期还没有并发访问者，普通赋值即可
+    _state.head = 0;
+    _state.tail = 0;
     _state.baud_div = (uint32_t) _baud_div;
 }
 
@@ -75,13 +76,14 @@ bool UartFeed::push(uint8_t b) {
     // 允许两个宿主线程同时喂（stdin + --watch 文件），队列的 head/tail
     // 本身是 SPSC，多生产者必须在这里串行化
     std::lock_guard<std::mutex> lock(_push_mutex);
-    const uint32_t h = _state.head.load(std::memory_order_relaxed);
+    std::atomic_ref<uint32_t> head(_state.head);
+    const uint32_t h = head.load(std::memory_order_relaxed);
     const uint32_t next = (h + 1) % CAP;
     // 队列满：返回 false 让生产者自己决定重试/丢弃，不能悄悄覆盖还没发出去的数据
-    if (next == _state.tail.load(std::memory_order_acquire))
+    if (next == std::atomic_ref<uint32_t>(_state.tail).load(std::memory_order_acquire))
         return false;
     _state.buf[h] = b;
-    _state.head.store(next, std::memory_order_release);
+    head.store(next, std::memory_order_release);
     return true;
 }
 
@@ -94,18 +96,20 @@ size_t UartFeed::push(const uint8_t *data, size_t len) {
 }
 
 size_t UartFeed::pending() const {
-    const uint32_t h = _state.head.load(std::memory_order_acquire);
-    const uint32_t t = _state.tail.load(std::memory_order_acquire);
+    // atomic_ref 只能绑非 const 对象；pending 只读，去掉 const 只是为了让负载走原子读
+    const uint32_t h = std::atomic_ref<uint32_t>(const_cast<uint32_t &>(_state.head)).load(std::memory_order_acquire);
+    const uint32_t t = std::atomic_ref<uint32_t>(const_cast<uint32_t &>(_state.tail)).load(std::memory_order_acquire);
     return (h + CAP - t) % CAP;
 }
 
 int UartFeed::feedPop(void *state_ptr) {
     auto &s = *static_cast<FeedState *>(state_ptr);
-    const uint32_t t = s.tail.load(std::memory_order_relaxed);
-    if (t == s.head.load(std::memory_order_acquire))
+    std::atomic_ref<uint32_t> tail(s.tail);
+    const uint32_t t = tail.load(std::memory_order_relaxed);
+    if (t == std::atomic_ref<uint32_t>(s.head).load(std::memory_order_acquire))
         return -1;
     const uint8_t ch = s.buf[t];
-    s.tail.store((t + 1) % CAP, std::memory_order_release);
+    tail.store((t + 1) % CAP, std::memory_order_release);
     return ch;
 }
 

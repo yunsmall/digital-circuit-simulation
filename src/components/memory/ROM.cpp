@@ -101,6 +101,9 @@ struct ROM::MappedFile {
 void ROM::initCommon(const std::string &name, int addr_width, int data_width, int read_latency) {
     if (data_width != 8 && data_width != 16 && data_width != 32 && data_width != 64)
         throw std::invalid_argument(std::format("数据位宽必须为 8/16/32/64，给定{}", data_width));
+    // 读延迟是生成代码里静态数组的维度（read_latency + 1），必须有界
+    if (read_latency < 0 || read_latency > 1024)
+        throw std::invalid_argument("读延迟必须在0-1024之间");
 
     setParam("addr_width", std::to_string(addr_width));
     setParam("data_width", std::to_string(data_width));

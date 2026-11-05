@@ -142,3 +142,12 @@ TEST(RtcTest, IrqDisabledIgnoresAlarm) {
     f.ticks(2);
     EXPECT_EQ(f.irqLevel(), 0) << "IRQ_EN=0 时不应拉中断";
 }
+
+TEST(RtcTest, CloneKeepsBaseNs) {
+    RTC original("rtc", 100);
+    original.setBaseNs(1700000000000000000ull);
+    auto copy = original.clone("rtc2");
+    auto *rtc2 = static_cast<RTC *>(copy.get());
+    ASSERT_NE(rtc2, nullptr);
+    EXPECT_EQ(rtc2->baseNs(), 1700000000000000000ull) << "时间基准是配置，clone 必须带上";
+}

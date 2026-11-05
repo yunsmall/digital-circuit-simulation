@@ -2,6 +2,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/combinational/Reduction.h"
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -26,7 +27,10 @@ static const char *red_op_c(ReductionOp op) {
 Reduction::Reduction(const std::string &name, int bit_width, ReductionOp op) :
     CombinationalComponent(name, red_op_name(op)), _bit_width(bit_width), _op(op) {
     setParam("bit_width", std::to_string(bit_width));
-    setParam("op", red_op_name(op));
+    if (bit_width < 1 || bit_width > 64)
+        throw std::invalid_argument("位宽必须在1-64之间");
+    // op 不导出：redand/redor/redxor 是三个独立类型，creator 按类型决定操作，
+    // 导出 op 只会在 JSON 里多出可能与 type 矛盾的冗余字段
     addInput("in", bit_width);
     addOutput("out", 1);
 }

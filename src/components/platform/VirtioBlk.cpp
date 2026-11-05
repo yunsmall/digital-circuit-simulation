@@ -29,7 +29,8 @@ constexpr const char *kResetSymbol = "dcs_virtio_blk_reset";
 
 void resetThunk(void *ctx) {
     auto *s = static_cast<VirtioBlk::State *>(ctx);
-    if (s->ops.reset)
+    // 后端创建失败时 ctx 为空，不能指望后端实现自己防御
+    if (s->ops.reset && s->ops.ctx)
         s->ops.reset(s->ops.ctx);
 }
 
