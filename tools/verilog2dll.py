@@ -198,12 +198,26 @@ def gen_wrapper(top: str, type_name: str, ports, sequential: bool) -> str:
 
 
 def gen_smoke_json(top: str, dll_rel: str, ports) -> str:
+    """生成冒烟电路。
+
+    inout 端口在 DLL 接口里是一对引脚：<name>_i（输入）和 <name>（三态输出）。
+    两者指的是同一根外部总线，所以接同名线网，让三态输出和输入落在同一根线上。
+    """
+    out_names = {p["name"] for p in ports if p["dir"] == "output"}
+
+    def net_of(p):
+        name = p["name"]
+        if p["dir"] == "input" and name.endswith("_i") and name[:-2] in out_names:
+            return name[:-2]
+        return name
+
     nets = []
     conns = []
     for p in ports:
-        if p["name"] not in nets:
-            nets.append(p["name"])
-        conns.append(f'        "{p["name"]}": "{p["name"]}"')
+        net = net_of(p)
+        if net not in nets:
+            nets.append(net)
+        conns.append(f'        "{p["name"]}": "{net}"')
     net_lines = ",\n".join(f'    "{n}"' for n in nets)
     conn_text = ",\n".join(conns)
     return (f'{{\n'
@@ -216,9 +230,15 @@ def gen_smoke_json(top: str, dll_rel: str, ports) -> str:
             f'}}\n')
 
 
-def cmake_libs() -> str:
-    # 和构建产物同名的动态库后缀；JSON 里用相对路径引用
-    return ".dll" if sys.platform == "win32" else ".so"
+def cmake_lib_name(name: str) -> str:
+    # CMake 对 SHARED 库按平台加前缀/后缀：Windows 是 <name>.dll，
+    # Linux 是 lib<name>.so，macOS 是 lib<name>.dylib。模板没改 PREFIX，
+    # 冒烟 JSON 里的路径必须和实际产物一致
+    if sys.platform == "win32":
+        return f"{name}.dll"
+    if sys.platform == "darwin":
+        return f"lib{name}.dylib"
+    return f"lib{name}.so"
 
 
 def find_dcs_include() -> pathlib.Path:
@@ -312,7 +332,7 @@ def main():
         .replace("@DCS_INCLUDE@", str(project_include).replace("\\", "/")),
         encoding="utf-8")
 
-    dll_rel = f"dist/{name}{cmake_libs()}"
+    dll_rel = f"dist/{cmake_lib_name(name)}"
     json_path = out / f"{name}.json"
     json_path.write_text(gen_smoke_json(top, dll_rel, ports), encoding="utf-8")
 

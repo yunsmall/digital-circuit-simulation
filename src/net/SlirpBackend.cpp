@@ -288,9 +288,11 @@ void SlirpBackend::run() {
             for (size_t i = 0; i < due.size(); i++) {
                 Timer *t = due[i];
                 // 前面的回调可能已经把后面的定时器释放掉；地址还可能被
-                // 新分配的 Timer 复用，所以指针和代次都要对得上
+                // 新分配的 Timer 复用，所以指针和代次都要对得上。
+                // 回调里也可能用 timer_mod 把它推到未来（fired 已清），
+                // 这一轮就不该再执行
                 auto it = std::find(timers.begin(), timers.end(), t);
-                if (it == timers.end() || (*it)->gen != due_gen[i])
+                if (it == timers.end() || (*it)->gen != due_gen[i] || !t->fired)
                     continue;
                 auto cb = t->cb;
                 void *opaque = t->opaque;
