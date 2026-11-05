@@ -70,6 +70,11 @@ Circuit::~Circuit() {
 }
 
 void Circuit::deinit() {
+    // 先停掉 tick 系列再执行销毁回调：回调里（DLL destroy、线程 join）可能抛，
+    // 抛了也不能让 _compiled 停在 true——否则 tick() 会继续跑已经部分销毁的
+    // JIT/DLL 状态。重复调用安全：_jit.deinit 执行前已置空
+    _compiled = false;
+    _sim_started = false;
     // 销毁元件状态（JIT circuit_deinit 中调用 dcs_dll_destroy）。
     // 用完置空：clear() 内部也会调 deinit()，用户显式 deinit() 之后再 clear()
     // 就会第二次执行 circuit_deinit，去访问已经被 simDeinit 卸载的 DLL 状态对象
@@ -80,10 +85,6 @@ void Circuit::deinit() {
         _jit.deinit = nullptr;
         fn();
     }
-    // deinit 之后 JIT 代码引用的外部状态（DLL 句柄、DLL 内部对象）已经失效，
-    // 必须让 tick 系列停下；要重新仿真就重新 compile()
-    _compiled = false;
-    _sim_started = false;
 
     // 仿真结束通知（DLL: dcs_dll_deinit）。各元件自己保证可重复调用
     for (auto &comp: _components)
@@ -313,8 +314,14 @@ void Circuit::removeComponent(Component *comp) {
     // 旧 JIT 的 circuit_deinit 会对即将销毁的 Dll 调用 dcs_dll_destroy，
     // 而 Dll 的句柄引用计数只有在 simDeinit 里归还。先完整走一遍 deinit，
     // 保证卸载顺序正确；之后结构已变，必须重新 compile 才能 tick
-    if (_jit.deinit)
-        deinit();
+    if (_jit.deinit) {
+        // void 接口没有错误通道；deinit 已经先把 _compiled 置 false，
+        // 这里吞掉宿主回调异常，保证结构变更照常完成
+        try {
+            deinit();
+        } catch (...) {
+        }
+    }
     disconnectAll(comp);
     auto it = std::find_if(_components.begin(), _components.end(),
                            [comp](const auto &uptr) { return uptr.get() == comp; });
@@ -433,9 +440,15 @@ CircuitError Circuit::prepareNetlist(std::vector<std::string> *warnings) {
 CircuitError Circuit::validate(std::vector<std::string> *warnings) {
     // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT。
     // 已 init 过的电路先走一次 deinit：JIT 静态状态里的 DLL 实例对象
-    // 只有 circuit_deinit 会销毁，直接 jitCleanup 会把它泄漏掉
-    if (_sim_started)
-        deinit();
+    // 只有 circuit_deinit 会销毁，直接 jitCleanup 会把它泄漏掉。
+    // 回调异常同样要转成返回值
+    if (_sim_started) {
+        try {
+            deinit();
+        } catch (const std::exception &e) {
+            return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("销毁上一次仿真状态时异常: {}", e.what())};
+        }
+    }
     jitCleanup();
     // deinit() 释放了 DLL 句柄/介质文件；validate() 之后常接 generateC()，
     // 不重新绑定会生成调用空符号的 C 代码
@@ -692,9 +705,15 @@ CircuitError Circuit::prepareComponents() {
 
 CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     // 已经 init 过还没 deinit 的话，JIT 静态状态里有 DLL 实例对象；直接
-    // jitCleanup 会跳过 circuit_deinit，那些对象就成孤儿了。deinit 幂等
-    if (_sim_started)
-        deinit();
+    // jitCleanup 会跳过 circuit_deinit，那些对象就成孤儿了。deinit 幂等。
+    // 宿主回调可能抛，compile 的约定是返回 CircuitError，不能把异常放出去
+    if (_sim_started) {
+        try {
+            deinit();
+        } catch (const std::exception &e) {
+            return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("销毁上一次仿真状态时异常: {}", e.what())};
+        }
+    }
     // 先把入口指针全部置空再清理后端：cleanup() 会释放已编译的代码，
     // 若本次编译失败，残留的旧函数指针就成了悬空指针
     jitCleanup();

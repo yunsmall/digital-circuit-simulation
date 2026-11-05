@@ -4,6 +4,31 @@
 #include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 
+#include <format>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+namespace {
+// 模拟宿主 DLL 的 deinit 回调抛异常
+class ThrowingDeinit : public dsc::CombinationalComponent {
+public:
+    explicit ThrowingDeinit(const std::string &name) : CombinationalComponent(name, "throwing_deinit") {
+        addOutput("y", 1);
+    }
+    std::string genFuncDef_comb() const override {
+        return std::format("static void {}() {{\n    const uint8_t _o = 0;\n{}\n}}\n", funcName_comb(),
+                           genOutputWrite(0, "_o", 1));
+    }
+    std::unique_ptr<dsc::Component> clone(const std::string &n) const override {
+        return std::make_unique<ThrowingDeinit>(n);
+    }
+    void simDeinit() override {
+        throw std::runtime_error("deinit boom");
+    }
+};
+} // namespace
+
 TEST(ErrorTest, UnconnectedPinIsZero) {
     dsc::Circuit c;
     auto *in0 = c.createNet("in0"), *out = c.createNet("out");
@@ -72,4 +97,21 @@ TEST(ErrorTest, SetContextRejectedAfterComponents) {
     c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 1, dsc::GateOp::AND));
     dsc::Context ctx;
     EXPECT_THROW(c.setContext(ctx), std::logic_error);
+}
+
+// deinit 的宿主回调抛异常时：状态必须先停、compile 返回错误而不是 terminate
+TEST(ErrorTest, CompileSurvivesThrowingDeinit) {
+    dsc::Circuit c;
+    auto *out = c.createNet("out");
+    auto *bomb = c.addComponent(std::make_unique<ThrowingDeinit>("bomb"));
+    c.connect(bomb, "y", out);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    ASSERT_TRUE(c.isCompiled());
+
+    auto err = c.compile();
+    EXPECT_EQ(err.code, dsc::ErrorCode::PREPARE_FAILED);
+    EXPECT_NE(err.message.find("销毁"), std::string::npos) << err.message;
+    EXPECT_FALSE(c.isCompiled());
+    c.tick(); // 不能继续执行已部分销毁的 JIT
 }
