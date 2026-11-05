@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include "Component.h"
@@ -212,7 +213,11 @@ public:
     // --- 上下文 ---
     // Context 持有蓝图库（definitions）和 JIT 头文件目录。不显式设置时用进程默认
     // 上下文；需要同时跑多套互不相关的电路时，各自建 Context 再 setContext
+    // 必须在添加元件之前调用：复合元件/动态引脚的类型和位宽在 ensurePins 时
+    // 已经按旧上下文的蓝图库解析完了，换库会让引脚和展开用的定义对不上
     void setContext(Context &ctx) {
+        if (!_components.empty())
+            throw std::logic_error("setContext() 必须在添加元件之前调用");
         _context = &ctx;
     }
     Context &context();
@@ -227,7 +232,8 @@ private:
     enum class Color { WHITE, GRAY, BLACK };
     std::vector<std::unique_ptr<Net>> _nets;
     std::vector<std::unique_ptr<Component>> _components;
-    // expandComposites 成功展开过的定义名（含嵌套展开），导出 JSON 时用
+    // expandComposites 成功展开过的定义名（含嵌套展开），导出 JSON 时用。
+    // 记录是历史性的：removeComponent 不会回滚，可能多于当前电路实际使用
     std::set<std::string> _used_definitions;
 
     // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
@@ -264,6 +270,8 @@ private:
     void jitCleanup();
     // expandComposites + 重编号 + check，两个入口共用的网表准备步骤
     CircuitError prepareNetlist(std::vector<std::string> *warnings = nullptr);
+    // 重新绑定 deinit() 释放掉的外部资源（DLL、介质文件），compile/validate 共用
+    CircuitError prepareComponents();
     CircuitError expandComposites();
     bool dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color, std::vector<int> &path);
 };

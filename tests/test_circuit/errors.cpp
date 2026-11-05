@@ -1,5 +1,6 @@
 // 错误处理测试
 #include <dcs/Circuit.h>
+#include <dcs/Context.h>
 #include <dcs/components/combinational/Gates.h>
 #include <gtest/gtest.h>
 
@@ -46,4 +47,29 @@ TEST(ErrorTest, DuplicateNetNamesInJsonRejected) {
     auto c = dsc::Circuit::fromJson(R"({"nets":["a","a"],"components":[]})", error);
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(error.find("重复"), std::string::npos) << error;
+}
+
+// compile 后新增线网必须先让旧 JIT 失效：旧 _w[] 没有这个 id，
+// setWire 的边界检查却按新的 _nets.size() 放行，会越界写
+TEST(ErrorTest, CreateNetInvalidatesCompiled) {
+    dsc::Circuit c;
+    auto *in0 = c.createNet("in0"), *out = c.createNet("out");
+    auto *g = c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 8, dsc::GateOp::AND));
+    c.connect(g, "in0", in0);
+    c.connect(g, "in1", in0);
+    c.connect(g, "out", out);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    ASSERT_TRUE(c.isCompiled());
+
+    auto *extra = c.createNet("extra");
+    EXPECT_FALSE(c.isCompiled()) << "新增线网后旧 JIT 不再对应当前网表";
+    c.setWire(extra->id(), 1); // 必须被 _compiled 拦住，不能写穿旧 JIT 的 _w[]
+}
+
+// 动态引脚在 ensurePins 时已按旧上下文解析，换库会让引脚和展开用的定义对不上
+TEST(ErrorTest, SetContextRejectedAfterComponents) {
+    dsc::Circuit c;
+    c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 1, dsc::GateOp::AND));
+    dsc::Context ctx;
+    EXPECT_THROW(c.setContext(ctx), std::logic_error);
 }

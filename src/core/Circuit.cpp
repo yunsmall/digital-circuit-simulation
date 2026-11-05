@@ -139,6 +139,8 @@ Net *Circuit::createNet(const std::string &name) {
     auto net = std::make_unique<Net>(unique, id);
     Net *ptr = net.get();
     _nets.push_back(std::move(net));
+    // 旧 JIT 的 _w[] 没有这个新 id，setWire() 的边界检查却按 _nets.size() 放行
+    _compiled = false;
     return ptr;
 }
 
@@ -435,6 +437,10 @@ CircuitError Circuit::validate(std::vector<std::string> *warnings) {
     if (_sim_started)
         deinit();
     jitCleanup();
+    // deinit() 释放了 DLL 句柄/介质文件；validate() 之后常接 generateC()，
+    // 不重新绑定会生成调用空符号的 C 代码
+    if (auto err = prepareComponents(); err.code != ErrorCode::OK)
+        return err;
     // 展开/检查都要分配线网表和邻接表，内存不足时 bad_alloc 不能穿给调用方：
     // validate/compile 的约定是返回 CircuitError
     try {
@@ -667,6 +673,23 @@ std::string Circuit::generateC() const {
                             _components, _bus_nets);
 }
 
+CircuitError Circuit::prepareComponents() {
+    // deinit() 可能释放了元件持有的外部资源（DLL 句柄、磁盘文件），重新编译或
+    // 生成代码前必须重新绑定。必须在静态检查之前做：Dll 的 hasCombinational/
+    // hasSequential 依赖函数指针，指针为空会被当成无逻辑元件而漏掉环路检测。
+    // 重新打开介质/加载 DLL 可能抛（内存不足、文件系统异常），API 必须转成错误
+    try {
+        for (auto &comp: _components) {
+            std::string err;
+            if (!comp->prepareForCompile(context(), err))
+                return {ErrorCode::PREPARE_FAILED, -1, {comp->id()}, err};
+        }
+    } catch (const std::exception &e) {
+        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("准备元件时异常: {}", e.what())};
+    }
+    return {ErrorCode::OK};
+}
+
 CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     // 已经 init 过还没 deinit 的话，JIT 静态状态里有 DLL 实例对象；直接
     // jitCleanup 会跳过 circuit_deinit，那些对象就成孤儿了。deinit 幂等
@@ -679,19 +702,8 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     _tick_error = {};
     _stop_flag = 0;
 
-    // deinit() 可能释放了元件持有的外部资源（DLL 句柄、磁盘文件），重新编译前
-    // 必须重新绑定。必须在静态检查之前做：Dll 的 hasCombinational/hasSequential
-    // 依赖函数指针，指针为空会被当成无逻辑元件而漏掉环路检测。
-    // 重新打开介质/加载 DLL 可能抛（内存不足、文件系统异常），API 必须把它转成错误
-    try {
-        for (auto &comp: _components) {
-            std::string err;
-            if (!comp->prepareForCompile(context(), err))
-                return {ErrorCode::PREPARE_FAILED, -1, {comp->id()}, err};
-        }
-    } catch (const std::exception &e) {
-        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("准备元件时异常: {}", e.what())};
-    }
+    if (auto err = prepareComponents(); err.code != ErrorCode::OK)
+        return err;
 
     std::vector<std::string> local_warnings;
     // 同 validate：展开和检查阶段的分配失败也要走返回值，不能在 CLI 的 main 里 terminate

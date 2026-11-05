@@ -395,6 +395,9 @@ void DllComponent::simDeinit() {
     // 卸载后这些指针指向已释放的代码页。不清空的话，重复 init/deinit
     // （测试、交互式仿真器里很常见）会在下一次 simInit 时调用悬空地址
     resetDllPointers();
+    // 描述符里的字符串也指向 DLL 内部，必须一起清掉；ensurePins/loadSymbols
+    // 失败路径一直是这么做的，simDeinit 不能成为例外
+    _desc = {};
 }
 
 // ============================================================

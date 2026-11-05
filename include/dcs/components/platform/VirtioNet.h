@@ -70,7 +70,9 @@ public:
     bool pushRxPacket(const uint8_t *data, uint32_t len);
     // 取走设备发出的一个帧（不含 virtio_net_hdr）；返回长度，0 表示没有
     uint32_t popTxPacket(uint8_t *buf, uint32_t max_len);
-    // 和 BackendOps 的 recv_pkt/send_pkt 对接一次；宿主在两次 tick 之间调用
+    // 和 BackendOps 的 recv_pkt/send_pkt 对接一次；宿主在两次 tick 之间调用。
+    // 不能和 simDeinit()/Circuit 析构并发：这里会直接用后端上下文，
+    // 并发时销毁方释放的文件描述符/内存会被踩到
     void pollBackend();
 
 private:
