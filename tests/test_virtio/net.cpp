@@ -270,3 +270,18 @@ TEST(VirtioNet, TransmitOversizeTruncatesConsistently) {
         ASSERT_EQ(out[i], (uint8_t) (i & 0xFF)) << "第 " << i << " 字节";
     EXPECT_EQ(f.usedLen(s.used, 0), 1600u) << "used.len 必须是实际交付的长度";
 }
+
+// 后端未注册时只降级运行；不能改写 _backend，否则 clone/导出会丢原始配置
+TEST(VirtioNet, CloneKeepsBackendWhenUnregistered) {
+    Circuit c;
+    auto dev = std::make_unique<VirtioNet>("n0", "backend_that_does_not_exist");
+    auto *net = static_cast<VirtioNet *>(c.addComponent(std::move(dev)));
+    ASSERT_NE(net, nullptr);
+    EXPECT_EQ(net->backendName(), "backend_that_does_not_exist");
+
+    auto copy = net->clone("n1");
+    ASSERT_NE(copy, nullptr);
+    EXPECT_EQ(static_cast<VirtioNet *>(copy.get())->backendName(), "backend_that_does_not_exist")
+            << "降级运行不能把配置永久改成 none";
+    EXPECT_EQ(net->exportParams().at("backend"), "backend_that_does_not_exist");
+}

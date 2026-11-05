@@ -100,7 +100,9 @@ TEST(VirtioTest, WriteToReadOnlyImageReturnsRoError) {
     f.write(0x050, 0);
     for (int i = 0; i < 3000; i++) f.tick();
 
-    EXPECT_EQ(f.mem()[status], 3) << "对只读后端写入应返回 RO 错误";
+    // virtio 1.2 §5.2.6.2：给出 VIRTIO_BLK_F_RO 时写请求必须回 IOERR(1)，
+    // 不能回 NEEDS_RESET(3)
+    EXPECT_EQ(f.mem()[status], 1) << "对只读后端写入应返回 IOERR";
     EXPECT_EQ(f.image[0], 0) << "镜像不能被改动";
 }
 

@@ -80,6 +80,9 @@ private:
 
     std::unique_ptr<State> _state;
     std::string _backend;
+    // 当前构建没注册该后端时的降级标记。不能把 _backend 改成 "none"：
+    // clone()/backendName() 要保留用户写的原始配置
+    bool _backend_missing = false;
     std::map<std::string, std::string> _backend_opts;
     BackendOps _ops;
     // rx/tx 环本身是单生产者单消费者；但宿主 pollBackend 和后端自己的线程

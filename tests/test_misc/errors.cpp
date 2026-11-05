@@ -1,5 +1,6 @@
 // 错误处理测试：环路检测、多驱动、三态混合
 #include <dcs/Circuit.h>
+#include <dcs/JitBackend.h>
 #include <dcs/components/combinational/Gates.h>
 #include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
@@ -88,4 +89,13 @@ TEST(ErrorTest, BypassedMultiDriverRejectedAtCompile) {
     EXPECT_EQ(err.code, dsc::ErrorCode::MULTIPLE_DRIVERS);
     EXPECT_EQ(err.net_id, w->id());
     EXPECT_EQ(c.compile().code, dsc::ErrorCode::MULTIPLE_DRIVERS);
+}
+
+// 生成的 C 编译失败时，编译器诊断必须进入 CircuitError，
+// 否则生成器拼错 C 只能看到一句"编译失败"，无从定位
+TEST(ErrorTest, JitCompileFailureIncludesDiagnostic) {
+    dsc::JitBackend backend;
+    auto r = backend.compile("int broken = ;\n", "", {});
+    EXPECT_EQ(r.code, dsc::ErrorCode::JIT_COMPILE_FAILED);
+    EXPECT_NE(r.message.find("error"), std::string::npos) << r.message;
 }

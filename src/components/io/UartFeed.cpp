@@ -17,7 +17,6 @@ UartFeed::UartFeed(const std::string &name, int baud_div) :
     // 构造期还没有并发访问者，普通赋值即可
     _state.head = 0;
     _state.tail = 0;
-    _state.baud_div = (uint32_t) _baud_div;
 }
 
 UartFeed::~UartFeed() = default;

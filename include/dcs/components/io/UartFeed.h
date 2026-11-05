@@ -40,7 +40,6 @@ private:
     static constexpr uint32_t CAP = 4096;
 
     struct FeedState {
-        uint32_t baud_div;
         uint32_t cnt;
         uint8_t bit;    // 0=起始位，1..8=数据位（LSB 先），9=停止位
         bool busy;

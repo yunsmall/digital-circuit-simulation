@@ -204,12 +204,11 @@ virtio_gen::DeviceSpec VirtioBlk::makeSpec() const {
     p.features = _state->read_only ? 32u : 0u;
     p.size_bytes = _state->image_size;
     p.state_decl = std::format(
-            "#define _VIO_{0}_RO {1}u\n"
             "static uint32_t _vio_type_{0};\n"
             "static uint64_t _vio_sec_{0};\n"
             "static uint8_t _vio_status_byte_{0};\n"
             "extern uint32_t dcs_virtio_io(void *, uint32_t, uint32_t, uint8_t *, uint32_t, uint32_t);\n",
-            p.id, _state->read_only ? 1u : 0u);
+            p.id);
     p.init_code = std::format(
             "    _vio_status_byte_{0} = 0; _vio_type_{0} = 0; _vio_sec_{0} = 0;\n", p.id);
     p.read_stmt = std::format(
@@ -220,7 +219,9 @@ virtio_gen::DeviceSpec VirtioBlk::makeSpec() const {
     p.write_stmt = std::format(
             "                    uint32_t _ok = dcs_virtio_io(_vio_state_{0}, (uint32_t)_io_off,\n"
             "                                                 (uint32_t)(_io_off >> 32), _vio_mp_buf_{0}, _c, 1);\n"
-            "                    if (!_ok) _vio_status_byte_{0} = _VIO_{0}_RO ? 3u : 1u;\n",
+            // 规范 5.2.6.2：给出了 VIRTIO_BLK_F_RO 时，写请求必须回
+            // VIRTIO_BLK_S_IOERR(1)；NEEDS_RESET(3) 只用于设备要求复位
+            "                    if (!_ok) _vio_status_byte_{0} = 1;\n",
             p.id);
     p.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };
     return makeBlkSpec(p);

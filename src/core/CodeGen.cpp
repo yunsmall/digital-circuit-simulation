@@ -446,11 +446,6 @@ void circuit_tick_batch(uint64_t n) {
 void circuit_tick_forever(void) {
     for (;;) { circuit_tick(); if (*_dcs_stop_flag) return; }
 }
-// 一直跑下去不返回：C++ 侧调用一次就停在这里，靠 Ctrl+C 结束进程。
-// 循环体在 JIT 里，没有每拍跨模块调用的开销
-void circuit_run_forever(void) {
-    for (;;) circuit_tick();
-}
 
 void circuit_init(void) {
     dcs_memset(_w_all, 0, sizeof(_w_all));

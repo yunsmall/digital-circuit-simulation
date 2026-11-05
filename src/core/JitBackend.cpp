@@ -18,6 +18,7 @@
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Frontend/CompilerInvocation.h>
 #include <clang/Frontend/FrontendActions.h>
+#include <clang/Frontend/TextDiagnosticPrinter.h>
 #include <clang/Lex/PreprocessorOptions.h>
 #if defined(__linux__)
 #include <llvm/ExecutionEngine/Orc/Debugging/PerfSupportPlugin.h>
@@ -38,6 +39,7 @@
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/raw_ostream.h>
 #include <cstdlib>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/TargetSelect.h>
@@ -174,6 +176,16 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     if (!shim_path.empty())
         tcc_add_sysinclude_path(s, shim_path.c_str());
 
+    // 诊断写进错误信息：生成器拼错 C 时只有一句"编译失败"根本没法定位。
+    // 回调是同步调用的，tcc_errors 的生命周期覆盖下面的 compile/relocate
+    std::string tcc_errors;
+    tcc_set_error_func(s, &tcc_errors, [](void *opaque, const char *msg) {
+        auto *out = static_cast<std::string *>(opaque);
+        if (!out->empty())
+            out->push_back('\n');
+        out->append(msg);
+    });
+
     tcc_add_symbol(s, "dcs_bus_conflict",
                    reinterpret_cast<void *>(&dcsBusConflictThunk));
     // -nostdlib 下 TCC 处理大块初始化/结构体赋值时会自行发出 memset/memcpy 调用
@@ -213,13 +225,17 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
 
     if (tcc_compile_string(s, c_code.c_str()) == -1) {
         tcc_delete(s);
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, "TCC 编译失败"};
+        return {ErrorCode::JIT_COMPILE_FAILED, -1,
+                tcc_errors.empty() ? std::string("TCC 编译失败")
+                                   : std::format("TCC 编译失败:\n{}", tcc_errors)};
     }
     // 重定位失败（-1）仍把 s 存进 tcc_state 的话，后续符号查找会全军覆没，
     // 报出来的却是 JIT_SYMBOL_FAILED，把真正的链接问题掩盖掉
     if (tcc_relocate(s) < 0) {
         tcc_delete(s);
-        return {ErrorCode::JIT_LINK_FAILED, -1, "TCC 重定位失败"};
+        return {ErrorCode::JIT_LINK_FAILED, -1,
+                tcc_errors.empty() ? std::string("TCC 重定位失败")
+                                   : std::format("TCC 重定位失败:\n{}", tcc_errors)};
     }
     _impl->tcc_state = s;
 
@@ -236,7 +252,12 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
 
     auto mem_buf = llvm::MemoryBuffer::getMemBuffer(c_code, "circuit.c");
     auto ci = std::make_unique<clang::CompilerInstance>();
-    ci->createDiagnostics();
+    // 默认的诊断消费者把错误打到 stderr，CircuitError 里只剩一句"编译失败"。
+    // 这里收进字符串，失败时随错误一起返回（生成器拼错 C 时才有行号可查）
+    std::string clang_errors;
+    llvm::raw_string_ostream diag_os(clang_errors);
+    ci->createDiagnostics(new clang::TextDiagnosticPrinter(diag_os, ci->getDiagnosticOpts()),
+                          /*ShouldOwnClient=*/true);
     auto &invoc = ci->getInvocation();
     invoc.getTargetOpts().Triple = llvm::sys::getDefaultTargetTriple();
     // 空 CPU = 目标架构的默认基线。写死 x86-64 会让 ARM64 宿主直接失败；
@@ -272,7 +293,10 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         action.reset();
         ci.reset();
         cleanup();
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 编译 C 代码失败"};
+        diag_os.flush();
+        return {ErrorCode::JIT_COMPILE_FAILED, -1,
+                clang_errors.empty() ? std::string("Clang 编译 C 代码失败")
+                                     : std::format("Clang 编译 C 代码失败:\n{}", clang_errors)};
     }
     auto module = action->takeModule();
     if (!module) {
@@ -280,7 +304,10 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         action.reset();
         ci.reset();
         cleanup();
-        return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 没有返回 IR 模块"};
+        diag_os.flush();
+        return {ErrorCode::JIT_COMPILE_FAILED, -1,
+                clang_errors.empty() ? std::string("Clang 没有返回 IR 模块")
+                                     : std::format("Clang 没有返回 IR 模块:\n{}", clang_errors)};
     }
     // module 里的类型属于 llvm_ctx，cleanup() 会销毁 ctx，所以每个失败点都必须
     // 先放掉 module（以及仍持有 ctx 上对象的 action/ci）。把顺序固定在一个地方，

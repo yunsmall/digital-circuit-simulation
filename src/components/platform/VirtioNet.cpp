@@ -95,7 +95,7 @@ void VirtioNet::setBackend(const BackendOps &ops) {
 }
 
 bool VirtioNet::prepareImpl(Context &, std::string &error) {
-    if (_backend == "none" || _ops.create)
+    if (_backend == "none" || _ops.create || _backend_missing)
         return true;
     auto &reg = backendRegistry();
     auto it = reg.find(_backend);
@@ -105,9 +105,9 @@ bool VirtioNet::prepareImpl(Context &, std::string &error) {
         // 让电路直接加载失败
         std::fprintf(stderr, "[dcs] 警告: virtio_net 后端 '%s' 未注册，按 none 运行（guest 无网络）\n",
                      _backend.c_str());
-        // 不把参数改成 "none"：保留原始配置，导出的 JSON 在网络后端可用的构建里
-        // 仍能恢复 slirp；每次加载都打印警告是有意的，比静默丢掉配置好
-        _backend = "none";
+        // 只记降级状态，不改 _backend：exportParams/clone()/backendName()
+        // 都要保留用户写的原始配置，换个构建加载仍能恢复
+        _backend_missing = true;
         return true;
     }
     _ops = it->second;
