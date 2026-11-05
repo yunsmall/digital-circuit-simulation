@@ -70,7 +70,9 @@ public:
     }
 
     // 运行期换盘：dcs_soc 的 --disk 在加载后、编译前调用。内部走同一个 file
-    // 后端工厂，重开文件并刷新容量/只读标志，不另开一条 I/O 路径
+    // 后端工厂，重开文件并刷新容量/只读标志，不另开一条 I/O 路径。
+    // 必须在 compile() 之前调用：设备容量会固化进生成代码的 config 空间，
+    // 编译后再换盘 guest 读到的还是旧容量，需要重新 compile()
     bool setImagePath(Context &ctx, const std::string &path, std::string &error);
 
     // JIT 回调：state 指向 VirtioBlk::State

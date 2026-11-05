@@ -77,6 +77,7 @@ void Circuit::deinit() {
     // deinit 之后 JIT 代码引用的外部状态（DLL 句柄、DLL 内部对象）已经失效，
     // 必须让 tick 系列停下；要重新仿真就重新 compile()
     _compiled = false;
+    _sim_started = false;
 
     // 仿真结束通知（DLL: dcs_dll_deinit）。各元件自己保证可重复调用
     for (auto &comp: _components)
@@ -401,7 +402,11 @@ CircuitError Circuit::prepareNetlist(std::vector<std::string> *warnings) {
 }
 
 CircuitError Circuit::validate(std::vector<std::string> *warnings) {
-    // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT
+    // 展开复合元件后才能检查子电路；这里不生成 C、不碰 JIT。
+    // 已 init 过的电路先走一次 deinit：JIT 静态状态里的 DLL 实例对象
+    // 只有 circuit_deinit 会销毁，直接 jitCleanup 会把它泄漏掉
+    if (_sim_started)
+        deinit();
     jitCleanup();
     return prepareNetlist(warnings);
 }
@@ -596,6 +601,10 @@ std::string Circuit::generateC() const {
 }
 
 CircuitError Circuit::compile(std::vector<std::string> *warnings) {
+    // 已经 init 过还没 deinit 的话，JIT 静态状态里有 DLL 实例对象；直接
+    // jitCleanup 会跳过 circuit_deinit，那些对象就成孤儿了。deinit 幂等
+    if (_sim_started)
+        deinit();
     // 先把入口指针全部置空再清理后端：cleanup() 会释放已编译的代码，
     // 若本次编译失败，残留的旧函数指针就成了悬空指针
     jitCleanup();
@@ -699,6 +708,7 @@ void Circuit::init() {
     }
     if (_jit.init)
         _jit.init();
+    _sim_started = true;
 }
 void Circuit::tick() {
     // 编译后改了结构只会清 _compiled，旧 JIT 还在：直接跑会用过期代码读写

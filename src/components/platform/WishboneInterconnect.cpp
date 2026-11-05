@@ -136,7 +136,9 @@ std::string WishboneInterconnect::genStateDecl() const {
             "static int _wbic_grant_{0}, _wbic_next_{0}, _wbic_last_{0};\n"
             "static uint8_t _wbic_busy_{0};\n"
             "static uint32_t _wbic_wd_{0};\n"
-            // 组合阶段回读主设备应答时要知道本拍选中的从设备和换主空拍
+            // 这两个量在时序阶段更新，组合阶段读到的是上一拍末的值。
+            // 授权会保持到事务结束、换主另有 _wbic_gap 空拍，所以组合阶段用它
+            // 选从设备/挡应答与"本拍"等价；改状态机时别按"组合阶段刚写入"来推理
             "static int _wbic_si_{0};\n"
             "static uint8_t _wbic_gap_{0};\n"
             // 上一拍真正驱动过的那一根从设备侧总线 / 主设备侧应答（-1 = 全 0）。

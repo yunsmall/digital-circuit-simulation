@@ -216,6 +216,9 @@ private:
     volatile int _stop_flag = 0;
 
     bool _compiled = false;
+    // init() 成功执行过、还没 deinit()：此时 JIT 的静态状态里有 DLL 实例对象，
+    // 重新 compile() 前必须先 deinit()，否则 circuit_deinit 被跳过、对象泄漏
+    bool _sim_started = false;
 
     // JSON 元数据（$meta.author / $meta.description），导出时写回
     std::string _author, _description;
