@@ -103,14 +103,31 @@ std::string UnaryGate::genFuncDef_comb() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
 
+    // 65 位以上没有整数类型可用（dcs_u128 是结构体，TCC 也不支持 __int128），
+    // NOT 必须按字节取反；按字节展开而不写循环，TCC 不会展开循环
+    std::string invert_bytes;
+    std::string expr;
+    if (_invert && _bit_width > 64) {
+        expr = "_in";
+        const int bytes = byte_count(_bit_width);
+        invert_bytes += "    uint8_t *_ob = (uint8_t *)&_out;\n";
+        for (int k = 0; k < bytes; k++)
+            invert_bytes += std::format("    _ob[{}] = (uint8_t)~_ob[{}];\n", k, k);
+        if (int rem = _bit_width % 8)
+            invert_bytes += std::format("    _ob[{}] &= 0x{:02X}u;\n", bytes - 1, (1u << rem) - 1u);
+    } else if (_invert) {
+        expr = std::format("~_in & {}", gen_mask(_bit_width));
+    } else {
+        expr = "_in";
+    }
+
     return std::format(R"(static void {}() {{
     {}
     {} _out = {};
-    {}
+{}    {}
 }})",
-                       funcName_comb(), gen_read_wire(in_nid, _bit_width, in_nw, "_in"), c_int_type(_bit_width),
-                       _invert ? std::format("~_in & {}", gen_mask(_bit_width)) : "_in",
-                       genOutputWrite(0, "_out", _bit_width));
+                       funcName_comb(), gen_read_wire(in_nid, _bit_width, in_nw, "_in"), c_int_type(_bit_width), expr,
+                       invert_bytes, genOutputWrite(0, "_out", _bit_width));
 }
 
 std::unique_ptr<Component> UnaryGate::clone(const std::string &n) const {

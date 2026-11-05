@@ -26,6 +26,8 @@ int byte_count(int bit_width) {
     return (bit_width + 7) / 8;
 }
 
+// 只对 1..64 位有意义：65 位以上返回的是 64 位全 1，拿去与 dcs_u128 运算会
+// 截掉高半部。宽于 64 位的元件请按字节处理（见 UnaryGate 的 NOT）
 std::string gen_mask(int width) {
     if (width <= 0)
         return "0";
