@@ -38,68 +38,98 @@ void CircuitLibrary::addSearchPath(const std::string &dir) {
     _search_paths.push_back(dir);
 }
 
+namespace {
+nlohmann::json definitionToJson(const CircuitDefinition &def) {
+    using json = nlohmann::json;
+    json jd;
+
+    if (!def.params.empty()) {
+        json jp = json::object();
+        for (auto &[k, v]: def.params)
+            jp[k] = v;
+        jd["params"] = jp;
+    }
+
+    // 线网
+    json jnets = json::array();
+    for (auto &n: def.nets)
+        jnets.push_back(n);
+    jd["nets"] = jnets;
+
+    // 元件
+    json jcomps = json::array();
+    for (auto &cr: def.components) {
+        json jc;
+        jc["type"] = cr.type_name;
+        jc["name"] = cr.instance_name;
+
+        if (!cr.params.empty()) {
+            json jp = json::object();
+            for (auto &[k, v]: cr.params)
+                jp[k] = v;
+            jc["params"] = jp;
+        }
+
+        json jconn = json::object();
+        for (auto &[pin, net]: cr.connections)
+            jconn[pin] = net;
+        jc["connections"] = jconn;
+
+        jcomps.push_back(jc);
+    }
+    jd["components"] = jcomps;
+
+    // expose
+    json jexp;
+    auto emit_expose = [](const std::map<std::string, ExposedPin> &m) {
+        json j = json::object();
+        for (auto &[pin, ep]: m) {
+            if (ep.width.empty())
+                j[pin] = ep.net;
+            else
+                j[pin] = {{"net", ep.net}, {"width", ep.width}};
+        }
+        return j;
+    };
+    jexp["inputs"] = emit_expose(def.input_expose);
+    jexp["outputs"] = emit_expose(def.output_expose);
+    jd["expose"] = jexp;
+    return jd;
+}
+} // namespace
+
 nlohmann::json CircuitLibrary::toJson() const {
     using json = nlohmann::json;
     json root = json::object();
+    for (auto &[name, def]: _defs)
+        root[name] = definitionToJson(def);
+    return root;
+}
 
-    for (auto &[name, def]: _defs) {
-        json jd;
-
-        if (!def.params.empty()) {
-            json jp = json::object();
-            for (auto &[k, v]: def.params)
-                jp[k] = v;
-            jd["params"] = jp;
+nlohmann::json CircuitLibrary::toJson(const std::set<std::string> &only) const {
+    using json = nlohmann::json;
+    json root = json::object();
+    // 蓝图可以嵌套引用别的蓝图：只导出给定集合时，被引用的定义必须一起带上，
+    // 否则导出的文件拿到别处展开会找不到定义
+    std::vector<std::string> pending(only.begin(), only.end());
+    std::set<std::string> seen;
+    while (!pending.empty()) {
+        std::string name = std::move(pending.back());
+        pending.pop_back();
+        if (!seen.insert(name).second)
+            continue;
+        auto it = _defs.find(name);
+        if (it == _defs.end())
+            continue;
+        root[name] = definitionToJson(it->second);
+        for (auto &cr: it->second.components) {
+            if (cr.type_name != "composite")
+                continue;
+            auto p = cr.params.find("definition");
+            if (p != cr.params.end() && !p->second.empty())
+                pending.push_back(p->second);
         }
-
-        // 线网
-        json jnets = json::array();
-        for (auto &n: def.nets)
-            jnets.push_back(n);
-        jd["nets"] = jnets;
-
-        // 元件
-        json jcomps = json::array();
-        for (auto &cr: def.components) {
-            json jc;
-            jc["type"] = cr.type_name;
-            jc["name"] = cr.instance_name;
-
-            if (!cr.params.empty()) {
-                json jp = json::object();
-                for (auto &[k, v]: cr.params)
-                    jp[k] = v;
-                jc["params"] = jp;
-            }
-
-            json jconn = json::object();
-            for (auto &[pin, net]: cr.connections)
-                jconn[pin] = net;
-            jc["connections"] = jconn;
-
-            jcomps.push_back(jc);
-        }
-        jd["components"] = jcomps;
-
-        // expose
-        json jexp;
-        auto emit_expose = [](const std::map<std::string, ExposedPin> &m) {
-            json j = json::object();
-            for (auto &[pin, ep]: m) {
-                if (ep.width.empty())
-                    j[pin] = ep.net;
-                else
-                    j[pin] = {{"net", ep.net}, {"width", ep.width}};
-            }
-            return j;
-        };
-        jexp["inputs"] = emit_expose(def.input_expose);
-        jexp["outputs"] = emit_expose(def.output_expose);
-        jd["expose"] = jexp;
-
-        root[name] = jd;
     }
-
     return root;
 }
 

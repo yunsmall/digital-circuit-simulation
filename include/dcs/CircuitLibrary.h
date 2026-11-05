@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -68,8 +69,11 @@ public:
     }
 
     // JSON 支持。toJson() 给需要拼其它 JSON 的调用方（CircuitSerializer 导出电路时
-    // 直接把定义嵌进根对象），exportJson() 是给只想拿文本的调用方
+    // 直接把定义嵌进根对象），exportJson() 是给只想拿文本的调用方。
+    // 带 only 的重载只导出这些定义（以及它们嵌套引用的定义），导出电路时用：
+    // 同一个 Context 的库里可能还装着别的电路的蓝图
     nlohmann::json toJson() const;
+    nlohmann::json toJson(const std::set<std::string> &only) const;
     std::string exportJson() const;
     // source 只是记录在定义上，供 --list-definitions 之类的诊断用；
     // base_dir 用于展开时解析元件参数里的相对路径

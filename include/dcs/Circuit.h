@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include "Component.h"
@@ -167,6 +168,13 @@ public:
     // 直到下一次重编号前，ID 不保证等于下标
     Component *componentById(int id) const;
 
+    // 本电路展开时实际用到的蓝图名。导出 JSON 时只嵌入这些定义：
+    // 同一个 Context 里的库可能还装着别的电路的定义，全导出去会把无关的
+    // 文件路径也带进来，导出文件拿到别处就加载不了
+    const std::set<std::string> &usedDefinitions() const {
+        return _used_definitions;
+    }
+
     // --- 调试 ---
     // 生成等效 C 代码，不触发 JIT 编译。要求网表已展开：先调 validate() 或 compile()
     std::string generateC() const;
@@ -208,6 +216,8 @@ private:
     enum class Color { WHITE, GRAY, BLACK };
     std::vector<std::unique_ptr<Net>> _nets;
     std::vector<std::unique_ptr<Component>> _components;
+    // expandComposites 成功展开过的定义名（含嵌套展开），导出 JSON 时用
+    std::set<std::string> _used_definitions;
 
     // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
     std::map<int, std::vector<BusDriver>> _bus_nets;

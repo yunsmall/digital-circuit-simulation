@@ -438,17 +438,22 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
     // 单驱动线网和"三态 + 非三态"冲突都不在里面，拿来判多驱动会漏
     {
         std::vector<int> driver_count(_nets.size(), 0);
+        // 冲突时要把所有驱动源都报出来（CircuitError::comp_ids 的语义），
+        // 只报当前循环到的那个等于让用户自己再找另一个
+        std::map<int, std::vector<int>> driver_ids;
         for (auto &comp: _components)
             for (auto &p: comp->outputs())
-                if (p->net())
+                if (p->net()) {
                     driver_count[p->net()->id()]++;
+                    driver_ids[p->net()->id()].push_back(comp->id());
+                }
         for (auto &comp: _components) {
             for (auto &p: comp->outputs()) {
                 Net *n = p->net();
                 if (!n || p->isTriState())
                     continue;
                 if (driver_count[n->id()] > 1)
-                    return {ErrorCode::MULTIPLE_DRIVERS, n->id(), {comp->id()},
+                    return {ErrorCode::MULTIPLE_DRIVERS, n->id(), driver_ids[n->id()],
                             std::format("线网 '{}' 有 {} 个输出驱动，非三态输出不允许与其他输出共线",
                                         n->name(), driver_count[n->id()])};
             }
@@ -561,6 +566,7 @@ CircuitError Circuit::expandComposites() {
                 out_nets.push_back(p->net());
 
             CompositeComponent::Expansion exp;
+            _used_definitions.insert(comp->definitionName());
             comp->expandTo(*this, exp);
 
             if (!exp.error.empty()) {
@@ -577,6 +583,9 @@ CircuitError Circuit::expandComposites() {
                     comp->inputs()[i]->setNet(in_nets[i]);
                 for (size_t i = 0; i < comp->outputs().size(); i++)
                     comp->outputs()[i]->setNet(out_nets[i]);
+                // 位宽按当前连接重算：disconnectAll 现在会顺带重算，但不能把正确性
+                // 押在它的副作用上（将来改成只清指针就会静默留下过宽的线网）
+                recomputeNetWidths();
                 _compiled = false;
                 return {ErrorCode::PREPARE_FAILED, -1, {}, exp.error};
             }

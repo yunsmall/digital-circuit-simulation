@@ -10,6 +10,7 @@
 #include <dcs/Circuit.h>
 #include <dcs/TruthTable.h>
 #include <dcs/components/combinational/Gates.h>
+#include <dcs/components/sequential/Sequential.h>
 
 using namespace dsc;
 
@@ -244,4 +245,23 @@ TEST(TruthTable, RejectsDuplicateInputs) {
     std::string err;
     EXPECT_FALSE(computeTruthTable(c, {"a", "a"}, "y", t, err));
     EXPECT_NE(err.find("重复"), std::string::npos) << err;
+}
+
+// 真值表只对纯组合电路成立：时序元件会在每次 tick 推进状态，
+// 枚举出来的是带状态的轨迹而不是真值表
+TEST(TruthTable, RejectsSequential) {
+    Circuit c;
+    auto *d = c.createNet("d"), *clk = c.createNet("clk"), *y = c.createNet("y");
+    auto ff = std::make_unique<DFlipFlop>("ff", 1);
+    auto *ffp = ff.get();
+    c.addComponent(std::move(ff));
+    c.connect(ffp, "d", d);
+    c.connect(ffp, "clk", clk);
+    c.connect(ffp, "q", y);
+    mustCompile(c);
+
+    TruthTable t;
+    std::string err;
+    EXPECT_FALSE(computeTruthTable(c, {"d"}, "y", t, err));
+    EXPECT_NE(err.find("时序"), std::string::npos) << err;
 }

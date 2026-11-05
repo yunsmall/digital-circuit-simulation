@@ -262,14 +262,22 @@ TEST(SchemaGen, GeneratesParseableSchema) {
     const auto text = componentSchemaJson();
     auto j = nlohmann::json::parse(text);
     ASSERT_TRUE(j.contains("oneOf"));
-    bool found_not = false;
+    bool found_not = false, found_composite = false;
     for (auto &variant: j["oneOf"]) {
         if (variant["properties"]["type"]["const"] == "not") {
             found_not = true;
             ASSERT_TRUE(variant["properties"]["params"]["properties"].contains("bit_width"));
+            // 和工厂的未知参数校验一致：不允许额外参数的类型，schema 也要标红
+            EXPECT_FALSE(variant["properties"]["params"]["additionalProperties"].get<bool>());
+        }
+        if (variant["properties"]["type"]["const"] == "composite") {
+            found_composite = true;
+            EXPECT_TRUE(variant["properties"]["params"]["additionalProperties"].get<bool>())
+                    << "composite 允许蓝图参数，schema 必须放行额外键";
         }
     }
     EXPECT_TRUE(found_not) << "schema 里应包含 not 元件";
+    EXPECT_TRUE(found_composite) << "schema 里应包含 composite 元件";
 }
 
 // PATH 风格列表：平台分隔符、空段忽略

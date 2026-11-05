@@ -44,7 +44,9 @@ std::string componentSchemaJson() {
             variant["properties"]["params"] = {
                     {"type", "object"},
                     {"properties", props},
-                    {"additionalProperties", true},
+                    // 和工厂的参数校验保持一致：不允许额外参数的元件，schema 也要
+                    // 标红拼错的键，否则 IDE 显示合法、加载时才报"未知参数"
+                    {"additionalProperties", meta.allow_extra_params},
             };
         }
         one_of.push_back(variant);

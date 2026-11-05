@@ -71,7 +71,10 @@ namespace {
 
 // 输入直接或间接挂在总线网上的组合元件：阶段 2b 要重跑它们。
 // 只收组合元件是阶段 2b 能安全重复执行的前提：组合元件对输入是纯函数，
-// 跑几次结果都一样；带状态的元件（设备、有副作用的读）绝不能进这个集合
+// 跑几次结果都一样；带状态的元件（设备、有副作用的读）绝不能进这个集合。
+// BFS 也只沿组合元件建边：时序输出在阶段 2b 期间不会变（阶段 3 才算），
+// 所以"总线 → 时序元件 → 下游组合元件"这条路径不需要重跑下游。
+// 将来如果引入阶段 2b 内就会变的时序输出，这里的边要重新审视。
 std::set<Component *> computeBusAffected(const std::vector<Component *> &sorted,
                                          const std::map<int, std::vector<BusDriver>> &bus_nets) {
     std::set<Component *> bus_affected;
@@ -195,7 +198,10 @@ void emitPropagation(std::ostream &oss, const std::vector<std::unique_ptr<Compon
         bus_nets_handled.insert(net_id);
     }
 
-    // 非总线线网：若驱动活跃则拷贝 _c_out → _w
+    // 非总线线网：若驱动活跃则拷贝 _c_out → _w。
+    // 这里不区分 comb/seq：时序三态输出会用上一拍留在 _c_out/_c_oe 的值再写一次
+    // _w，阶段 3 算出本拍值后由阶段 4（emitSeqTriPropagation）覆盖，语义正确。
+    // 阶段 4 不是冗余，不要因为"阶段 2 已经拷过"就删掉它
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
             Net *n = c->outputs()[oi]->net();

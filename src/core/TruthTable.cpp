@@ -61,6 +61,15 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
         }
     }
 
+    // 真值表靠反复写输入网并 settle 若干拍来枚举组合关系。电路里有任何时序元件，
+    // tick 都会推进它的状态，枚举出来的就是一条带状态的轨迹，而不是真值表
+    for (auto &comp: c.components()) {
+        if (comp->hasSequential()) {
+            error = std::format("真值表只支持纯组合电路，元件 '{}' 是时序元件", comp->name());
+            return false;
+        }
+    }
+
     out.inputs = inputs;
     const int n = (int) inputs.size();
     const uint32_t total = 1u << n;

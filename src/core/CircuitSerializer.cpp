@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,7 @@
 #include "dcs/CircuitLibrary.h"
 #include "dcs/ComponentFactory.h"
 #include "dcs/Context.h"
+#include "dcs/components/platform/Composite.h"
 #include "dcs/util/ParamFlatten.h"
 
 namespace dsc {
@@ -426,8 +428,15 @@ std::string exportCircuitJson(const Circuit &circuit) {
         meta["description"] = circuit.description();
     root["$meta"] = meta;
 
-    // 共享定义库直接嵌进根对象，不再走"导出成字符串再 parse 回来"
-    json j_defs = circuit.context().library().toJson();
+    // 只嵌入本电路实际用到的定义。同一个 Context 的库里可能还装着别的电路的
+    // 蓝图（Context 本来就是为隔离设计的），全导出去会把无关的路径也带进来，
+    // 导出文件换台机器就可能因为找不到那些文件而加载失败。
+    // 还没编译的复合元件不在 usedDefinitions 里，这里按现存元件补一遍
+    std::set<std::string> used = circuit.usedDefinitions();
+    for (auto &c: circuit.components())
+        if (c->isComposite())
+            used.insert(static_cast<const CompositeComponent *>(c.get())->definitionName());
+    json j_defs = circuit.context().library().toJson(used);
     if (!j_defs.empty())
         root["definitions"] = j_defs;
 
