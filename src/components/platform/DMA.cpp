@@ -121,7 +121,11 @@ std::string DMA::genFuncDef_seq() const {
             "    }}\n"
             "    if (!_cfg_active) _dma_latched_{0} = 0;\n",
             _id);
-    // 读一个字再写一个字，地址各自递增 4
+    // 读一个字再写一个字，地址各自递增 4。
+    // 等 ack 的状态没有超时：从设备永远不回 ack 属于接错线/从设备故障，互连的
+    // 卡死看门狗会打出持有者和地址；CPU 主设备遇到同样的线也会一直等，单给 DMA
+    // 加超时会让同类故障在不同主设备上表现不一致。提前暴露请用 wishbone_ic 的
+    // 接线告警（没接设备、stb 接了但 ack 没接回）
     c += std::format(
             "    if (_dma_st_{0} == 0 || _dma_st_{0} == 5) {{\n"
             "        _dma_m_stb_{0} = 0; _dma_m_cyc_{0} = 0;\n"

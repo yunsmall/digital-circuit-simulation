@@ -420,12 +420,22 @@ std::string WishboneInterconnect::checkTopology(const Circuit &circuit) const {
     for (int i = 0; i < numSlaves(); i++) {
         // 从设备侧输出的顺序：adr, dat, we, sel, stb, cyc
         const Net *stb = outputs()[(size_t) (_masters * 2 + i * 6 + 4)]->net();
-        if (!stb || consumed.contains(stb->id()))
+        if (!stb || !consumed.contains(stb->id())) {
+            if (!msg.empty())
+                msg += "；";
+            msg += std::format(
+                    "从设备端口 s{}（0x{:X} 起 0x{:X} 字节）没有接到任何设备，访问这段地址会永远等不到 ack", i,
+                    _segments[i].base, _segments[i].size);
             continue;
-        if (!msg.empty())
-            msg += "；";
-        msg += std::format("从设备端口 s{}（0x{:X} 起 0x{:X} 字节）没有接到任何设备，访问这段地址会永远等不到 ack", i,
-                           _segments[i].base, _segments[i].size);
+        }
+        // stb 接上了但 ack 没接回：同样会永远等不到应答，光看 stb 查不出来
+        const Net *ack = inputs()[(size_t) (_masters * 6 + i * 2 + 1)]->net();
+        if (!ack) {
+            if (!msg.empty())
+                msg += "；";
+            msg += std::format("从设备端口 s{}（0x{:X} 起 0x{:X} 字节）的 ack 没有接回互连，访问这段地址会永远等不到应答",
+                               i, _segments[i].base, _segments[i].size);
+        }
     }
     return msg;
 }
