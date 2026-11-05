@@ -14,7 +14,7 @@ TEST(VirtioNet, ReceivePacket) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 0); // RX 是队列 0
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
 
     uint8_t pkt[16];
@@ -38,7 +38,7 @@ TEST(VirtioNet, TinyRxBufferKeepsPacket) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 0);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
 
     uint8_t pkt[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -72,7 +72,7 @@ TEST(VirtioNet, TransmitPacket) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 1); // TX 是队列 1
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 1);
 
     for (int i = 0; i < 900; i++) f.tick();
@@ -98,7 +98,7 @@ TEST(VirtioNet, TransmitChained) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 1);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 1);
 
     for (int i = 0; i < 900; i++) f.tick();
@@ -149,7 +149,7 @@ TEST(VirtioNet, IgnoresWhenNotReady) {
     f.write(0x080, s.desc);
     f.write(0x090, s.avail);
     f.write(0x0A0, s.used);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
 
     uint8_t pkt[4] = {1, 2, 3, 4};
@@ -169,7 +169,7 @@ TEST(VirtioNet, EmptyRxBuffersStayQueued) {
         f.put16(s.avail + 4 + 2 * i, (uint16_t) i);
     prepareQueue(f, s, 3);
     f.configureQueue(s.desc, s.avail, s.used, 8, 0);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
 
     uint8_t pkt[16] = {};
@@ -209,7 +209,7 @@ TEST(VirtioNet, RxRingFull) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 0);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
     for (int i = 0; i < 600; i++) f.tick();
     EXPECT_EQ(f.usedLen(s.used, 0), 16u);
@@ -231,7 +231,7 @@ TEST(VirtioNet, TransmitRingFullReportsZeroLength) {
     }
     prepareQueue(f, s, N);
     f.configureQueue(s.desc, s.avail, s.used, N, 1); // TX 是队列 1
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 1);
     for (int i = 0; i < 5000; i++) f.tick();
     EXPECT_EQ(f.get16(s.used + 2), (uint16_t) N) << "前 8 个包应全部完成";
@@ -258,7 +258,7 @@ TEST(VirtioNet, TransmitOversizeTruncatesConsistently) {
     prepareQueue(f, s, 1);
     f.put16(s.avail + 4, 0);
     f.configureQueue(s.desc, s.avail, s.used, 8, 1); // TX 是队列 1
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 1);
 
     for (int i = 0; i < 5000; i++) f.tick();

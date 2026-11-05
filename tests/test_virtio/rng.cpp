@@ -17,7 +17,7 @@ TEST(VirtioRng, FillsBuffer) {
     std::memset(f.mem() + data, 0, 8);
 
     f.configureQueue(desc, avail, used, 8);
-    f.write(0x070, 1); // status
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0); // notify
 
     for (int i = 0; i < 400; i++)
@@ -80,7 +80,7 @@ TEST(VirtioRng, IgnoresWhenNotReady) {
     f.write(0x080, s.desc);
     f.write(0x090, s.avail);
     f.write(0x0A0, s.used);
-    f.write(0x070, 1);
+    f.write(0x070, 0xF); // ACK|DRIVER|FEATURES_OK|DRIVER_OK
     f.write(0x050, 0);
 
     for (int i = 0; i < 400; i++)

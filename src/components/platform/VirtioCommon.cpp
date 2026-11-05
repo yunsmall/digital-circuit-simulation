@@ -63,8 +63,10 @@ std::string genMmio(const DeviceSpec &s) {
         kick_code += std::format(
                 // 驱动在设备处理中途再写 notify（连续发包时很常见）不能把当前阶段拽回
                 // 开头：在途的主端口事务会按新阶段解释自己搬回的数据。只允许空闲时启动，
-                // 已排队的新请求由阶段 8 回到阶段 1 时自然看到
-                "                    if (_qi == {0}u && _vio_q_{1}[{0}].phase == 0)\n"
+                // 已排队的新请求由阶段 8 回到阶段 1 时自然看到。
+                // 还要等 DRIVER_OK：只写了 QueueReady 时队列地址可能还是垃圾值，
+                // 规范也是 DRIVER_OK 之后设备才开始处理队列
+                "                    if (_qi == {0}u && (_vio_status_{1} & 4u) && _vio_q_{1}[{0}].phase == 0)\n"
                 "                        _vio_q_{1}[{0}].phase = _vio_q_{1}[{0}].qready ? 1 : 0;\n", q,
                 s.id);
     }
@@ -82,7 +84,9 @@ std::string genMmio(const DeviceSpec &s) {
             "                if (_vio_dsel_{0} == 0) _dout = {1}u;\n"
             "                else if (_vio_dsel_{0} == 1) _dout = 1u;\n"
             "                break;\n"
+            "            case 0x030: _dout = _vio_qsel_{0}; break;\n"
             "            case 0x034: _dout = _VIO_{0}_QUEUE_MAX; break;\n"
+            "            case 0x038: _dout = _vio_q_{0}[_vio_qsel_{0}].qnum; break;\n"
             "            case 0x044: _dout = _vio_q_{0}[_vio_qsel_{0}].qready; break;\n"
             "            case 0x060: _dout = _vio_int_{0}; break;\n"
             "            case 0x070: _dout = _vio_status_{0}; break;\n"
@@ -98,8 +102,11 @@ std::string genMmio(const DeviceSpec &s) {
             "            case 0x038: {{\n"
             "                _VioQ_{0} *_q = &_vio_q_{0}[_vio_qsel_{0}];\n"
             // QueueNum 是环形缓冲的除数，0 会让后面的 % 直接除零。驱动不写就想
-            // ready 时按 1 处理，写 0 也钳到 1
-            "                _q->qnum = _wdat == 0 ? 1u : (_wdat > _VIO_{0}_QUEUE_MAX ? _VIO_{0}_QUEUE_MAX : _wdat);\n"
+            // ready 时按 1 处理，写 0 也钳到 1。
+            // 处理中途改 qnum 会让 last_avail % qnum 指到别的槽（规范要求先
+            // QueueReady=0 再改），设备侧只在队列空闲时接受新值
+            "                if (_q->phase == 0)\n"
+            "                    _q->qnum = _wdat == 0 ? 1u : (_wdat > _VIO_{0}_QUEUE_MAX ? _VIO_{0}_QUEUE_MAX : _wdat);\n"
             "                break;\n"
             "            }}\n"
             "            case 0x044: {{\n"
@@ -107,6 +114,12 @@ std::string genMmio(const DeviceSpec &s) {
             "                if (_q->qnum == 0) _q->qnum = 1;\n"
             "                _q->qready = _wdat & 1;\n"
             "                _q->last_avail = 0; _q->used_idx = 0; _q->phase = 0;\n"
+            // 复位本队列时，属于它的在途主端口事务必须一起中止：否则下一拍还会
+            // 按旧地址继续搬数据，完成后 genDone 又会推进一个已经清零的队列
+            "                if (!_q->qready && _vio_mp_active_{0} && _vio_mp_q_{0} == _vio_qsel_{0}) {{\n"
+            "                    _vio_mp_active_{0} = 0; _vio_mp_gap_{0} = 0; _vio_mp_ackp_{0} = 0;\n"
+            "                    _vio_mp_beat_{0} = 0; _vio_mp_write_{0} = 0;\n"
+            "                }}\n"
             "                break;\n"
             "            }}\n"
             "            case 0x050: {{\n"
@@ -222,8 +235,9 @@ std::string genDone(const DeviceSpec &s) {
         // 分支不会再写它，used.len 必须报 0，不能带上一个请求的字节数
         c += "                _qv->written = 0; _qv->pkt = 0; _qv->step = 0;\n";
         // head 来自 guest 的 avail.ring：越界索引不能拿去算 desc + idx*16（uint32
-        // 乘法会回绕，读到描述符表之外），按"零字节完成"把这个请求回收掉
-        c += "                if (_qv->head >= _qv->qnum) { _qv->phase = 7; break; }\n";
+        // 乘法会回绕，读到描述符表之外），按"零字节完成"把这个请求回收掉。
+        // used.ring 里的 id 必须换成可控值，否则驱动会拿表外索引去释放请求
+        c += "                if (_qv->head >= _qv->qnum) { _qv->head = 0; _qv->phase = 7; break; }\n";
         c += "                _qv->phase = 3;\n";
         c += "                break;\n";
         c += "            }\n";
@@ -279,7 +293,10 @@ std::string genDone(const DeviceSpec &s) {
 // 空闲快速路径里面
 std::string genWake(const DeviceSpec &s, int q) {
     std::string c;
-    c += std::format("    if (_vio_q_{0}[{1}].phase == 0 && _vio_q_{0}[{1}].qready) {{\n", s.id, q);
+    // DRIVER_OK（status bit2）没置位时不能碰队列：guest 可能刚写完队列地址/编号，
+    // 也可能是恶意值，此时按 desc/avail 指针去做 DMA 会写到任意 guest 地址
+    c += std::format("    if (_vio_q_{0}[{1}].phase == 0 && _vio_q_{0}[{1}].qready && (_vio_status_{0} & 4u)) {{\n",
+                     s.id, q);
     c += std::format("        _VioQ_{0} *_qv = &_vio_q_{0}[{1}];\n", s.id, q);
     c += "        (void) _qv;\n";
     c += s.queues[q].wake;
@@ -463,9 +480,10 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "        }}\n"
             "        case {4}: _a = _qv->daddr; _l = 1; _wr = 1; _vio_mp_buf_{1}[0] = _vio_status_byte_{1}; break;\n",
             Q_DEV, id, p.read_stmt, Q_DEV + 1, Q_DEV + 2);
-    // used.len 统计的是请求处理走的描述符字节数（written），和 QEMU 的行为一致：
-    // 介质写失败只把状态字节置成 IOERR，已经读走的字节数不回退。
-    // 别按"实际写进介质的字节"去改，guest 驱动不依赖这个区分
+    // used.len 的规范定义是"写进设备可写缓冲区的字节数"：
+    //   读请求（IN）→ 设备写回 guest 的数据字节数，就是 written；
+    //   写请求（OUT）→ 设备不写 guest 缓冲区，used.len 是 0（所以状态阶段要把
+    //   written 清掉，这不是笔误）。介质写失败的请求同样按这个规则处理
     q.done = std::format(
             "            case {0}: {{ // 请求头读完，进入数据段\n"
             // 头描述符没有 NEXT 就没有状态描述符，按原流程会把状态字节写回请求头

@@ -195,6 +195,8 @@ struct VirtioFixture {
         write(0x0A0, used);
         write(0x0A4, 0);
         write(0x044, 1);
+        // DRIVER_OK 置位后设备才允许处理队列（ACk|DRIVER|FEATURES_OK|DRIVER_OK）
+        write(0x070, 0xF);
     }
 };
 

@@ -149,6 +149,7 @@ TEST(VirtioTest, ZeroQueueNumDoesNotDivideByZero) {
     f.write(0x090, avail); f.write(0x094, 0);
     f.write(0x0A0, used); f.write(0x0A4, 0);
     f.write(0x044, 1);
+    f.write(0x070, 0xF); // DRIVER_OK
     f.write(0x050, 0);
     for (int i = 0; i < 3000; i++)
         f.tick();
@@ -395,4 +396,47 @@ TEST(VirtioTest, ZeroLengthStatusDescriptorIsNotWritten) {
     for (int i = 0; i < 200; i++) f.tick();
     EXPECT_EQ(f.get16(used + 2), 1);
     EXPECT_EQ(f.mem()[status], 0xAA) << "dlen=0 时不能写状态字节";
+}
+
+// 没有置 DRIVER_OK 时不能处理队列：此时队列地址可能还是垃圾值
+TEST(VirtioTest, NoQueueProcessingBeforeDriverOk) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0, 0, true);
+    f.configureQueue(desc, avail, used);
+    f.write(0x070, 0xB); // ACK|DRIVER|FEATURES_OK，没有 DRIVER_OK(bit2)
+    f.write(0x050, 0);
+    for (int i = 0; i < 300; i++) f.tick();
+    EXPECT_EQ(f.get16(used + 2), 0u) << "DRIVER_OK 之前不能消费队列";
+
+    f.write(0x070, 0xF);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++) f.tick();
+    EXPECT_EQ(f.get16(used + 2), 1u) << "DRIVER_OK 之后请求应正常完成";
+}
+
+// QueueSel / QueueNum 是规范定义的读回寄存器
+TEST(VirtioTest, QueueSelAndNumReadBack) {
+    VirtioFixture<VirtioBlk> f;
+    f.write(0x030, 0);
+    f.write(0x038, 8);
+    EXPECT_EQ(f.read(0x030), 0u);
+    EXPECT_EQ(f.read(0x038), 8u);
+}
+
+// avail.ring 里的 head 越界时，used.id 不能把无效值原样回给驱动
+TEST(VirtioTest, InvalidAvailHeadReturnsControlledUsedId) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0, 0, true);
+    f.configureQueue(desc, avail, used, 4);
+    f.put16(avail + 2, 1);   // avail.idx = 1
+    f.put16(avail + 4, 100); // head = 100 >= qnum(4)
+    f.write(0x050, 0);
+    for (int i = 0; i < 300; i++) f.tick();
+    ASSERT_EQ(f.get16(used + 2), 1u) << "越界请求也要被回收";
+    EXPECT_EQ(f.get16(used + 4), 0u) << "used.id 不能是越界索引";
+    EXPECT_EQ(f.get16(used + 6), 0u) << "used.len 应为 0";
 }
