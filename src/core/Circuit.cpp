@@ -703,6 +703,15 @@ void Circuit::init() {
         for (auto &comp: _components)
             comp->simInit();
     } catch (const std::exception &e) {
+        // 中途失败要把已经 simInit 的元件回滚，否则后端线程/句柄永久泄漏。
+        // simDeinit 契约上幂等，没 init 过的元件调用也是空操作
+        for (auto &comp: _components) {
+            try {
+                comp->simDeinit();
+            } catch (...) {
+                // 回滚阶段不能再让异常穿出去；错误信息保留最初那条
+            }
+        }
         _tick_error = {ErrorCode::PREPARE_FAILED, -1, {}, std::format("初始化元件时异常: {}", e.what())};
         return;
     }

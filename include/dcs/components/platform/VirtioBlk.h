@@ -89,6 +89,9 @@ private:
     BackendOps _ops;
     // setBackend 注入的介质由宿主维护；deinit 之后只有后端工厂这条路径能重新打开
     bool _external_backend = false;
+    // Circuit::init 可能被重复调用（init 当重置用）；后端 init 不可重入，
+    // 参考 DllComponent 用标志挡住第二次
+    bool _init_called = false;
 };
 
 // 后端自注册：放在后端实现文件的全局作用域。

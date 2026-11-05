@@ -158,11 +158,17 @@ bool VirtioBlk::prepareForCompile(Context &ctx, std::string &error) {
 }
 
 void VirtioBlk::simInit() {
+    // init 可能被重复调用（用户把 init 当重置用）：后端 init 不可重入，
+    // 重复执行会泄漏它自己开的资源。deinit 会清掉标志，下一轮才重新执行
+    if (_init_called)
+        return;
     if (_state->ops.init)
         _state->ops.init(_state->ops.ctx);
+    _init_called = true;
 }
 
 void VirtioBlk::simDeinit() {
+    _init_called = false;
     if (_state->ops.deinit && _state->ops.ctx) {
         _state->ops.deinit(_state->ops.ctx);
         _state->ops.ctx = nullptr;

@@ -393,7 +393,9 @@ std::string DllComponent::genResetCode() const {
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
     code += "        dcs_memset(_out, 0, sizeof(_out));\n";
-    code += std::format("        _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
+    // 可能在 compile 之后、init 之前被 circuit_reset 调用：此时 DLL 实例还没
+    // create，state 是静态零初始化。空指针不能传给 DLL 的 reset 回调
+    code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
     code += "    }";
     return code;
 }

@@ -67,6 +67,11 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
     out.values.assign(total, 0);
 
     c.init();
+    // init 失败时 tick 会直接返回，后面读到的是线网初值，真值表会静默全 0
+    if (c.hasError()) {
+        error = c.tickError().message;
+        return false;
+    }
     // 组合逻辑在一个 tick 内就传播到底（拓扑序），多走几拍是为了兼容长链/三态
     constexpr int SETTLE = 4;
     for (uint32_t combo = 0; combo < total; combo++) {

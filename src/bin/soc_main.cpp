@@ -4,6 +4,7 @@
 // 键盘、按 tohost 判定结果、停下来的 PC 跟踪"这些是整机仿真特有的东西，
 // 全部收在这一层，避免通用电路仿真 CLI 长出一堆 RISC-V 专用参数。
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -238,19 +239,38 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         }
     // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
     // detach 的线程再去 push 就是访问已释放对象
+    std::atomic<bool> *reader_stop = nullptr;
     if (forever && uart_feed) {
-        std::thread([uart_feed] {
+        // 停止标志放堆上：读线程持有它，runSoc 返回后也不能让栈帧先消失
+        reader_stop = new std::atomic<bool>(false);
+        std::thread([uart_feed, reader_stop] {
             for (;;) {
+                if (reader_stop->load(std::memory_order_acquire))
+                    return;
                 int ch = readConsoleChar();
+                // readConsoleChar 会阻塞，回来先看停止标志再碰 uart_feed
+                if (reader_stop->load(std::memory_order_acquire))
+                    return;
                 if (ch < 0) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
-                while (!uart_feed->push((uint8_t) ch))
+                while (!uart_feed->push((uint8_t) ch)) {
+                    if (reader_stop->load(std::memory_order_acquire))
+                        return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
         }).detach();
     }
+    // 运行期错误返回时读线程可能正卡在阻塞读/推队列里，无法 join。进程马上退出，
+    // 这里故意不析构电路和停止标志：否则 detach 线程下一次 push 会访问已释放的 UartFeed
+    auto abortForeverReader = [&]() {
+        if (reader_stop) {
+            reader_stop->store(true, std::memory_order_release);
+            (void) circuit.release();
+        }
+    };
 
     // --feed：把一段脚本预先塞进串口输入队列，启动完成后自动执行。
     // 每次改动机器模型都要重启内核跑几十亿拍，逐个命令交互验证太慢，
@@ -277,6 +297,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+                abortForeverReader();
                 return 1;
             }
         }
@@ -304,6 +325,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             // 总线冲突时批量入口会提前返回，不查就在这里无限空转
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+                abortForeverReader();
                 return 1;
             }
             if (trace_cpu) {

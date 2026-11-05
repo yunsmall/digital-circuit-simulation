@@ -91,6 +91,11 @@ void VirtioInput::setBackend(const BackendOps &ops) {
 }
 
 void VirtioInput::simInit() {
+    // 重复 init 不能再清环、再调后端 init：后端 init 不可重入，而且宿主在两次
+    // init 之间可能已经 push 了事件。deinit 会清掉标志，下一轮才重新执行
+    if (_init_called)
+        return;
+    _init_called = true;
     // 重新 init 是冷启动：上一轮残留的输入事件/状态回传不能投递给新 guest。
     // 旧后端的线程在 simDeinit 里已经停掉，这里没有并发访问
     _state->evt_head = _state->evt_tail = 0;
@@ -100,6 +105,7 @@ void VirtioInput::simInit() {
 }
 
 void VirtioInput::simDeinit() {
+    _init_called = false;
     // clear()/析构会重复调用 simDeinit；deinit 后把 ctx 置空，避免后端回调被调两次
     if (_state->ops.deinit && _state->ops.ctx) {
         _state->ops.deinit(_state->ops.ctx);

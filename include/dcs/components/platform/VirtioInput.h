@@ -55,6 +55,8 @@ private:
     virtio_gen::DeviceSpec makeSpec() const;
 
     std::unique_ptr<State> _state;
+    // init 当重置重复调用时后端 init 不能执行第二次
+    bool _init_called = false;
 };
 
 } // namespace dsc

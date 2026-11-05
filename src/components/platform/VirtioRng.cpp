@@ -50,11 +50,16 @@ void VirtioRng::setBackend(const BackendOps &ops) {
 }
 
 void VirtioRng::simInit() {
+    // init 可能被重复调用（用户把 init 当重置用）：后端 init 不可重入
+    if (_init_called)
+        return;
     if (_state->ops.init)
         _state->ops.init(_state->ops.ctx);
+    _init_called = true;
 }
 
 void VirtioRng::simDeinit() {
+    _init_called = false;
     // clear()/析构会重复调用 simDeinit；deinit 后把 ctx 置空，避免后端回调被调两次
     if (_state->ops.deinit && _state->ops.ctx) {
         _state->ops.deinit(_state->ops.ctx);
