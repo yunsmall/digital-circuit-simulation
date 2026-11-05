@@ -260,6 +260,14 @@ void cbTimerMod(void *timer, int64_t expire_time, void * /*opaque*/) {
     t->fired = false;
 }
 
+// slirp_cleanup 正常会通过 timer_free 回调清空列表；失败路径没有这个保证，
+// 销毁前统一兜底，避免 Timer 泄漏
+void freeTimers(SlirpBackend *be) {
+    for (auto *t: be->timers)
+        delete t;
+    be->timers.clear();
+}
+
 // ---- 后台事件循环 ----
 
 void SlirpBackend::run() {
@@ -495,8 +503,7 @@ void *backendCreate(void *cfg) {
         closeWakePair(be);
         cleanupWinsock(be);
         // 失败路径没有 slirp_cleanup 可调，自己回收可能已注册的定时器
-        for (auto *t: be->timers)
-            delete t;
+        freeTimers(be);
         delete be;
         return nullptr;
     }
@@ -513,6 +520,7 @@ void *backendCreate(void *cfg) {
     } catch (const std::exception &e) {
         std::fprintf(stderr, "[slirp] 无法创建后端线程，网络后端不可用: %s\n", e.what());
         slirp_cleanup(be->slirp);
+        freeTimers(be);
         closeWakePair(be);
         cleanupWinsock(be);
         delete be;
@@ -530,8 +538,7 @@ void backendDestroy(void *ctx) {
     if (be->slirp)
         slirp_cleanup(be->slirp);
     closeWakePair(be);
-    for (auto *t: be->timers)
-        delete t;
+    freeTimers(be);
     cleanupWinsock(be);
     delete be;
 }
