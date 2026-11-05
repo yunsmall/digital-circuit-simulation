@@ -252,6 +252,12 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             uart_feed = u;
             break;
         }
+    // --feed 往串口队列塞字节，没有 uart_feed 时后面会解引用空指针；
+    // --watch 分支有自己的检查，这里统一在入口拦掉
+    if (!feed_file.empty() && !uart_feed) {
+        std::cerr << "错误: --feed 需要电路里有 uart_feed 元件\n";
+        return 1;
+    }
     // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
     // detach 的线程再去 push 就是访问已释放对象
     std::atomic<bool> *reader_stop = nullptr;

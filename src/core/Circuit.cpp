@@ -675,7 +675,14 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
                     std::format("JIT 符号名冲突: '{}' 被注册成不同地址", name)};
     }
 
-    auto res = _backend.compile(c_code, shim_path, symbols);
+    // 后端可能在内存不足/内部错误时抛异常；这里必须转成错误返回，不能让
+    // 异常穿到 CLI 的 main 触发 terminate。下一次 compile 开头会先 cleanup
+    JitCompileResult res;
+    try {
+        res = _backend.compile(c_code, shim_path, symbols);
+    } catch (const std::exception &e) {
+        return {ErrorCode::JIT_COMPILE_FAILED, -1, {}, std::format("JIT 编译时异常: {}", e.what())};
+    }
     if (res.code != ErrorCode::OK)
         return {res.code, -1, {}, res.message};
 

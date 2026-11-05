@@ -22,6 +22,7 @@
 #include <dcs/util/PathList.h>
 #include <dcs/TruthTable.h>
 #include <dcs/components/memory/WishboneMemory.h>
+#include <dcs/components/platform/Dll.h>
 #include <dcs/dll_interface.h>
 #include <filesystem>
 #include <format>
@@ -264,6 +265,18 @@ int dllInfo(const std::string &path) {
     dcs_dll_descriptor_t *desc = reinterpret_cast<dcs_dll_descriptor_t *>(sym);
 #endif
 
+    // 描述符来自外部二进制：负数量、空数组、空引脚名都不能直接拿去遍历/打印
+    std::string desc_err;
+    if (!dsc::validateDllDescriptor(*desc, desc_err)) {
+        std::cerr << std::format("错误: {}\n", desc_err);
+#ifdef _WIN32
+        FreeLibrary(h);
+#else
+        dlclose(h);
+#endif
+        return 1;
+    }
+
     std::cout << std::format("DLL 元件: {}\n", desc->type_name);
     std::cout << std::format("  输入引脚 ({} 个):\n", desc->num_inputs);
     for (int i = 0; i < desc->num_inputs; i++) {
@@ -309,8 +322,16 @@ int jsonToC(const std::string &path, dsc::Context &ctx) {
     }
     // 必须真正编译一次：生成器拼错的 C 只有过编译器才能发现，只做网表校验会漏掉
     auto err = circuit->compile();
-    if (err.code != dsc::ErrorCode::OK)
+    if (err.code != dsc::ErrorCode::OK) {
         std::cerr << std::format("// 编译错误: {}\n", err.message);
+        // 只有走到 JIT 阶段时网表才已经展开并重编号。更早的失败（DLL 加载、网表检查）
+        // 下 generateC 会拿未展开的元件生成无效代码，那串报错会盖掉真正的原因
+        const bool netlist_ready = err.code == dsc::ErrorCode::JIT_COMPILE_FAILED ||
+                                   err.code == dsc::ErrorCode::JIT_LINK_FAILED ||
+                                   err.code == dsc::ErrorCode::JIT_SYMBOL_FAILED;
+        if (!netlist_ready)
+            return 1;
+    }
     std::cout << circuit->generateC();
     return err.code == dsc::ErrorCode::OK ? 0 : 1;
 }
@@ -363,9 +384,14 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
               const std::string &vcd_path, const std::string &dump_mem, dsc::Context &ctx) {
     // --forever 不会正常返回（tickForever 或 Ctrl+C 结束进程），后段的 dump-mem
-    // 永远执行不到；早点报错，不要让参数静默失效
+    // 永远执行不到；VCD/monitor/delay 只存在于有限 tick 循环里，静默忽略会让
+    // 用户以为这些选项在生效。早点报错，不要让参数失效
     if (forever && !dump_mem.empty()) {
         std::cerr << "错误: --forever 下仿真不会正常结束，--dump-mem 无法执行\n";
+        return 1;
+    }
+    if (forever && (!vcd_path.empty() || monitor || delay_ms > 0)) {
+        std::cerr << "错误: --forever 不处理 --vcd/--monitor/--delay，这些选项只在有限 tick 循环里生效\n";
         return 1;
     }
     auto circuit = dcs_cli::loadCircuit(path, ctx);

@@ -77,4 +77,8 @@ private:
     std::string genTickFunc(const char *phase_suffix) const;
 };
 
+// 校验 DLL 导出的描述符本身能不能用：描述符来自外部二进制，被损坏或恶意构造时
+// 可能出现负数量、空数组、空引脚名，直接解引用就是崩溃/UB。--dll-info 也走这里
+bool validateDllDescriptor(const dcs_dll_descriptor_t &desc, std::string &error);
+
 } // namespace dsc

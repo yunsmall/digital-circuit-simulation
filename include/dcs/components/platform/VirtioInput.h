@@ -3,6 +3,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,11 @@ private:
     virtio_gen::DeviceSpec makeSpec() const;
 
     std::unique_ptr<State> _state;
+    // 环的宿主侧操作是公开 API，多个宿主线程同时调用时必须串行化：
+    // push 里的 head 读改写不是原子的复合操作，pop 的 tail 同理。
+    // 只锁宿主生产者/消费者，JIT 侧仍按原子变量无锁访问
+    std::mutex _evt_push_mutex;
+    std::mutex _status_pop_mutex;
     // init 当重置重复调用时后端 init 不能执行第二次
     bool _init_called = false;
 };

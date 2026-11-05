@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <new>
 #include <thread>
 #include <vector>
@@ -223,85 +224,99 @@ void cbTimerMod(void *timer, int64_t expire_time, void * /*opaque*/) {
 // ---- 后台事件循环 ----
 
 void SlirpBackend::run() {
-    uint8_t pkt[1600];
-    while (!stop.load(std::memory_order_relaxed)) {
-        // guest → slirp：设备 TX 环由 JIT 填写，这里原子取走
-        uint32_t n;
-        while ((n = net->popTxPacket(pkt, sizeof(pkt))) != 0)
-            slirp_input(slirp, pkt, (int) n);
+    // 线程入口一旦让异常逃出去就是 std::terminate（整个仿真进程直接没了），
+    // 这里的临时 vector 扩容、分配都可能抛 bad_alloc，必须在这里兜住
+    try {
+        uint8_t pkt[1600];
+        while (!stop.load(std::memory_order_relaxed)) {
+            // guest → slirp：设备 TX 环由 JIT 填写，这里原子取走
+            uint32_t n;
+            while ((n = net->popTxPacket(pkt, sizeof(pkt))) != 0)
+                slirp_input(slirp, pkt, (int) n);
 
-        const int64_t now = nowMs();
-        // 回调里可能新建或释放定时器（slirp 的 TCP 定时器会这么做），
-        // 直接遍历 vector 会在回调中失效，先收集到期项再逐个调用
-        std::vector<Timer *> due;
-        for (auto *t: timers) {
-            if (!t->fired && t->expire_ms <= now) {
-                t->fired = true;
-                due.push_back(t);
+            const int64_t now = nowMs();
+            // 回调里可能新建或释放定时器（slirp 的 TCP 定时器会这么做），
+            // 直接遍历 vector 会在回调中失效，先收集到期项再逐个调用
+            std::vector<Timer *> due;
+            for (auto *t: timers) {
+                if (!t->fired && t->expire_ms <= now) {
+                    t->fired = true;
+                    due.push_back(t);
+                }
             }
-        }
-        for (auto *t: due) {
-            // 前面的回调可能已经把后面的定时器释放掉
-            if (std::find(timers.begin(), timers.end(), t) == timers.end())
-                continue;
-            auto cb = t->cb;
-            void *opaque = t->opaque;
-            cb(opaque);
-        }
+            for (auto *t: due) {
+                // 前面的回调可能已经把后面的定时器释放掉
+                if (std::find(timers.begin(), timers.end(), t) == timers.end())
+                    continue;
+                auto cb = t->cb;
+                void *opaque = t->opaque;
+                cb(opaque);
+            }
 
-        std::vector<PollEntry> entries;
-        uint32_t timeout = UINT32_MAX;
-        slirp_pollfds_fill_socket(
-                slirp, &timeout,
-                [](slirp_os_socket fd, int events, void *opaque) -> int {
-                    auto *v = static_cast<std::vector<PollEntry> *>(opaque);
-                    const int idx = (int) v->size();
-                    v->push_back({fd, toPollEvents(events), 0});
-                    return idx;
-                },
-                &entries);
-        // 唤醒通道排在最后；它的 revents 不参与 slirp 的 get_revents
-        const int kick_idx = (int) entries.size();
-        entries.push_back({kick_rd, toPollEvents(SLIRP_POLL_IN), 0});
+            std::vector<PollEntry> entries;
+            uint32_t timeout = UINT32_MAX;
+            slirp_pollfds_fill_socket(
+                    slirp, &timeout,
+                    [](slirp_os_socket fd, int events, void *opaque) -> int {
+                        // 这是传给 libslirp 的 C 回调，异常穿过 C 栈帧是未定义行为：
+                        // 分配失败时返回 -1，让 slirp 跳过这个 fd
+                        auto *v = static_cast<std::vector<PollEntry> *>(opaque);
+                        try {
+                            const int idx = (int) v->size();
+                            v->push_back({fd, toPollEvents(events), 0});
+                            return idx;
+                        } catch (...) {
+                            return -1;
+                        }
+                    },
+                    &entries);
+            // 唤醒通道排在最后；它的 revents 不参与 slirp 的 get_revents
+            const int kick_idx = (int) entries.size();
+            entries.push_back({kick_rd, toPollEvents(SLIRP_POLL_IN), 0});
 
-        // slirp 给出的 timeout 是它自己的定时器需要，没有定时器时无限阻塞
-        int wait_ms = -1;
-        if (timeout != UINT32_MAX)
-            wait_ms = (int) std::min<uint32_t>(timeout, 1000);
+            // 上限 1 秒：唤醒报文丢了（send 失败/对端缓冲满）或 stop 标志刚置位时，
+            // 线程也能自己醒来检查 stop，销毁时的 join 不会被无限期的 poll 卡死
+            const uint32_t timeout_ms = std::min<uint32_t>(timeout, 1000);
+            const int wait_ms = (int) timeout_ms;
 
-        int rc = 0;
+            int rc = 0;
 #ifdef _WIN32
-        std::vector<WSAPOLLFD> fds(entries.size());
-        for (size_t i = 0; i < entries.size(); i++) {
-            fds[i].fd = entries[i].fd;
-            fds[i].events = entries[i].events;
-            fds[i].revents = 0;
-        }
-        rc = WSAPoll(fds.data(), (ULONG) fds.size(), wait_ms);
-        for (size_t i = 0; i < entries.size(); i++)
-            entries[i].revents = fds[i].revents;
+            std::vector<WSAPOLLFD> fds(entries.size());
+            for (size_t i = 0; i < entries.size(); i++) {
+                fds[i].fd = entries[i].fd;
+                fds[i].events = entries[i].events;
+                fds[i].revents = 0;
+            }
+            rc = WSAPoll(fds.data(), (ULONG) fds.size(), wait_ms);
+            for (size_t i = 0; i < entries.size(); i++)
+                entries[i].revents = fds[i].revents;
 #else
-        std::vector<pollfd> fds(entries.size());
-        for (size_t i = 0; i < entries.size(); i++) {
-            fds[i].fd = entries[i].fd;
-            fds[i].events = entries[i].events;
-            fds[i].revents = 0;
-        }
-        rc = ::poll(fds.data(), fds.size(), wait_ms);
-        for (size_t i = 0; i < entries.size(); i++)
-            entries[i].revents = fds[i].revents;
+            std::vector<pollfd> fds(entries.size());
+            for (size_t i = 0; i < entries.size(); i++) {
+                fds[i].fd = entries[i].fd;
+                fds[i].events = entries[i].events;
+                fds[i].revents = 0;
+            }
+            rc = ::poll(fds.data(), fds.size(), wait_ms);
+            for (size_t i = 0; i < entries.size(); i++)
+                entries[i].revents = fds[i].revents;
 #endif
 
-        if (entries[kick_idx].revents != 0)
-            drainWake(this);
+            if (entries[kick_idx].revents != 0)
+                drainWake(this);
 
-        slirp_pollfds_poll(
-                slirp, rc < 0,
-                [](int idx, void *opaque) -> int {
-                    auto *v = static_cast<std::vector<PollEntry> *>(opaque);
-                    return fromPollEvents((*v)[idx].revents);
-                },
-                &entries);
+            slirp_pollfds_poll(
+                    slirp, rc < 0,
+                    [](int idx, void *opaque) -> int {
+                        auto *v = static_cast<std::vector<PollEntry> *>(opaque);
+                        return fromPollEvents((*v)[idx].revents);
+                    },
+                    &entries);
+        }
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[slirp] 后端线程异常退出: %s\n", e.what());
+    } catch (...) {
+        std::fprintf(stderr, "[slirp] 后端线程未知异常退出\n");
     }
 }
 
@@ -420,7 +435,17 @@ void *backendCreate(void *cfg) {
         if (auto it = opts.find("hostfwd"); it != opts.end())
             applyHostForwards(be->slirp, it->second);
     }
-    be->worker = std::thread(&SlirpBackend::run, be);
+    // 线程创建可能因系统资源不足抛 system_error；这时 be/slirp/socket 都已分配，
+    // 异常一旦穿到 Circuit::init，设备侧拿不到 backend_ctx，destroy 不会执行
+    try {
+        be->worker = std::thread(&SlirpBackend::run, be);
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[slirp] 无法创建后端线程，网络后端不可用: %s\n", e.what());
+        slirp_cleanup(be->slirp);
+        closeWakePair(be);
+        delete be;
+        return nullptr;
+    }
     return be;
 }
 

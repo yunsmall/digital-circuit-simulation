@@ -64,6 +64,38 @@ namespace {
     }
 } // namespace
 
+bool validateDllDescriptor(const dcs_dll_descriptor_t &desc, std::string &error) {
+    // 引脚数量上限按 dcs 的规模取个宽松值：坏描述符里的巨大数量会让后面的
+    // 循环访问越界内存，而不是干净地报错
+    constexpr int kMaxPins = 1024;
+    if (!desc.type_name) {
+        error = "DLL 描述符缺少 type_name";
+        return false;
+    }
+    auto check = [&](int count, const dcs_dll_pin_desc_t *pins, const char *what) -> bool {
+        if (count < 0 || count > kMaxPins) {
+            error = std::format("DLL 描述符的{}数量 {} 无效（0..{}）", what, count, kMaxPins);
+            return false;
+        }
+        if (count > 0 && !pins) {
+            error = std::format("DLL 描述符的{}数组为空但数量是 {}", what, count);
+            return false;
+        }
+        for (int i = 0; i < count; i++) {
+            if (!pins[i].name) {
+                error = std::format("DLL {} #{} 的名字是空指针", what, i);
+                return false;
+            }
+            if (pins[i].bit_width < 1 || pins[i].bit_width > 128) {
+                error = std::format("DLL {} '{}' 的位宽 {} 无效（1..128）", what, pins[i].name, pins[i].bit_width);
+                return false;
+            }
+        }
+        return true;
+    };
+    return check(desc.num_inputs, desc.inputs, "输入引脚") && check(desc.num_outputs, desc.outputs, "输出引脚");
+}
+
 DllComponent::DllComponent(const std::string &name, const std::string &dll_path) :
     Component(name, "dll"), _dll_path(dll_path) {
     setParam("path", _dll_path);
@@ -170,8 +202,9 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
         return false;
     }
 
-    // 引脚描述来自 DLL（外部输入）：位宽非法时 addInput 里的 assert 在 Release
-    // 构建不生效，会拖到生成 C 代码才炸。先整体校验，再建引脚
+    // 引脚描述来自 DLL（外部输入）：负数量、空数组、空名字、位宽非法都不能
+    // 直接拿去建引脚。Release 下 addInput 的 assert 不生效，std::string(nullptr)
+    // 更是 UB。先整体校验，再建引脚
     auto fail = [&](std::string msg) {
         dll_unload(_dll_path);
         _dll_handle = nullptr;
@@ -182,16 +215,9 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
         error = std::move(msg);
         return false;
     };
-    for (int i = 0; i < _desc.num_inputs; i++) {
-        const int bw = _desc.inputs[i].bit_width;
-        if (bw < 1 || bw > 128)
-            return fail(std::format("DLL 输入 '{}' 的位宽 {} 无效（1..128）", _desc.inputs[i].name, bw));
-    }
-    for (int i = 0; i < _desc.num_outputs; i++) {
-        const int bw = _desc.outputs[i].bit_width;
-        if (bw < 1 || bw > 128)
-            return fail(std::format("DLL 输出 '{}' 的位宽 {} 无效（1..128）", _desc.outputs[i].name, bw));
-    }
+    std::string desc_err;
+    if (!validateDllDescriptor(_desc, desc_err))
+        return fail(std::move(desc_err));
 
     for (int i = 0; i < _desc.num_inputs; i++)
         addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width);

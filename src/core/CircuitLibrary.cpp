@@ -1,5 +1,6 @@
 // CircuitLibrary — 共享蓝图注册表实现
 #include "dcs/CircuitLibrary.h"
+#include <algorithm>
 #include <format>
 #include <nlohmann/json.hpp>
 #include "dcs/ComponentFactory.h"
@@ -29,6 +30,10 @@ bool CircuitLibrary::exists(const std::string &name) const {
 
 void CircuitLibrary::addSearchPath(const std::string &dir) {
     if (dir.empty())
+        return;
+    // --lib-path 和 DCS_LIB_PATH 可能给出同一个目录；重复项会让每次解析蓝图
+    // 都多做一遍无意义的文件系统探测，顺序上也没有任何作用
+    if (std::find(_search_paths.begin(), _search_paths.end(), dir) != _search_paths.end())
         return;
     _search_paths.push_back(dir);
 }

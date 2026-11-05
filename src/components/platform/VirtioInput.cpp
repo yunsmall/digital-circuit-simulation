@@ -119,6 +119,8 @@ std::vector<Component::JitSymbol> VirtioInput::extraJitSymbols() const {
 }
 
 bool VirtioInput::pushInputEvent(const InputEvent &ev) {
+    // 多个宿主线程同时 push 时必须串行化：head 的读改写不是原子的复合操作
+    std::lock_guard<std::mutex> lock(_evt_push_mutex);
     auto &s = *_state;
     // head/tail 都用实际增长值，只在索引时取模。若 head 写成模值而 tail 单调增长，
     // tail 越过 RING 后 (head+1)%RING == tail 永远不成立，环满检测失效，
@@ -138,6 +140,8 @@ bool VirtioInput::pushInputEvent(const InputEvent &ev) {
 }
 
 bool VirtioInput::popStatusEvent(InputEvent &ev) {
+    // 和 push 一样，多个宿主消费者之间必须串行化
+    std::lock_guard<std::mutex> lock(_status_pop_mutex);
     auto &s = *_state;
     // guest 侧先写 status 槽再 release 发布 status_head，这里 acquire 后读才安全
     const uint32_t head = std::atomic_ref<uint32_t>(s.status_head).load(std::memory_order_acquire);

@@ -265,8 +265,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
 
     auto action = std::make_unique<clang::EmitLLVMOnlyAction>(_impl->llvm_ctx.get());
     if (!ci->ExecuteAction(*action)) {
-        // action 可能持有挂在 llvm_ctx 上的 IR 对象，先放掉再销毁上下文
+        // action 和 ci 都持有挂在 llvm_ctx 上的对象，先放掉再销毁上下文
         action.reset();
+        ci.reset();
         cleanup();
         return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 编译 C 代码失败"};
     }
@@ -274,12 +275,16 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
     if (!module) {
         // ExecuteAction 成功但拿不到模块属于后端内部状态异常，不能解引用空指针
         action.reset();
+        ci.reset();
         cleanup();
         return {ErrorCode::JIT_COMPILE_FAILED, -1, "Clang 没有返回 IR 模块"};
     }
     // module 里的类型属于 llvm_ctx，cleanup() 会销毁 ctx，所以每个失败点都必须
-    // 先放掉 module。把顺序固定在一个地方，避免新增失败分支时漏掉
+    // 先放掉 module（以及仍持有 ctx 上对象的 action/ci）。把顺序固定在一个地方，
+    // 避免新增失败分支时漏掉
     auto fail = [&](ErrorCode code, std::string msg) {
+        action.reset();
+        ci.reset();
         module.reset();
         cleanup();
         return JitCompileResult{code, -1, std::move(msg)};
