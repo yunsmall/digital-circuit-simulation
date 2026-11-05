@@ -48,9 +48,12 @@ std::string RingCounter::genFuncDef_seq() const {
                       : std::string("    bool _clk = false;\n");
     c += "    " + gen_read_wire(en_nid, 1, en_nw, "_en") + "\n";
     c += "    " + gen_read_wire(rst_nid, 1, rst_nw, "_rst") + "\n";
-    c += std::format("    if (_clk && !{}.prev_clk) {{\n", st);
-    c += std::format("        if (_rst & 1) {}.q = {}ULL;\n", st, _johnson ? 0 : 1);
-    c += std::format("        else if (_en & 1) {{\n");
+    c += std::format("    if (_rst & 1) {{\n", st);
+    c += std::format("        {}.q = {}ULL;\n", st, _johnson ? 0 : 1);
+    // 复位是异步的，和 DFF/Register/ShiftRegister 一致：置 1 当拍就回到初值，
+    // 不等时钟沿。放在沿内会让短于一个周期的复位脉冲丢失
+    c += std::format("    }} else if (_clk && !{}.prev_clk) {{\n", st);
+    c += std::format("        if (_en & 1) {{\n");
     // 反馈位就是最高位；约翰逊取反，状态数翻倍
     c += std::format("            const uint64_t _fb = (({}.q >> {}) & 1ULL){};\n", st, msb, _johnson ? "^ 1ULL" : "");
     c += std::format("            {}.q = (({}.q << 1) | _fb) & {};\n", st, st, gen_mask(_length));

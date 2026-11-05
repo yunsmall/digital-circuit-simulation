@@ -15,7 +15,7 @@ namespace dsc {
 
 class UartTerm : public SequentialComponent {
 public:
-    explicit UartTerm(const std::string &name, int baud_div = 16);
+    explicit UartTerm(const std::string &name, int baud_div = 8);
     ~UartTerm() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
@@ -39,7 +39,7 @@ private:
     uint64_t _frames = 0;
     uint64_t _errors = 0;
     uint8_t _last_byte = 0;
-    int _baud_div = 16;
+    int _baud_div = 8;
 };
 
 } // namespace dsc

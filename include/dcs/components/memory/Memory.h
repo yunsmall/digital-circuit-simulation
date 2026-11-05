@@ -8,7 +8,10 @@
 //
 // 读延迟: 地址改变后，data_out 经过 read_latency 个周期才有效
 // 写延迟: we=1 的上升沿后，经过 write_latency 个周期才写入
-// busy=1 表示有写操作在进行中
+// busy=1 表示有写操作在进行中；write_latency=0 时写当拍完成、没有在途写，
+// 因此 busy 恒为 0（busy 的含义是"有未提交的写"，不是"本拍发生过写"）
+// 地址按字节寻址、不做字对齐：非对齐地址按字节偏移读取，读跨过容量末尾时返回 0
+// （WishboneMemory 按 Wishbone 规范会把地址对齐到端口字边界，两者语义不同）
 #pragma once
 #include <cstdint>
 #include <vector>

@@ -16,6 +16,10 @@
 // 参数:
 //   data_width: 数据位宽（1~64）
 //   depth:      FIFO 深度（2~65536，必须为 2 的幂）
+//
+// dout 是 FWFT（首字直通）：任何时刻都等于 rd_ptr 指向槽位的内容，
+// 所以 empty=1 时它是缓冲区里的残留数据、语义无效，不会清 0，下游必须用 empty
+// 门控。这和 Memory/ROM 越界读返回 0 的约定不同，换用存储器时要注意
 #pragma once
 #include <cstdint>
 #include <vector>

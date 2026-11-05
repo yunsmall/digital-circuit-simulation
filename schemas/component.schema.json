@@ -10,11 +10,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -35,15 +40,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "vref": {
               "default": "5.0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -58,17 +73,31 @@
       ]
     },
     {
-      "description": "全加器，sum=a+b+cin, cout=进位",
+      "description": "全加器，sum=a+b+cin, cout=有符号时表示溢出",
       "properties": {
         "name": {
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "signed": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -89,11 +118,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -114,15 +148,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -143,11 +187,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -168,14 +217,24 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "max_reports": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "message": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -196,15 +255,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "depth": {
               "default": "16",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -240,11 +309,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -265,7 +339,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "active_low": {
               "default": "0",
@@ -273,7 +347,12 @@
                 "0",
                 "1"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "hex_mode": {
               "default": "0",
@@ -281,7 +360,12 @@
                 "0",
                 "1"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -302,11 +386,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -342,11 +431,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "divisor": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -367,15 +461,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "high_ticks": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "low_ticks": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -390,7 +494,7 @@
       ]
     },
     {
-      "description": "复合元件，由JSON定义嵌套子电路",
+      "description": "复合元件，由 JSON 蓝图定义嵌套子电路；蓝图参数按 ${name} 字符串替换",
       "properties": {
         "name": {
           "type": "string"
@@ -399,7 +503,12 @@
           "additionalProperties": true,
           "properties": {
             "definition": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -420,15 +529,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "value": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -449,27 +568,52 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_clr": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_en": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_load": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_updown": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -490,15 +634,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "vref": {
               "default": "5.0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -519,15 +673,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "stable_ticks": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -548,11 +712,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "n_selects": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -573,19 +742,34 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "depth": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "use_clock": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -606,11 +790,43 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "has_en": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "has_preset": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "has_rst": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -631,15 +847,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "digits": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "kind": {
               "default": "led",
@@ -648,7 +874,12 @@
                 "seg",
                 "text"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -669,15 +900,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -698,10 +939,15 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "path": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -737,10 +983,15 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -761,10 +1012,15 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -785,10 +1041,15 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -809,11 +1070,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "n_selects": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -834,15 +1100,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -863,7 +1139,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "fp": {
               "default": "32",
@@ -871,15 +1147,30 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "int_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -900,7 +1191,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -908,7 +1199,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -929,7 +1225,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -937,11 +1233,21 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "value": {
               "default": "0.0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -962,7 +1268,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -970,7 +1276,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -991,7 +1302,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -999,7 +1310,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1020,7 +1336,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1028,7 +1344,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1049,7 +1370,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1057,7 +1378,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1078,7 +1404,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "data_width": {
               "default": "8",
@@ -1088,15 +1414,30 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "depth": {
               "default": "16",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_rst": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1117,7 +1458,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1125,7 +1466,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1146,7 +1492,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1154,7 +1500,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1175,7 +1526,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1183,7 +1534,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1204,7 +1560,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1212,7 +1568,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1233,7 +1594,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1241,7 +1602,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1262,7 +1628,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "precision": {
               "default": "32",
@@ -1270,7 +1636,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1291,15 +1662,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1379,6 +1760,24 @@
         "name": {
           "type": "string"
         },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "bit_width": {
+              "default": "32",
+              "enum": [
+                "32"
+              ],
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "type": {
           "const": "gpio"
         }
@@ -1395,15 +1794,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1424,11 +1833,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "clkdiv": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1449,7 +1863,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "fp": {
               "default": "32",
@@ -1457,15 +1871,30 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "int_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1486,11 +1915,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1511,11 +1945,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1536,15 +1975,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1565,11 +2014,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1590,11 +2044,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1615,15 +2074,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1644,15 +2113,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1673,11 +2152,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "addr_width": {
               "default": "4",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "data_width": {
               "default": "8",
@@ -1687,15 +2171,30 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "read_latency": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "write_latency": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1716,11 +2215,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "num_bits": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1741,15 +2245,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1770,11 +2284,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "addr_width": {
               "default": "4",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "data_width": {
               "default": "8",
@@ -1784,19 +2303,39 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "num_read_ports": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "num_write_ports": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "read_latency": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1817,15 +2356,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1846,15 +2395,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "n_selects": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1875,15 +2434,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1904,15 +2473,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "signed": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1933,15 +2512,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1962,11 +2551,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -1987,15 +2581,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2016,11 +2620,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "mode": {
               "default": "even",
@@ -2028,7 +2637,12 @@
                 "even",
                 "odd"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2049,11 +2663,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "num_sources": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2074,11 +2693,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "num_inputs": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2093,13 +2717,13 @@
       ]
     },
     {
-      "description": "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出）",
+      "description": "整型打印，clk上升沿打印当前值（en 为高才打印，ascii=1 时按字符输出；可按实例 setSink 接管输出）",
       "properties": {
         "name": {
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "ascii": {
               "default": "0",
@@ -2107,11 +2731,21 @@
                 "0",
                 "1"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2131,6 +2765,24 @@
         "name": {
           "type": "string"
         },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "bit_width": {
+              "default": "32",
+              "enum": [
+                "32"
+              ],
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "type": {
           "const": "pwm"
         }
@@ -2147,11 +2799,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2172,11 +2829,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2197,11 +2859,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2237,23 +2904,43 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "32",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "depth": {
               "default": "32",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "num_read_ports": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "num_write_ports": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2274,11 +2961,34 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "has_en": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "has_rst": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2299,7 +3009,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "johnson": {
               "default": "0",
@@ -2307,11 +3017,21 @@
                 "0",
                 "1"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "length": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2332,7 +3052,7 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "xlen": {
               "default": "32",
@@ -2340,7 +3060,12 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2361,11 +3086,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "addr_width": {
               "default": "4",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "data_width": {
               "default": "8",
@@ -2375,14 +3105,29 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "filepath": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "read_latency": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "source_type": {
               "default": "mem",
@@ -2390,7 +3135,12 @@
                 "mem",
                 "file"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2411,11 +3161,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "ns_per_tick": {
               "default": "100",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2436,19 +3191,34 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "has_clr": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "has_dir": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "length": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2469,15 +3239,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "dst_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "src_width": {
               "default": "4",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2498,11 +3278,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "clkdiv": {
               "default": "4",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2523,11 +3308,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "num_bits": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2548,11 +3338,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2573,11 +3368,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2598,11 +3398,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2623,11 +3428,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2648,11 +3458,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2673,11 +3488,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "baud_div": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2692,17 +3512,22 @@
       ]
     },
     {
-      "description": "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx",
+      "description": "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx（baud_div 默认与 uart 一致）",
       "properties": {
         "name": {
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "baud_div": {
-              "default": "16",
-              "type": "string"
+              "default": "8",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2717,17 +3542,22 @@
       ]
     },
     {
-      "description": "串口输入端：把宿主 stdin 的字符按 8N1 发到 UART 的 rx 引脚（baud_div 要和 UART 一致）",
+      "description": "串口输入端：把宿主输入的字符按 8N1 发到 UART 的 rx 引脚（baud_div 默认与 uart 一致；可按实例 setSource 接管输入）",
       "properties": {
         "name": {
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "baud_div": {
-              "default": "16",
-              "type": "string"
+              "default": "8",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2742,17 +3572,22 @@
       ]
     },
     {
-      "description": "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）",
+      "description": "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）；baud_div 默认与 uart 一致",
       "properties": {
         "name": {
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "baud_div": {
-              "default": "16",
-              "type": "string"
+              "default": "8",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2767,7 +3602,7 @@
       ]
     },
     {
-      "description": "virtio-blk：从端口接 CPU，主端口经总线访问 virtqueue；镜像来自宿主文件或 ROM",
+      "description": "virtio-blk：从端口接 CPU，主端口经总线访问 virtqueue；介质由 backend 提供（file 后端用 backend_opts.path）",
       "properties": {
         "name": {
           "type": "string"
@@ -2775,8 +3610,22 @@
         "params": {
           "additionalProperties": true,
           "properties": {
-            "path": {
-              "type": "string"
+            "backend": {
+              "default": "mem",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "backend_opts": {
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2797,11 +3646,24 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
+            "size_bytes": {
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
             "size_kb": {
               "default": "1024",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2845,10 +3707,20 @@
                 "none",
                 "slirp"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "backend_opts": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2884,14 +3756,24 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "base_epoch": {
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "ns_per_tick": {
               "default": "100",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "sync_host": {
               "default": "0",
@@ -2899,7 +3781,12 @@
                 "0",
                 "1"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2919,6 +3806,24 @@
         "name": {
           "type": "string"
         },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "bit_width": {
+              "default": "32",
+              "enum": [
+                "32"
+              ],
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "type": {
           "const": "watchdog"
         }
@@ -2935,11 +3840,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "lines": {
               "default": "16",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2960,19 +3870,34 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "base": {
               "default": "2147483648",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "lines": {
               "default": "1024",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "size": {
               "default": "268435456",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -2993,15 +3918,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "num_masters": {
               "default": "1",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "segments": {
               "default": "0:65536",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -3022,21 +3957,30 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "addr_width": {
               "default": "16",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "data_width": {
               "default": "32",
               "enum": [
                 "8",
                 "16",
-                "32",
-                "64"
+                "32"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -3057,11 +4001,16 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "addr_width": {
               "default": "16",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "data_width": {
               "default": "32",
@@ -3071,11 +4020,21 @@
                 "32",
                 "64"
               ],
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "read_latency": {
               "default": "0",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -3096,15 +4055,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"
@@ -3125,15 +4094,25 @@
           "type": "string"
         },
         "params": {
-          "additionalProperties": true,
+          "additionalProperties": false,
           "properties": {
             "bit_width": {
               "default": "8",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             },
             "inputs": {
               "default": "2",
-              "type": "string"
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           },
           "type": "object"

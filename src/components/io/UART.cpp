@@ -97,7 +97,9 @@ std::string UART::genFuncDef_seq() const {
     c += std::format("static void {}() {{\n", funcName_seq());
     c += "    " + rd(I_STB, "_stb", 1) + "\n";
     c += "    " + rd(I_CYC, "_cyc", 1) + "\n";
-    c += "    " + rd(I_RX, "_rx", 1) + "\n";
+    // rx 悬空时按空闲高处理。全局约定"未连接输入读 0"，但 0 在串口线上就是
+    // 起始位，接收端会在启动时误收一帧并报帧错误；真实线路空闲靠上拉保持高
+    c += "    " + (inputs()[I_RX]->net() ? rd(I_RX, "_rx", 1) : std::string("bool _rx = true;")) + "\n";
     c += std::format(
             "    const bool _active = _stb && _cyc;\n"
             // 空闲快速路径：总线没选中、收发状态机都在空闲、接收线也没变化时，

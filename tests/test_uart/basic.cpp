@@ -14,7 +14,7 @@ struct Fixture {
     Net *we = nullptr, *sel = nullptr, *stb = nullptr, *cyc = nullptr;
     Net *rx = nullptr, *ack = nullptr, *tx = nullptr, *irq = nullptr;
 
-    explicit Fixture(int baud = 2, bool loopback = false) {
+    explicit Fixture(int baud = 2, bool loopback = false, bool connect_rx = true) {
         auto u = std::make_unique<UART>("uart0", baud);
         uart = u.get();
         circuit->addComponent(std::move(u));
@@ -37,7 +37,8 @@ struct Fixture {
         circuit->connect(uart, "wb_sel_i", sel);
         circuit->connect(uart, "wb_stb_i", stb);
         circuit->connect(uart, "wb_cyc_i", cyc);
-        circuit->connect(uart, "rx", loopback ? tx : rx); // 回环时 tx 直接接 rx
+        if (connect_rx)
+            circuit->connect(uart, "rx", loopback ? tx : rx); // 回环时 tx 直接接 rx
         circuit->connect(uart, "wb_dat_o", dat_o);
         circuit->connect(uart, "wb_ack_o", ack);
         circuit->connect(uart, "tx", tx);
@@ -238,5 +239,17 @@ TEST(UartTest, IirThreReadClearsPending) {
     for (int i = 0; i < 40; ++i)
         f.cycle();
     EXPECT_EQ(f.circuit->getWire(f.irq->id())[0], 1) << "发送完成后 THRE 中断应重新置起";
+}
+
+// rx 悬空：按空闲高处理。全局"悬空输入读 0"在串口线上等于起始位，
+// 否则接收端启动时就会误收一帧并置帧错误
+TEST(UartTest, FloatingRxIsIdleHigh) {
+    Fixture f(2, false, false);
+    f.compile();
+    for (int i = 0; i < 40; ++i)
+        f.cycle();
+    const uint32_t lsr = f.read(0x14);
+    EXPECT_EQ(lsr & 0x01u, 0u) << "悬空 rx 不应产生可读字节";
+    EXPECT_EQ(lsr & 0x08u, 0u) << "悬空 rx 不应报帧错误";
 }
 

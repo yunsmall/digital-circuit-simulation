@@ -125,6 +125,23 @@ TEST(RingCounter, NoEdgeNoAdvance) {
     EXPECT_EQ(f.getQ(), q);
 }
 
+// rst 是异步的（与 DFF/Register/ShiftRegister 一致）：不等时钟沿，置 1 后
+// 下一拍就回到初值；脉冲短于一个时钟周期也必须复位
+TEST(RingCounter, ResetIsAsync) {
+    Fx f(4, false);
+    f.edge();
+    f.edge();
+    ASSERT_NE(f.getQ(), 1u);
+    f.edge();
+    f.c->setWire(f.rst->id(), 1);
+    f.c->setWire(f.clk->id(), 0); // 保持时钟低，不产生上升沿
+    f.c->tick();
+    EXPECT_EQ(f.getQ(), 1u) << "异步复位不依赖时钟沿";
+    f.c->setWire(f.rst->id(), 0);
+    f.c->tick();
+    EXPECT_EQ(f.getQ(), 1u) << "撤掉复位后应停在初值";
+}
+
 TEST(RingCounter, SixtyFourBit) {
     Fx f(64, false);
     f.edge();

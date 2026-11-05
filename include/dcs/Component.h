@@ -124,7 +124,11 @@ public:
     [[nodiscard]] std::string stateVarName() const;
     [[nodiscard]] std::string stateTypeName() const;
 
-    // 克隆元件（保留配置参数和引脚信息，仅改名称）。用于复合元件展开
+    // 克隆元件：复制构造参数和引脚定义，换成新名称。供测试/工具按配置复制实例用
+    // （复合元件展开走 ComponentFactory::create，不经过这里）。
+    // 存储类元件会额外复制底层存储内容（ROM 固件、Memory/FIFO 已写入的数据），
+    // 但 JIT 里的运行状态（读写流水线、FIFO 读写指针、RegFile 的寄存器堆）不复制，
+    // 新实例从 init 后的状态开始
     [[nodiscard]] virtual std::unique_ptr<Component> clone(const std::string &new_name) const = 0;
 
     // 是否为复合元件（内部包含子电路），编译前需要展开

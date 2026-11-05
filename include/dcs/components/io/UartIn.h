@@ -18,7 +18,7 @@ namespace dsc {
 
 class UartIn : public SequentialComponent {
 public:
-    explicit UartIn(const std::string &name, int baud_div = 16);
+    explicit UartIn(const std::string &name, int baud_div = 8);
     ~UartIn() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override;
@@ -61,7 +61,7 @@ private:
         static constexpr uint32_t POLL_INTERVAL = 1024;
     };
     InState _state{};
-    int _baud_div = 16;
+    int _baud_div = 8;
     Source _source{};
     void *_source_ctx = nullptr;
 

@@ -118,8 +118,8 @@ int UartFeed::feedPop(void *state_ptr) {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart_feed", {{"baud_div", "16"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx"},
+    {"uart_feed", {{"baud_div", "8"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx（baud_div 默认与 uart 一致）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "baud_div", 16));
+            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "baud_div", 8));
         });
 } // namespace

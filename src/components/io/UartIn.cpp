@@ -188,8 +188,8 @@ int UartIn::fetch(void *owner, void *state_ptr, int do_poll) {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart_in", {{"baud_div", "16"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：把宿主输入的字符按 8N1 发到 UART 的 rx 引脚（baud_div 要和 UART 一致；可按实例 setSource 接管输入）"},
+    {"uart_in", {{"baud_div", "8"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：把宿主输入的字符按 8N1 发到 UART 的 rx 引脚（baud_div 默认与 uart 一致；可按实例 setSource 接管输入）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "baud_div", 16));
+            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "baud_div", 8));
         });
 } // namespace

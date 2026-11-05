@@ -90,7 +90,7 @@ struct TermOnly {
     UartTerm *term = nullptr;
     Net *clk = nullptr, *rx = nullptr, *data = nullptr, *valid = nullptr;
 
-    explicit TermOnly(int baud = 2) {
+    explicit TermOnly(int baud = 2, bool connect_rx = true) {
         auto t = std::make_unique<UartTerm>("term0", baud);
         term = t.get();
         circuit->addComponent(std::move(t));
@@ -99,7 +99,8 @@ struct TermOnly {
         data = circuit->createNet("data");
         valid = circuit->createNet("valid");
         circuit->connect(term, "clk", clk);
-        circuit->connect(term, "rx", rx);
+        if (connect_rx)
+            circuit->connect(term, "rx", rx);
         circuit->connect(term, "data", data);
         circuit->connect(term, "valid", valid);
     }
@@ -182,4 +183,15 @@ TEST(UartTermTest, NarrowGlitchRejected) {
     f.level(1, 40);
     EXPECT_EQ(f.term->frames(), 0u) << "噪声不应解成字节";
     EXPECT_EQ(f.term->errors(), 0u) << "噪声也不该记成帧错误";
+}
+
+// rx 悬空按空闲高处理：全局"悬空输入读 0"在串口上就是起始位，
+// 否则启动时就会误收一帧并记帧错误
+TEST(UartTermTest, FloatingRxIsIdleHigh) {
+    TermOnly f(2, false);
+    f.compile();
+    for (int i = 0; i < 40; ++i)
+        f.cycle();
+    EXPECT_EQ(f.term->frames(), 0u) << "悬空 rx 不应解出任何字节";
+    EXPECT_EQ(f.term->errors(), 0u) << "悬空 rx 不应记帧错误";
 }
