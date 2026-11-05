@@ -115,20 +115,28 @@ dsc::WishboneMemory *firstMemory(dsc::Circuit &circuit) {
     return dcs_cli::findFirstComponent<dsc::WishboneMemory>(circuit);
 }
 
-// 把整个映像按存储器的地址别名语义灌进去：镜像可以链接在 DRAM_BASE(0x80000000)
-// 这类高地址，而存储器只有低 addr_width 根地址线，高位在硬件上就是别名回来
-bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
+// 按存储器的地址别名语义写入：镜像可以链接/指定在 DRAM_BASE(0x80000000)
+// 这类高地址，而存储器只有低 addr_width 根地址线，高位在硬件上就是别名回来。
+// --load、ELF 装载、--dump-mem 共用这一个语义
+void storeImage(dsc::WishboneMemory *mem, size_t addr, const uint8_t *src, size_t size) {
     const size_t cap = mem->memSize();
-    size_t load_off = static_cast<size_t>(img.base) & (cap - 1);
-    const uint8_t *src = img.data.data();
-    size_t remain = img.data.size();
-    while (remain > 0) {
-        const size_t chunk = (std::min)(remain, cap - load_off);
-        std::memcpy(mem->writableMemPtr() + load_off, src, chunk);
+    size_t off = addr & (cap - 1);
+    while (size > 0) {
+        const size_t chunk = (std::min)(size, cap - off);
+        std::memcpy(mem->writableMemPtr() + off, src, chunk);
         src += chunk;
-        remain -= chunk;
-        load_off = (load_off + chunk) & (cap - 1);
+        size -= chunk;
+        off = (off + chunk) & (cap - 1);
     }
+}
+
+bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
+    // 32 位宿主上 base 可能超过 4 GiB，先截断再取模会把镜像写到错误偏移
+#if SIZE_MAX < UINT64_MAX
+    if (img.base > (uint64_t) SIZE_MAX)
+        return false;
+#endif
+    storeImage(mem, (size_t) img.base, img.data.data(), img.data.size());
     return true;
 }
 
@@ -250,19 +258,32 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             return 1;
         }
         const std::streamsize size = lf.tellg();
-        if (size < 0 || load_addr > cap || (uint64_t) size > (uint64_t) (cap - load_addr)) {
-            std::cerr << std::format("错误: --load '{}' 的 {} 字节从 0x{:X} 起超出存储器容量 0x{:X}\n", load_path,
-                                     (size < 0 ? 0 : size), load_addr, cap);
+        if (size < 0 || (uint64_t) size > (uint64_t) cap) {
+            std::cerr << std::format("错误: --load '{}' 的 {} 字节超过存储器容量 0x{:X}\n", load_path,
+                                     (size < 0 ? 0 : size), cap);
             return 1;
         }
-        std::vector<char> buf((size_t) size);
+        // 直接读进存储器，避免给大文件再分配一份同样大的缓冲区。地址按容量
+        // 别名（和 ELF 装载、--dump-mem 一致）：0x80000000 这类高地址落到
+        // 低地址窗口，跨边界时环绕
         lf.seekg(0);
-        if (size > 0 && !lf.read(buf.data(), size)) {
-            std::cerr << std::format("错误: 读取 --load 文件 '{}' 失败\n", load_path);
-            return 1;
+        const size_t masked = load_addr & (cap - 1);
+        size_t off = masked;
+        size_t remain = (size_t) size;
+        while (remain > 0) {
+            const size_t chunk = (std::min)(remain, cap - off);
+            if (!lf.read(reinterpret_cast<char *>(mem->writableMemPtr() + off), (std::streamsize) chunk)) {
+                std::cerr << std::format("错误: 读取 --load 文件 '{}' 失败\n", load_path);
+                return 1;
+            }
+            remain -= chunk;
+            off = (off + chunk) & (cap - 1);
         }
-        std::memcpy(mem->writableMemPtr() + load_addr, buf.data(), (size_t) size);
-        std::cout << std::format("装载: {} 字节 @ 0x{:X} <- {}\n", size, load_addr, load_path);
+        if (masked != load_addr)
+            std::cout << std::format("装载: {} 字节 @ 0x{:X}（别名到 0x{:X}）<- {}\n", size, load_addr, masked,
+                                     load_path);
+        else
+            std::cout << std::format("装载: {} 字节 @ 0x{:X} <- {}\n", size, load_addr, load_path);
     }
 
     // ELF 是 RISC-V 专用的捷径：额外给出入口地址和 tohost。没有 --elf 时
@@ -279,7 +300,10 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         if (img.data.size() > cap)
             std::cerr << std::format("警告: ELF 映像 {} 字节超过存储器容量 {} 字节，按地址别名只保留最后 {} 字节\n",
                                      img.data.size(), cap, cap);
-        loadImage(mem, img);
+        if (!loadImage(mem, img)) {
+            std::cerr << std::format("错误: ELF 基地址 0x{:X} 超出 32 位宿主的地址范围\n", img.base);
+            return 1;
+        }
         // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
         // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
         bool cpu_matched = false;
@@ -314,6 +338,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         trace_cpu = false;
     }
     // --set 在第一拍之前写线网：自定义 CPU 的 start_pc/reset 这类输入就靠它
+    if (!elf_path.empty() && !set_specs.empty())
+        std::cerr << "提示: --elf 的入口由 ELF 决定；--set 只写线网，内置 RiscVCPU 不读 start_pc\n";
     for (auto &spec: set_specs) {
         std::string net_name, serr;
         std::vector<uint8_t> bytes;
@@ -605,7 +631,8 @@ int main(int argc, char *argv[]) {
 
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
             "elf", "要加载的 RISC-V ELF（镜像、入口地址、tohost 都从它读）", cxxopts::value<std::string>())(
-            "load", "把原始二进制文件加载到 RAM 物理地址（FILE@ADDR，可重复；地址十进制或 0x）",
+            "load", "把原始二进制文件加载到 RAM 物理地址（FILE@ADDR，可重复；地址十进制或 0x，"
+                    "按存储器容量别名，后加载的重叠区域覆盖先加载的）",
             cxxopts::value<std::vector<std::string>>())(
             "set", "init 后按线网名写值（NET=VALUE，可重复；给自定义 CPU 的 start_pc 等输入用）",
             cxxopts::value<std::vector<std::string>>())(
