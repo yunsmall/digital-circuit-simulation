@@ -5,6 +5,16 @@
 
 namespace dsc {
 
+namespace {
+// 最高字节里有效位的掩码：位宽是 8 的倍数时整字节都有效。
+// 状态数组是 uint8_t，直接 &= gen_mask(bit_width) 会先提升再截回 8 位，
+// 超出位宽的高位（如 12 位时的 0xF000）根本清不掉
+unsigned tailByteMask(int bit_width) {
+    const int tail = bit_width % 8;
+    return tail == 0 ? 0xFFu : (1u << tail) - 1u;
+}
+} // namespace
+
 // ============================================================
 // D 触发器
 // ============================================================
@@ -75,12 +85,11 @@ std::string DFlipFlop::genFuncDef_seq() const {
 
     std::string edge = std::format("bool _rising = (_clk && !{}.prev_clk);", st);
 
-    // 预置位整字节写 0xFF 后，最后一字节要按有效位掩掉高位。q[] 是 uint8_t，
-    // 直接 &= 宽掩码（如 0xFFF）会先提升成 int 算完再截断回 0xFF，等于没清
-    const int tail_bits = _bit_width % 8;
+    // 预置位整字节写 0xFF 后，最后一字节要按有效位掩掉高位（位宽是 8 的倍数
+    // 时整字节有效，不用掩）
     const std::string preset_mask =
-            tail_bits == 0 ? std::string()
-                           : std::format("        {}.q[{} - 1] &= 0x{:X}u;\n", st, bytes, (1u << tail_bits) - 1);
+            _bit_width % 8 == 0 ? std::string()
+                                : std::format("        {}.q[{} - 1] &= 0x{:X}u;\n", st, bytes, tailByteMask(_bit_width));
 
     std::string update;
     if (_has_rst && _has_preset) {
@@ -175,12 +184,12 @@ std::string TFlipFlop::genFuncDef_seq() const {
     bool _rising = (_clk && !{3}.prev_clk);
     if (_rising && _t) {{
         for (int _i = 0; _i < {4}; _i++) {3}.q[_i] = ~{3}.q[_i];
-        {3}.q[{4} - 1] &= {5};
+        {3}.q[{4} - 1] &= 0x{5:X}u;
     }}
     {3}.prev_clk = _clk;
 {6}
 }})",
-                       funcName_seq(), read_t, read_clk, st, bytes, gen_mask(_bit_width), write_q);
+                       funcName_seq(), read_t, read_clk, st, bytes, tailByteMask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -227,14 +236,14 @@ std::string JKFlipFlop::genFuncDef_seq() const {
     if (_rising) {{
         if (_j && _k) {{
             for (int _i = 0; _i < {5}; _i++) {4}.q[_i] = ~{4}.q[_i];
-            {4}.q[{5} - 1] &= {6};
-        }} else if (_j) {{ dcs_memset({4}.q, 0xFF, {5}); {4}.q[{5} - 1] &= {6};
+            {4}.q[{5} - 1] &= 0x{6:X}u;
+        }} else if (_j) {{ dcs_memset({4}.q, 0xFF, {5}); {4}.q[{5} - 1] &= 0x{6:X}u;
         }} else if (_k) {{ dcs_memset({4}.q, 0, {5}); }}
     }}
     {4}.prev_clk = _clk;
 {7}
 }})",
-                       funcName_seq(), read_j, read_k, read_c, st, bytes, gen_mask(_bit_width), write_q);
+                       funcName_seq(), read_j, read_k, read_c, st, bytes, tailByteMask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -433,14 +442,14 @@ std::string Counter::genFuncDef_seq() const {
             uint16_t _carry = 1;
             for (int _i = 0; _i < {0}; _i++) {{ uint16_t _tmp = {1}.count[_i] + _carry; {1}.count[_i] = (uint8_t)_tmp; _carry = (_tmp >> 8) & 1; }}
         }}
-        {1}.count[{0} - 1] &= {2};)",
-                              bytes, st, gen_mask(_bit_width));
+        {1}.count[{0} - 1] &= 0x{2:X}u;)",
+                              bytes, st, tailByteMask(_bit_width));
     }
     else {
         inc_dec = std::format(R"(        uint16_t _carry = 1;
         for (int _i = 0; _i < {0}; _i++) {{ uint16_t _tmp = {1}.count[_i] + _carry; {1}.count[_i] = (uint8_t)_tmp; _carry = (_tmp >> 8) & 1; }}
-        {1}.count[{0} - 1] &= {2};)",
-                              bytes, st, gen_mask(_bit_width));
+        {1}.count[{0} - 1] &= 0x{2:X}u;)",
+                              bytes, st, tailByteMask(_bit_width));
     }
 
     std::string body;

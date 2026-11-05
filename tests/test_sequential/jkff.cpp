@@ -89,3 +89,48 @@ TEST(JKFlipFlopTest, Toggle) {
     c.tick();
     EXPECT_EQ(c.getWire(q->id())[0] & 0x0F, 0x0F);
 }
+
+// 位宽不是 8 的倍数时，翻转和置一路径写出的最高字节都要按有效位掩掉
+TEST(JKFlipFlopTest, WideToggleClearsExcessBits) {
+    dsc::Circuit c;
+    auto *j = c.createNet("j"), *k = c.createNet("k"), *clk = c.createNet("clk"), *q = c.createNet("q");
+    auto *ff = c.addComponent(std::make_unique<dsc::JKFlipFlop>("ff", 12));
+    c.connect(ff, "j", j);
+    c.connect(ff, "k", k);
+    c.connect(ff, "clk", clk);
+    c.connect(ff, "q", q);
+    c.compile();
+    c.init();
+    c.setWire(j->id(), {1, 0});
+    c.setWire(k->id(), {1, 0});
+    c.setWire(clk->id(), {1, 0});
+    c.tick();
+    c.setWire(clk->id(), {0, 0});
+    c.tick();
+    auto v = c.getWire(q->id());
+    ASSERT_GE(v.size(), 2u);
+    EXPECT_EQ(v[0], 0xFF);
+    EXPECT_EQ(v[1], 0x0F) << "12 位翻转后 bit12..15 必须是 0";
+}
+
+TEST(JKFlipFlopTest, WideSetClearsExcessBits) {
+    dsc::Circuit c;
+    auto *j = c.createNet("j"), *k = c.createNet("k"), *clk = c.createNet("clk"), *q = c.createNet("q");
+    auto *ff = c.addComponent(std::make_unique<dsc::JKFlipFlop>("ff", 12));
+    c.connect(ff, "j", j);
+    c.connect(ff, "k", k);
+    c.connect(ff, "clk", clk);
+    c.connect(ff, "q", q);
+    c.compile();
+    c.init();
+    c.setWire(j->id(), {1, 0});
+    c.setWire(k->id(), {0, 0});
+    c.setWire(clk->id(), {1, 0});
+    c.tick();
+    c.setWire(clk->id(), {0, 0});
+    c.tick();
+    auto v = c.getWire(q->id());
+    ASSERT_GE(v.size(), 2u);
+    EXPECT_EQ(v[0], 0xFF);
+    EXPECT_EQ(v[1], 0x0F) << "12 位置一后 bit12..15 必须是 0";
+}
