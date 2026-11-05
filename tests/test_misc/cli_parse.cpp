@@ -32,3 +32,53 @@ TEST(CliParse, DumpMemAddrLenOverflow) {
     EXPECT_FALSE(dcs_cli::parseAddrLen("FFFFFFFFFFFFFFF0:20", addr, len, err));
     EXPECT_FALSE(err.empty());
 }
+
+// --load FILE@ADDR：地址支持十进制/0x；文件名里可能有 '@'，从最后一个拆
+TEST(CliParse, LoadSpec) {
+    std::string path, err;
+    size_t addr = 0;
+    EXPECT_TRUE(dcs_cli::parseLoadSpec("fw.bin@0x80000000", path, addr, err)) << err;
+    EXPECT_EQ(path, "fw.bin");
+    EXPECT_EQ(addr, 0x80000000u);
+
+    EXPECT_TRUE(dcs_cli::parseLoadSpec("dir@x/fw.bin@16", path, addr, err)) << err;
+    EXPECT_EQ(path, "dir@x/fw.bin");
+    EXPECT_EQ(addr, 16u);
+
+    EXPECT_FALSE(dcs_cli::parseLoadSpec("fw.bin", path, addr, err));
+    EXPECT_FALSE(dcs_cli::parseLoadSpec("@0x10", path, addr, err));
+    EXPECT_FALSE(dcs_cli::parseLoadSpec("fw.bin@", path, addr, err));
+    EXPECT_FALSE(dcs_cli::parseLoadSpec("fw.bin@0xZZ", path, addr, err));
+}
+
+// --set NET=VALUE：十六进制右对齐到 128 位槽，十进制走 uint64
+TEST(CliParse, WireSet) {
+    std::string net, err;
+    std::vector<uint8_t> bytes;
+
+    EXPECT_TRUE(dcs_cli::parseWireSet("start_pc=0x80000000", net, bytes, err)) << err;
+    EXPECT_EQ(net, "start_pc");
+    ASSERT_EQ(bytes.size(), 16u);
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x00);
+    EXPECT_EQ(bytes[2], 0x00);
+    EXPECT_EQ(bytes[3], 0x80);
+    EXPECT_EQ(bytes[4], 0x00);
+
+    EXPECT_TRUE(dcs_cli::parseWireSet("n=1", net, bytes, err)) << err;
+    EXPECT_EQ(bytes[0], 1);
+    EXPECT_EQ(bytes[1], 0);
+
+    EXPECT_TRUE(dcs_cli::parseWireSet("n=0x1234", net, bytes, err)) << err;
+    EXPECT_EQ(bytes[0], 0x34);
+    EXPECT_EQ(bytes[1], 0x12);
+
+    // 32 个十六进制数字 = 128 位上限；再多一位必须拒绝
+    EXPECT_TRUE(dcs_cli::parseWireSet("n=0x" + std::string(32, 'F'), net, bytes, err)) << err;
+    EXPECT_EQ(bytes[15], 0xFF);
+    EXPECT_FALSE(dcs_cli::parseWireSet("n=0x" + std::string(33, 'F'), net, bytes, err));
+
+    EXPECT_FALSE(dcs_cli::parseWireSet("n", net, bytes, err));
+    EXPECT_FALSE(dcs_cli::parseWireSet("=1", net, bytes, err));
+    EXPECT_FALSE(dcs_cli::parseWireSet("n=0xGG", net, bytes, err));
+}

@@ -398,6 +398,25 @@ bash linux/build-boot.sh /tmp/initrd-busybox.cpio.gz
 整机仿真用单独的 `dcs_soc` 入口：加载 ELF、串口接宿主键盘、按 tohost 判定结果
 这些是计算机仿真特有的东西，不塞进纯电路仿真的 `dcs`。
 
+### 给自定义 CPU 装载镜像（不用内置 RISC-V 核）
+
+`dcs_soc` 不要求电路里一定有 `RiscVCPU`：没有 `--elf` 时跳过 ELF/入口/tohost 处理，
+用 QEMU loader 式的参数自己布置内存和入口：
+
+```bash
+dcs_soc my_cpu.json \
+  --load fw.bin@0x80000000 \
+  --load dtb.bin@0x81000000 \
+  --set start_pc=0x80000000 \
+  -t 100000
+```
+
+- `--load FILE@ADDR`：原始字节放到第一个 `WishboneMemory` 的物理地址（可重复，越界直接报错）；
+- `--set NET=VALUE`：`init()` 之后、第一拍之前按线网名写值（十六进制，最多 128 位）。
+  写的是没有驱动源的输入线网；仿真器不会每拍清零 `_w[]`，值会一直保持到有人改它；
+- 入口如何生效取决于你的 CPU：有 `start_pc` 输入就接到一根线网、用 `--set` 写；
+  复位向量硬连在核里的话，把镜像装到那个地址即可。
+
 依赖、分步编译方式，以及中途踩过的硬件语义坑（PLIC 的 enable/pending 是位图寄存器、
 UART 的 `reg-shift`、CLINT 的 mtimecmp 复位值等）都在
 [`linux/README.md`](linux/README.md)。

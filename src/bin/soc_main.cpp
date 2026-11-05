@@ -149,7 +149,9 @@ struct ForeverReaderGuard {
 
 int runSoc(const std::string &path, const std::string &elf_path, const std::string &disk_path, uint64_t ticks,
            int delay_ms, bool forever, const std::string &dump_mem, const std::string &feed_file,
-           uint64_t feed_after, const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
+           uint64_t feed_after, const std::string &watch_file, bool trace_cpu,
+           const std::vector<std::string> &load_specs, const std::vector<std::string> &set_specs,
+           dsc::Context &ctx) {
     // --forever 不会正常返回（tickForever 或 Ctrl+C 结束进程），后段的 dump-mem
     // 永远执行不到；早点报错，不要让参数静默失效
     if (forever && !dump_mem.empty()) {
@@ -224,48 +226,111 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
 
     dsc::WishboneMemory *mem = firstMemory(*circuit);
     if (!mem) {
-        std::cerr << "错误: 电路里没有 WishboneMemory，无法加载 ELF\n";
+        std::cerr << "错误: 电路里没有 WishboneMemory，无法加载镜像\n";
         return 1;
     }
     if (!dump_mem.empty() && dump_len > mem->memSize()) {
         std::cerr << std::format("错误: --dump-mem 的 len 0x{:X} 超出存储器容量 0x{:X}\n", dump_len, mem->memSize());
         return 1;
     }
-    auto img = dsc::loadElf(elf_path);
-    if (!img.ok) {
-        std::cerr << std::format("ELF 错误: {}\n", img.error);
-        return 1;
+    const size_t cap = mem->memSize();
+
+    // 二进制装载和 QEMU 的 loader 一样：文件原样放到物理地址。
+    // 放哪由用户决定，和 CPU 自己的复位向量无关
+    for (auto &spec: load_specs) {
+        std::string load_path, lerr;
+        size_t load_addr = 0;
+        if (!dcs_cli::parseLoadSpec(spec, load_path, load_addr, lerr)) {
+            std::cerr << "错误: " << lerr << "\n";
+            return 1;
+        }
+        std::ifstream lf(load_path, std::ios::binary | std::ios::ate);
+        if (!lf) {
+            std::cerr << std::format("错误: 无法打开 --load 文件 '{}'\n", load_path);
+            return 1;
+        }
+        const std::streamsize size = lf.tellg();
+        if (size < 0 || load_addr > cap || (uint64_t) size > (uint64_t) (cap - load_addr)) {
+            std::cerr << std::format("错误: --load '{}' 的 {} 字节从 0x{:X} 起超出存储器容量 0x{:X}\n", load_path,
+                                     (size < 0 ? 0 : size), load_addr, cap);
+            return 1;
+        }
+        std::vector<char> buf((size_t) size);
+        lf.seekg(0);
+        if (size > 0 && !lf.read(buf.data(), size)) {
+            std::cerr << std::format("错误: 读取 --load 文件 '{}' 失败\n", load_path);
+            return 1;
+        }
+        std::memcpy(mem->writableMemPtr() + load_addr, buf.data(), (size_t) size);
+        std::cout << std::format("装载: {} 字节 @ 0x{:X} <- {}\n", size, load_addr, load_path);
     }
-    if (img.data.size() > mem->memSize())
-        std::cerr << std::format("警告: ELF 映像 {} 字节超过存储器容量 {} 字节，按地址别名只保留最后 {} 字节\n",
-                                 img.data.size(), mem->memSize(), mem->memSize());
-    loadImage(mem, img);
-    // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
-    // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
-    bool cpu_matched = false;
+
+    // ELF 是 RISC-V 专用的捷径：额外给出入口地址和 tohost。没有 --elf 时
+    // 也允许运行，给自定义 CPU 用 --load/--set 自己布置内存和入口
+    dsc::ElfImage img;
     dsc::RiscVCPU<32> *cpu32 = nullptr;
     dsc::RiscVCPU<64> *cpu64 = nullptr;
-    for (auto &c: circuit->components()) {
-        if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
-            cpu32 = c32;
-            if (!img.is64) {
-                c32->setPc((uint32_t) img.entry);
-                cpu_matched = true;
-            }
-        } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
-            cpu64 = c64;
-            if (img.is64) {
-                c64->setPc(img.entry);
-                cpu_matched = true;
+    if (!elf_path.empty()) {
+        img = dsc::loadElf(elf_path);
+        if (!img.ok) {
+            std::cerr << std::format("ELF 错误: {}\n", img.error);
+            return 1;
+        }
+        if (img.data.size() > cap)
+            std::cerr << std::format("警告: ELF 映像 {} 字节超过存储器容量 {} 字节，按地址别名只保留最后 {} 字节\n",
+                                     img.data.size(), cap, cap);
+        loadImage(mem, img);
+        // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
+        // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
+        bool cpu_matched = false;
+        for (auto &c: circuit->components()) {
+            if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
+                cpu32 = c32;
+                if (!img.is64) {
+                    c32->setPc((uint32_t) img.entry);
+                    cpu_matched = true;
+                }
+            } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+                cpu64 = c64;
+                if (img.is64) {
+                    c64->setPc(img.entry);
+                    cpu_matched = true;
+                }
             }
         }
+        if (!cpu_matched) {
+            std::cerr << std::format(
+                    "错误: ELF 是 {}-bit，但电路里没有对应位宽的 riscv_cpu（JSON 里用 \"xlen\": \"{}\"）\n",
+                    img.is64 ? 64 : 32, img.is64 ? 64 : 32);
+            return 1;
+        }
+        std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
+                                 img.entry, img.tohost);
+    } else {
+        std::cout << "未指定 --elf：只运行电路和 --load 装载的镜像\n";
     }
-    if (!cpu_matched) {
-        std::cerr << std::format("错误: ELF 是 {}-bit，但电路里没有对应位宽的 riscv_cpu（JSON 里用 \"xlen\": \"{}\"）\n",
-                                 img.is64 ? 64 : 32, img.is64 ? 64 : 32);
-        return 1;
+    if (trace_cpu && !cpu32 && !cpu64) {
+        std::cerr << "警告: --trace-cpu 只支持内置 RiscVCPU，已忽略\n";
+        trace_cpu = false;
     }
-    const size_t cap = mem->memSize();
+    // --set 在第一拍之前写线网：自定义 CPU 的 start_pc/reset 这类输入就靠它
+    for (auto &spec: set_specs) {
+        std::string net_name, serr;
+        std::vector<uint8_t> bytes;
+        if (!dcs_cli::parseWireSet(spec, net_name, bytes, serr)) {
+            std::cerr << "错误: " << serr << "\n";
+            return 1;
+        }
+        dsc::Net *net = circuit->findNet(net_name);
+        if (!net) {
+            std::cerr << std::format("错误: --set 找不到线网 '{}'（先看 --list-types/电路 JSON 里的 nets）\n",
+                                     net_name);
+            return 1;
+        }
+        circuit->setWire(net->id(), bytes);
+        std::cout << std::format("设置: 线网 '{}' = {}\n", net_name, spec.substr(spec.find('=') + 1));
+    }
+
     const uint32_t tohost_addr = static_cast<uint32_t>(img.tohost & (cap - 1));
     // tohost 的 4 字节必须整块落在存储器里；符号地址可以落在末尾 1..3 字节，
     // 直接 memcpy 会读越界
@@ -273,8 +338,6 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     if (img.tohost != 0 && !tohost_ok)
         std::cerr << std::format("警告: tohost 地址 0x{:X} 不在存储器范围（容量 0x{:X}），"
                                  "无法按 tohost 判定结果\n", img.tohost, cap);
-    std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
-                             img.entry, img.tohost);
 
     // 仿真结束的统一收尾：先导出 --dump-mem，再 deinit。tohost 命中、运行错误、
     // 预算耗尽都走这里，不再各写一份 return
@@ -542,6 +605,10 @@ int main(int argc, char *argv[]) {
 
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
             "elf", "要加载的 RISC-V ELF（镜像、入口地址、tohost 都从它读）", cxxopts::value<std::string>())(
+            "load", "把原始二进制文件加载到 RAM 物理地址（FILE@ADDR，可重复；地址十进制或 0x）",
+            cxxopts::value<std::vector<std::string>>())(
+            "set", "init 后按线网名写值（NET=VALUE，可重复；给自定义 CPU 的 start_pc 等输入用）",
+            cxxopts::value<std::vector<std::string>>())(
             "disk", "virtio_blk 的后备镜像，覆盖 JSON 里的 backend_opts.path", cxxopts::value<std::string>())(
             "t,ticks", "仿真 tick 数（默认 10）", cxxopts::value<uint64_t>()->default_value("10"))(
             "forever", "一直仿真直到 Ctrl+C（忽略 --ticks，循环留在 JIT 里）")(
@@ -590,6 +657,9 @@ int main(int argc, char *argv[]) {
   dcs_soc circuit.json --elf test.elf -t 1000000       跑 riscv-tests，按 tohost 判定
   dcs_soc circuit.json --elf boot.elf -t 4000000000 --feed cmds.txt --feed-after 3500000000
                                                        启动后自动执行一串命令
+  dcs_soc circuit.json --load fw.bin@0x80000000 --set start_pc=0x80000000 -t 100000
+                                                       自定义 CPU：文件放到指定物理地址，
+                                                       入口写到 start_pc 线网（可重复）
 )";
         return 0;
     }
@@ -606,16 +676,15 @@ int main(int argc, char *argv[]) {
         std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
         return 1;
     }
-    if (!result.count("elf")) {
-        std::cerr << "错误: 整机仿真必须用 --elf 指定要运行的 RISC-V ELF\n";
-        return 1;
-    }
-    return runSoc(result["circuit"].as<std::string>(), result["elf"].as<std::string>(),
+    auto optList = [&](const char *key) {
+        return result.count(key) ? result[key].as<std::vector<std::string>>() : std::vector<std::string>{};
+    };
+    return runSoc(result["circuit"].as<std::string>(), result.count("elf") ? result["elf"].as<std::string>() : std::string{},
                   result.count("disk") ? result["disk"].as<std::string>() : std::string{},
                   result["ticks"].as<uint64_t>(), result["delay"].as<int>(), result.count("forever") != 0,
                   result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{},
                   result.count("feed") ? result["feed"].as<std::string>() : std::string{},
                   result["feed-after"].as<uint64_t>(),
                   result.count("watch") ? result["watch"].as<std::string>() : std::string{},
-                  result.count("trace-cpu") != 0, ctx);
+                  result.count("trace-cpu") != 0, optList("load"), optList("set"), ctx);
 }
