@@ -316,7 +316,13 @@ uint32_t paramU32(const std::unordered_map<std::string, std::string> &p, const s
         return d;
     unsigned long long v = 0;
     auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), v);
-    return (ec == std::errc{} && ptr == it->second.data() + it->second.size()) ? (uint32_t) v : d;
+    if (ec != std::errc{} || ptr != it->second.data() + it->second.size())
+        return d;
+    // meta 标了 wide_int，validateParams 不查 32 位上限；截断会让缓存段悄悄变到
+    // 别的地址（例如 base=2^32 变成 0），必须明确拒绝
+    if (v > UINT32_MAX)
+        throw std::invalid_argument(std::format("wishbone_dcache 参数 '{}' 超出 32 位范围: {}", k, it->second));
+    return (uint32_t) v;
 }
 DCS_REGISTER_COMPONENT(
     {"wb_dcache", {{"lines", "1024"}, {"base", "2147483648", {}, true}, {"size", "268435456", {}, true}},

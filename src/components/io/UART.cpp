@@ -17,6 +17,7 @@ constexpr uint32_t LCR_DLAB = 0x80;
 } // namespace
 
 UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "uart"), _baud_div(baud_div) {
+    // 位时序要求每位至少 2 拍；更小的值钳到 2（和 UartFeed/UartIn/UartTerm 一致）
     if (_baud_div < 2)
         _baud_div = 2;
     setParam("baud_div", std::to_string(_baud_div));

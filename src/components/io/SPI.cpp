@@ -19,6 +19,7 @@ constexpr uint32_t REG_CLKDIV = 0x10;
 } // namespace
 
 SPI::SPI(const std::string &name, int clkdiv) : SequentialComponent(name, "spi"), _clkdiv(clkdiv) {
+    // 0 及以下钳到 1：这是有意的容错（测试 ZeroClkdiv 覆盖），setParam 记录生效值
     if (_clkdiv < 1)
         _clkdiv = 1;
     setParam("clkdiv", std::to_string(_clkdiv));

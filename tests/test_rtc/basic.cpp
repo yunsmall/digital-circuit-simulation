@@ -161,3 +161,12 @@ TEST(RtcTest, NegativeNsPerTickRejected) {
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(err.find("ns_per_tick"), std::string::npos) << err;
 }
+
+// 0 表示时间永不推进，和 WallClock 一样明确拒绝，不能静默改成 100
+TEST(RtcTest, ZeroNsPerTickRejected) {
+    auto &f = dsc::ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("rtc", "r", {{"ns_per_tick", "0"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("ns_per_tick"), std::string::npos) << err;
+}

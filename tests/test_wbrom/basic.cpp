@@ -5,6 +5,7 @@
 #include <dcs/components/memory/ROM.h>
 #include <dcs/components/memory/WishboneROM.h>
 #include <cstring>
+#include <stdexcept>
 
 using namespace dsc;
 
@@ -447,6 +448,13 @@ TEST(WBROMTest, DataWidth16) {
 
     EXPECT_EQ(read16(0x00), 0x1234u);
     EXPECT_EQ(read16(0x02), 0x9ABCu);
+}
+
+// addr_width 直接是引脚位宽：0 和 >30 都不能进生成代码
+TEST(WishboneRomAdapterTest, RejectsInvalidAddrWidth) {
+    EXPECT_THROW(WishboneROMAdapter("bad0", 0, 32, 0), std::invalid_argument);
+    EXPECT_THROW(WishboneROMAdapter("bad1", 31, 32, 0), std::invalid_argument);
+    EXPECT_THROW(WishboneROMAdapter("bad2", 129, 32, 0), std::invalid_argument);
 }
 
 // ============================================================

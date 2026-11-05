@@ -64,6 +64,7 @@ static const char *float_binop_expr(FloatBinOpKind op) {
 
 FloatBinOp::FloatBinOp(const std::string &name, int precision, FloatBinOpKind op) :
     CombinationalComponent(name, float_binop_name(op)), _precision(precision), _op(op) {
+    float_info(precision); // 非法精度在构造期就拒绝，不能拖到生成代码时才抛
     setParam("precision", std::to_string(precision));
     addInput("a", precision);
     addInput("b", precision);
@@ -161,6 +162,7 @@ static const char *float_cmp_op(FloatCmpOp op) {
 
 FloatCmp::FloatCmp(const std::string &name, int precision, FloatCmpOp op) :
     CombinationalComponent(name, std::string("f") + float_cmp_str(op)), _precision(precision), _op(op) {
+    float_info(precision); // 非法精度在构造期就拒绝，不能拖到生成代码时才抛
     setParam("precision", std::to_string(precision));
     addInput("a", precision);
     addInput("b", precision);

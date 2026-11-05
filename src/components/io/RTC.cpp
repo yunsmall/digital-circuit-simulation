@@ -11,8 +11,10 @@ constexpr int I_CLK = 0, I_ADDR = 1, I_WDAT = 2, I_WE = 3, I_EN = 4;
 constexpr int O_RDAT = 0, O_READY = 1, O_IRQ = 2;
 } // namespace
 
-RTC::RTC(const std::string &name, uint32_t ns_per_tick) :
-    SequentialComponent(name, "rtc"), _ns_per_tick(ns_per_tick ? ns_per_tick : 100) {
+RTC::RTC(const std::string &name, uint32_t ns_per_tick) : SequentialComponent(name, "rtc"), _ns_per_tick(ns_per_tick) {
+    // 0 表示时间永不推进，和 WallClock 一样直接拒绝，不再静默改成 100
+    if (_ns_per_tick == 0)
+        throw std::invalid_argument("ns_per_tick 必须大于 0");
     setParam("ns_per_tick", std::to_string(_ns_per_tick));
     addInput("clk", 1);
     addInput("addr", 8);
@@ -112,9 +114,9 @@ DCS_REGISTER_COMPONENT(
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             const int npt = dsc::paramInt(p, "ns_per_tick", 100);
             // 负值强转 uint32 会变成 40 多亿 ns/tick，RTC 看起来正常却能跳出天文数字；
-            // 和 WallClock 用同一上限
-            if (npt < 0 || npt > 1000000000)
-                throw std::invalid_argument("ns_per_tick 必须在0-1000000000之间");
+            // 和 WallClock 用同一范围和同一语义（0 也拒绝）
+            if (npt < 1 || npt > 1000000000)
+                throw std::invalid_argument("ns_per_tick 必须在1-1000000000之间");
             return std::make_unique<dsc::RTC>(n, (uint32_t) npt);
         });
 } // namespace

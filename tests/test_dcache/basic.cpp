@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include <dcs/Circuit.h>
+#include <dcs/ComponentFactory.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/components/platform/WishboneDcache.h>
 
@@ -403,4 +404,18 @@ TEST(DcacheTest, JsonRoundTripKeepsParams) {
             EXPECT_EQ(c->exportParams().at("size"), "65536");
         }
     EXPECT_TRUE(found);
+}
+
+// base/size 超过 32 位时不能静默截断：截断会把缓存段挪到别的地址
+TEST(DcacheTest, RejectsParamsAbove32Bits) {
+    auto &f = dsc::ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("wb_dcache", "dc", {{"base", "4294967296"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("32 位"), std::string::npos) << err;
+
+    err.clear();
+    auto c2 = f.create("wb_dcache", "dc2", {{"size", "4294967296"}}, err);
+    EXPECT_EQ(c2, nullptr);
+    EXPECT_NE(err.find("32 位"), std::string::npos) << err;
 }

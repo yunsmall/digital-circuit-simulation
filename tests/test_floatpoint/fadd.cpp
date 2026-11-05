@@ -1,5 +1,6 @@
 // 浮点加法测试
 #include <cstring>
+#include <stdexcept>
 #include <dcs/Circuit.h>
 #include <dcs/components/combinational/FloatPoint.h>
 #include <gtest/gtest.h>
@@ -86,4 +87,10 @@ TEST(FloatAddTest, BasicAdd64) {
     std::memcpy(&uo, &dout, 8);
     for (int i = 0; i < 8; i++)
         EXPECT_EQ(c.getWire(o->id())[i], (uo >> (i * 8)) & 0xFF);
+}
+
+// 非法精度必须在构造期拒绝，不能拖到 generateC 才抛
+TEST(FloatAddTest, RejectsInvalidPrecision) {
+    EXPECT_THROW(dsc::FloatBinOp("bad", 8, dsc::FloatBinOpKind::ADD), std::invalid_argument);
+    EXPECT_THROW(dsc::FloatCmp("bad", 8, dsc::FloatCmpOp::EQ), std::invalid_argument);
 }

@@ -673,7 +673,14 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
         for (auto &w: local_warnings)
             std::cerr << std::format("[dcs] 警告: {}\n", w);
 
-    std::string c_code = generateC();
+    // 生成器里可能有外部输入触发的异常（非法参数拖到这一阶段、分配失败），
+    // 不能让它穿到 CLI 的 main 触发 terminate
+    std::string c_code;
+    try {
+        c_code = generateC();
+    } catch (const std::exception &e) {
+        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("生成代码时异常: {}", e.what())};
+    }
 
     // 调试用：把生成的 C 落到文件里，方便对照反汇编排查性能问题
     if (const char *dump = std::getenv("DCS_DUMP_C")) {

@@ -21,6 +21,7 @@ enum Fill { F_IDLE = 0, F_REQ = 1, F_WAIT = 2 };
 
 WishboneCache::WishboneCache(const std::string &name, int lines)
     : SequentialComponent(name, "wb_cache"), _lines(lines) {
+    // 行数按可用范围钳位（有意容错，setParam 记录生效值）
     if (_lines < 2)
         _lines = 2;
     if (_lines > 256)

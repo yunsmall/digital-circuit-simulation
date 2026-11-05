@@ -31,6 +31,10 @@ WishboneROMAdapter::WishboneROMAdapter(const std::string &name, int addr_width, 
     // 适配器的等待拍数是 read_latency + 2，负值会和实际上接的 ROM 时序对不上
     if (read_latency < 0 || read_latency > 1024)
         throw std::invalid_argument("读延迟必须在0-1024之间");
+    // addr_width 直接是引脚位宽：>128 会让生成代码按 17 字节以上读写 16 字节的
+    // 线网槽；上限和配套 ROM（depthFromAddrWidth）保持一致
+    if (addr_width < 1 || addr_width > 30)
+        throw std::invalid_argument("addr_width 必须在1~30之间");
 
     addInput("wb_adr_i", addr_width);
     addInput("wb_dat_i", data_width);

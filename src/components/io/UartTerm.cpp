@@ -13,6 +13,7 @@ enum OutIdx { O_DATA = 0, O_VALID };
 } // namespace
 
 UartTerm::UartTerm(const std::string &name, int baud_div) : SequentialComponent(name, "uart_term"), _baud_div(baud_div) {
+    // 半位周期 = baud_div / 2，小于 2 时采样点不成立，钳到 2
     if (_baud_div < 2)
         _baud_div = 2;
     setParam("baud_div", std::to_string(_baud_div));

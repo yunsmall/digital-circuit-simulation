@@ -26,6 +26,7 @@ constexpr uint32_t CTX_STRIDE = 0x1000;  // 每个 context 的 threshold/claim �
 } // namespace
 
 PLIC::PLIC(const std::string &name, int num_sources) : SequentialComponent(name, "plic"), _num_sources(num_sources) {
+    // 位图只有 32 位：越界值钳到可用范围（有意容错，setParam 记录生效值）
     if (_num_sources < 1)
         _num_sources = 1;
     if (_num_sources > MAX_SOURCES)

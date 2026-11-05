@@ -23,6 +23,7 @@ enum Ph { PH_IDLE = 0, PH_START = 1, PH_ADDR = 2, PH_ADDR_ACK = 3, PH_DATA = 4, 
 } // namespace
 
 I2C::I2C(const std::string &name, int clkdiv) : SequentialComponent(name, "i2c"), _clkdiv(clkdiv) {
+    // 0 及以下钳到 1：这是有意的容错（测试 ZeroClkdiv 覆盖），setParam 记录生效值
     if (_clkdiv < 1)
         _clkdiv = 1;
     setParam("clkdiv", std::to_string(_clkdiv));
