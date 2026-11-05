@@ -178,6 +178,9 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
                    reinterpret_cast<void *>(&dcsBusConflictThunk));
     // -nostdlib 下 TCC 处理大块初始化/结构体赋值时会自行发出 memset/memcpy 调用
     {
+        // 长度参数用 unsigned long long 而不是 size_t：必须和 shim/dcs_util.h 里
+        // dcs_memcpy/dcs_memset 的声明逐字一致。TCC 不检查符号类型，
+        // 两边宽度不同（例如 shim 声明 size_t 而这里用 64 位）会按错误宽度取参
         using memset_fn = void *(*)(void *, int, unsigned long long);
         using memcpy_fn = void *(*)(void *, const void *, unsigned long long);
         using memmove_fn = void *(*)(void *, const void *, unsigned long long);

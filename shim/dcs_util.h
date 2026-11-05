@@ -22,6 +22,10 @@ typedef struct {
     unsigned long long hi;
 } dcs_u128;
 
+// 生成的代码按 16 字节整槽搬运 dcs_u128，并假设首成员地址就是结构体地址。
+// 用 typedef 而不是 _Static_assert：TCC 对后者支持不全，这里只要求能编过
+typedef char dcs_u128_must_be_16_bytes[(sizeof(dcs_u128) == 16) ? 1 : -1];
+
 #ifdef __clang__
 // LLVM/Clang 后端：直接用编译器内置函数，编译器会按内联展开
 DCS_FORCE_INLINE void *dcs_memcpy(void *dst, const void *src, unsigned long long n) {
@@ -81,6 +85,8 @@ extern void dcs_atomic_store_rel(void *p, unsigned int v);
 #define dcs_load_acq(p) dcs_atomic_load_acq(p)
 #define dcs_store_rel(p, v) dcs_atomic_store_rel(p, v)
 #else
+// 这里必须先把指针转成 unsigned int*：调用点传进来的可能是 char*（状态结构体里
+// 的偏移指针），直接 __atomic_load_n(char*, ...) 只会读 1 个字节，高位全丢
 #define dcs_load_acq(p) __atomic_load_n((unsigned int *) (p), __ATOMIC_ACQUIRE)
 #define dcs_store_rel(p, v) __atomic_store_n((unsigned int *) (p), (unsigned int) (v), __ATOMIC_RELEASE)
 #endif
