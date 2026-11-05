@@ -76,6 +76,11 @@ inline bool parseAddrLen(const std::string &spec, size_t &addr, size_t &len, std
         error = "--dump-mem 的 addr/len 必须是十六进制整数: " + spec;
         return false;
     }
+    // addr+len 溢出会让 dump 打印的地址回绕，必须在这里拦住
+    if (addr > SIZE_MAX - len) {
+        error = "--dump-mem 的 addr + len 溢出 size_t";
+        return false;
+    }
     return true;
 }
 

@@ -24,3 +24,11 @@ TEST(CliParse, DumpMemAddrLen) {
     EXPECT_FALSE(dcs_cli::parseAddrLen(":10", addr, len, err));
     EXPECT_FALSE(dcs_cli::parseAddrLen("1000:", addr, len, err)) << "空长度不能当 0 处理";
 }
+
+// addr+len 溢出 size_t 时 dump 打印的地址会回绕，必须在解析阶段拒绝
+TEST(CliParse, DumpMemAddrLenOverflow) {
+    size_t addr = 0, len = 0;
+    std::string err;
+    EXPECT_FALSE(dcs_cli::parseAddrLen("FFFFFFFFFFFFFFF0:20", addr, len, err));
+    EXPECT_FALSE(err.empty());
+}

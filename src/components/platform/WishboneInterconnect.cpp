@@ -58,6 +58,9 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
         uint32_t size = parseSegValue(token.substr(colon + 1), token);
         if (size == 0)
             throw std::invalid_argument("地址段大小不能为 0");
+        // 段表来自 JSON：数量不设上限时重叠检查是 O(N²)，生成的 else-if 链也会失控
+        if (_segments.size() >= 256)
+            throw std::invalid_argument("地址段数量不能超过 256");
         _segments.push_back({base, size});
     }
     if (_segments.empty())

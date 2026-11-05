@@ -465,6 +465,12 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             std::cerr << "错误: " << perr << "\n";
             return 1;
         }
+        // len 是用户给的十六进制数，不限住就是一个能跑几小时/几天的输出循环
+        if (dump_len > dump_target->memSize()) {
+            std::cerr << std::format("错误: --dump-mem 的 len 0x{:X} 超出存储器容量 0x{:X}\n", dump_len,
+                                     dump_target->memSize());
+            return 1;
+        }
     }
 
     auto err = circuit->compile();

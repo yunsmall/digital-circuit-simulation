@@ -544,20 +544,37 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
     return {ErrorCode::OK};
 }
 
-bool Circuit::dfsCycle(int u, const std::vector<std::vector<int>> &adj, std::vector<Color> &color,
+bool Circuit::dfsCycle(int start, const std::vector<std::vector<int>> &adj, std::vector<Color> &color,
                        std::vector<int> &path) {
-    color[u] = Color::GRAY;
-    path.push_back(u);
-    for (int v: adj[u]) {
-        if (color[v] == Color::GRAY) {
-            path.push_back(v);
-            return true;
+    // 显式栈而不是递归：自动生成的长组合链（几万个元件串联）会把宿主栈打爆
+    struct Frame {
+        int u;
+        size_t next;
+    };
+    std::vector<Frame> stack;
+    color[start] = Color::GRAY;
+    path.push_back(start);
+    stack.push_back({start, 0});
+    while (!stack.empty()) {
+        const size_t top = stack.size() - 1;
+        const int u = stack[top].u;
+        if (stack[top].next < adj[u].size()) {
+            const int v = adj[u][stack[top].next++];
+            if (color[v] == Color::GRAY) {
+                path.push_back(v);
+                return true;
+            }
+            if (color[v] == Color::WHITE) {
+                color[v] = Color::GRAY;
+                path.push_back(v);
+                stack.push_back({v, 0});
+            }
+        } else {
+            color[u] = Color::BLACK;
+            path.pop_back();
+            stack.pop_back();
         }
-        if (color[v] == Color::WHITE && dfsCycle(v, adj, color, path))
-            return true;
     }
-    color[u] = Color::BLACK;
-    path.pop_back();
     return false;
 }
 

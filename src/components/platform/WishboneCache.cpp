@@ -48,11 +48,13 @@ WishboneCache::WishboneCache(const std::string &name, int lines)
 WishboneCache::~WishboneCache() = default;
 
 
+// 数组维度用 lines 参数（构造时已钳到 2..256），不用固定的 256：
+// 参数写 2 时不白占 5KB，也避免读者以为 lines 只影响索引
 std::string WishboneCache::genStateDecl() const {
     return std::format(
-            "static uint32_t _cache_ld_{0}[256][4];\n"
-            "static uint32_t _cache_lt_{0}[256];\n"
-            "static uint8_t  _cache_lv_{0}[256];\n"
+            "static uint32_t _cache_ld_{0}[{2}][4];\n"
+            "static uint32_t _cache_lt_{0}[{2}];\n"
+            "static uint8_t  _cache_lv_{0}[{2}];\n"
             "static uint64_t *_cache_stats_{0} = (uint64_t *)0x{1:X}ULL;\n"
             "static uint32_t _cache_latched_{0};\n"
             "static uint8_t  _cache_hold_ack_{0}, _cache_prev_stb_{0};\n"
@@ -62,7 +64,7 @@ std::string WishboneCache::genStateDecl() const {
             "static uint32_t _cache_fill_addr_{0}, _cache_fill_line_{0}, _cache_fill_word_{0};\n"
             "static uint32_t _cache_pend_adr_{0}, _cache_pend_wdata_{0}, _cache_pend_sel_{0};\n"
             "static uint8_t  _cache_pend_we_{0};\n",
-            _id, reinterpret_cast<uintptr_t>(&_stats));
+            _id, reinterpret_cast<uintptr_t>(&_stats), _lines);
 }
 
 std::string WishboneCache::genInitCode() const {

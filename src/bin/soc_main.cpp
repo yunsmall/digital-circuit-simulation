@@ -227,6 +227,10 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         std::cerr << "错误: 电路里没有 WishboneMemory，无法加载 ELF\n";
         return 1;
     }
+    if (!dump_mem.empty() && dump_len > mem->memSize()) {
+        std::cerr << std::format("错误: --dump-mem 的 len 0x{:X} 超出存储器容量 0x{:X}\n", dump_len, mem->memSize());
+        return 1;
+    }
     auto img = dsc::loadElf(elf_path);
     if (!img.ok) {
         std::cerr << std::format("ELF 错误: {}\n", img.error);
