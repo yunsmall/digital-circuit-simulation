@@ -435,7 +435,13 @@ CircuitError Circuit::validate(std::vector<std::string> *warnings) {
     if (_sim_started)
         deinit();
     jitCleanup();
-    return prepareNetlist(warnings);
+    // 展开/检查都要分配线网表和邻接表，内存不足时 bad_alloc 不能穿给调用方：
+    // validate/compile 的约定是返回 CircuitError
+    try {
+        return prepareNetlist(warnings);
+    } catch (const std::exception &e) {
+        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("准备网表时异常: {}", e.what())};
+    }
 }
 
 CircuitError Circuit::check(std::vector<std::string> *warnings) {
@@ -613,7 +619,7 @@ CircuitError Circuit::expandComposites() {
                 out_nets.push_back(p->net());
 
             CompositeComponent::Expansion exp;
-            _used_definitions.insert(comp->definitionName());
+            auto [used_it, used_new] = _used_definitions.insert(comp->definitionName());
             comp->expandTo(*this, exp);
 
             if (!exp.error.empty()) {
@@ -633,8 +639,11 @@ CircuitError Circuit::expandComposites() {
                 // 位宽按当前连接重算：disconnectAll 现在会顺带重算，但不能把正确性
                 // 押在它的副作用上（将来改成只清指针就会静默留下过宽的线网）
                 recomputeNetWidths();
-                // 展开失败的定义不算"用过"：导出时不该把它的蓝图带出去
-                _used_definitions.erase(comp->definitionName());
+                // 展开失败的定义不算"用过"：导出时不该把它的蓝图带出去。
+                // 但同一个定义可能已经被别的实例成功展开，只有本次插入的才删，
+                // 否则会把那些实例的蓝图一起丢出导出结果
+                if (used_new)
+                    _used_definitions.erase(used_it);
                 _compiled = false;
                 return {ErrorCode::PREPARE_FAILED, -1, {}, exp.error};
             }
@@ -685,8 +694,15 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     }
 
     std::vector<std::string> local_warnings;
-    if (auto err = prepareNetlist(&local_warnings); err.code != ErrorCode::OK)
-        return err;
+    // 同 validate：展开和检查阶段的分配失败也要走返回值，不能在 CLI 的 main 里 terminate
+    CircuitError prep;
+    try {
+        prep = prepareNetlist(&local_warnings);
+    } catch (const std::exception &e) {
+        return {ErrorCode::PREPARE_FAILED, -1, {}, std::format("准备网表时异常: {}", e.what())};
+    }
+    if (prep.code != ErrorCode::OK)
+        return prep;
     if (warnings)
         warnings->insert(warnings->end(), local_warnings.begin(), local_warnings.end());
     else

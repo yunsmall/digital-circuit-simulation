@@ -93,3 +93,36 @@ TEST(CircuitExport, NestedDefinitionsIncluded) {
     EXPECT_TRUE(root["definitions"].contains("outer_def"));
     EXPECT_TRUE(root["definitions"].contains("inner_def"));
 }
+
+// 两个实例共用一个蓝图时，后一个实例展开失败不能把前一个已成功展开的定义
+// 从 usedDefinitions 里删掉；否则删掉失败实例后导出会缺这份蓝图
+TEST(CircuitExport, FailedSiblingKeepsUsedDefinition) {
+    const char *shared = R"JSON({
+  "params": {"width": "8"},
+  "nets": ["a", "y"],
+  "components": [
+    {"type": "not", "name": "n0", "params": {"bit_width": "${width}"},
+     "connections": {"in": "a", "out": "y"}}
+  ],
+  "expose": {"inputs": {"a": "a"}, "outputs": {"y": "y"}}
+})JSON";
+    const std::string json = std::format(R"JSON({{
+  "definitions": {{ "shared_def": {0} }},
+  "nets": ["in1", "out1", "in2", "out2"],
+  "components": [
+    {{"type": "composite", "name": "u_ok", "params": {{"definition": "shared_def"}},
+      "connections": {{"a": "in1", "y": "out1"}}}},
+    {{"type": "composite", "name": "u_bad",
+      "params": {{"definition": "shared_def", "width": "0"}},
+      "connections": {{"a": "in2", "y": "out2"}}}}
+  ]
+}})JSON",
+                                             shared);
+    Context ctx;
+    std::string error;
+    auto c = Circuit::fromJson(json, error, "", &ctx);
+    ASSERT_TRUE(c) << error;
+    // u_bad 的 width=0 会让子元件创建失败；u_ok 已经成功展开
+    EXPECT_EQ(c->compile().code, ErrorCode::PREPARE_FAILED);
+    EXPECT_GT(c->usedDefinitions().count("shared_def"), 0u);
+}
