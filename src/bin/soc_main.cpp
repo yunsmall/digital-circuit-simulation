@@ -19,6 +19,7 @@
 #include <dcs/components/platform/VirtioBlk.h>
 #include <dcs/components/platform/WishboneDcache.h>
 #include <dcs/components/io/UartFeed.h>
+#include <dcs/components/io/UartIn.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/util/ElfLoader.h>
 #include <filesystem>
@@ -160,6 +161,24 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         std::cerr << "错误: --watch 必须配合 --forever 使用\n";
         return 1;
     }
+    if (forever && delay_ms > 0) {
+        std::cerr << "错误: --forever 下不会按拍 sleep，--delay 无效\n";
+        return 1;
+    }
+    if (delay_ms < 0) {
+        std::cerr << "错误: --delay 不能为负\n";
+        return 1;
+    }
+    // --dump-mem 的参数在仿真前就解析：以前放在结尾，tohost 命中/运行错误时
+    // 直接 return，导出永远执行不到，而这两种场合恰恰最需要看存储器现场
+    size_t dump_addr = 0, dump_len = 0;
+    if (!dump_mem.empty()) {
+        std::string perr;
+        if (!dcs_cli::parseAddrLen(dump_mem, dump_addr, dump_len, perr)) {
+            std::cerr << "错误: " << perr << "\n";
+            return 1;
+        }
+    }
     auto circuit = dcs_cli::loadCircuit(path, ctx);
     if (!circuit)
         return 1;
@@ -213,6 +232,9 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         std::cerr << std::format("ELF 错误: {}\n", img.error);
         return 1;
     }
+    if (img.data.size() > mem->memSize())
+        std::cerr << std::format("警告: ELF 映像 {} 字节超过存储器容量 {} 字节，按地址别名只保留最后 {} 字节\n",
+                                 img.data.size(), mem->memSize(), mem->memSize());
     loadImage(mem, img);
     // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
     // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
@@ -250,13 +272,26 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
                              img.entry, img.tohost);
 
+    // 仿真结束的统一收尾：先导出 --dump-mem，再 deinit。tohost 命中、运行错误、
+    // 预算耗尽都走这里，不再各写一份 return
+    auto finish = [&](int code) {
+        if (!dump_mem.empty())
+            dsc::dumpMemoryHex(std::cout, mem->writableMemPtr(), cap, dump_addr, dump_len);
+        circuit->deinit();
+        return code;
+    };
+
     // UartFeed 只提供队列；读 stdin 的活在这里单独开线程，仿真热路径上没有任何系统调用
     dsc::UartFeed *uart_feed = nullptr;
-    for (auto &c: circuit->components())
+    bool has_uart_in = false;
+    for (auto &c: circuit->components()) {
         if (auto *u = dynamic_cast<dsc::UartFeed *>(c.get())) {
-            uart_feed = u;
-            break;
+            if (!uart_feed)
+                uart_feed = u;
+        } else if (dynamic_cast<dsc::UartIn *>(c.get())) {
+            has_uart_in = true;
         }
+    }
     // --feed 往串口队列塞字节，没有 uart_feed 时后面会解引用空指针；
     // --watch 分支有自己的检查，这里统一在入口拦掉
     if (!feed_file.empty() && !uart_feed) {
@@ -309,9 +344,15 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         if (forever)
             std::cout << "注意: --feed 只在有限 tick 模式下生效，--forever 请手动交互\n";
     }
+    if (feed_file.empty() && feed_after != 0)
+        std::cerr << "警告: --feed-after 需要配合 --feed 使用，已忽略\n";
+    if (!feed_file.empty() && !forever && feed_after >= ticks)
+        std::cerr << "警告: --feed-after 不小于 --ticks，脚本不会注入\n";
 
     if (forever) {
         if (watch_file.empty()) {
+            if (!uart_feed && !has_uart_in)
+                std::cerr << "警告: 电路里没有 uart_feed/uart_in，键盘输入不会送进串口\n";
             std::cout << "无限仿真中（Ctrl+C 停止）\n" << std::flush;
             circuit->tickForever();
             // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
@@ -368,6 +409,12 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             }
             std::error_code ec;
             const auto sz = std::filesystem::file_size(watch_file, ec);
+            // 文件被截断/重写（> file 或 truncate）时旧偏移已失效，必须从头读
+            if (!ec && sz < watch_pos) {
+                watch_pos = 0;
+                pending.clear();
+                pending_pos = 0;
+            }
             if (!ec && sz > watch_pos) {
                 std::ifstream wf(watch_file, std::ios::binary);
                 if (wf) {
@@ -379,6 +426,21 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                         pending_pos = 0;
                     }
                     pending += chunk;
+                    // UART 消费慢时宿主侧不能无界积压（串口队列只有 4KB），
+                    // 超过 1MB 就丢最旧的数据并提示一次
+                    constexpr size_t kMaxPending = 1u << 20;
+                    if (pending.size() - pending_pos > kMaxPending) {
+                        pending.erase(0, pending_pos);
+                        pending_pos = 0;
+                        if (pending.size() > kMaxPending) {
+                            pending.erase(0, pending.size() - kMaxPending);
+                            static bool warned = false;
+                            if (!warned) {
+                                std::cerr << "警告: --watch 输入积压超过 1MB，丢弃最旧数据\n";
+                                warned = true;
+                            }
+                        }
+                    }
                 }
             }
             while (pending_pos < pending.size() && uart_feed->push((uint8_t) pending[pending_pos]))
@@ -410,7 +472,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         }
         if (circuit->hasError()) {
             std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-            return 1;
+            return finish(1);
         }
         t += chunk;
         if (feed_pos < feed_data.size() && t >= feed_after) {
@@ -424,11 +486,17 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             std::memcpy(&r, mem->writableMemPtr() + tohost_addr, 4);
             if (r) {
                 std::cout << std::format("\n程序结束: {} (tohost={})\n", r == 1 ? "通过" : "失败", r);
-                return r == 1 ? 0 : 1;
+                return finish(r == 1 ? 0 : 1);
             }
         }
         if (delay_ms > 0 && t + 1 < ticks)
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    // 预算耗尽时 tohost 仍为 0：测试没有跑完，不能当成成功退出
+    if (tohost_ok) {
+        std::cerr << "错误: 仿真预算耗尽，程序没有写 tohost\n";
+        return finish(1);
     }
 
     // 有数据缓存时按需打印命中率：调缓存参数（行数）时靠它判断值不值得加
@@ -459,20 +527,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     }
 
     // 把存储器里的一段原样导出来。串口还没初始化之前内核的日志只在 printk
-    // 环形缓冲区里，只能靠它看到内核到底走到哪了
-    if (!dump_mem.empty()) {
-        size_t addr, len;
-        std::string perr;
-        if (!dcs_cli::parseAddrLen(dump_mem, addr, len, perr)) {
-            std::cerr << "错误: " << perr << "\n";
-            return 1;
-        }
-        const uint8_t *p = mem->writableMemPtr();
-        dsc::dumpMemoryHex(std::cout, p, cap, addr, len);
-    }
-
-    circuit->deinit();
-    return 0;
+    // 环形缓冲区里，只能靠它看到内核到底走到哪了（finish 统一负责导出）
+    return finish(0);
 }
 
 } // namespace
