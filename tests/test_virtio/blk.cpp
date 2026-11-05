@@ -303,3 +303,32 @@ TEST(VirtioTest, ExternalBackendMissingReadIsRejected) {
     EXPECT_FALSE(dev.prepare(Context::global(), err));
     EXPECT_NE(err.find("read"), std::string::npos) << err;
 }
+
+// init 当重置重复调用时，后端 init 只能执行一次（后端 init 不可重入）
+TEST(VirtioBlk, RepeatedInitCallsBackendOnce) {
+    struct Counters {
+        int inits = 0;
+        int deinits = 0;
+    } ctr;
+    dsc::Circuit c;
+    auto dev = std::make_unique<VirtioBlk>("vb0");
+    auto *vp = dev.get();
+    c.addComponent(std::move(dev));
+    VirtioBlk::BackendOps ops;
+    ops.ctx = &ctr;
+    ops.init = [](void *p) { ++static_cast<Counters *>(p)->inits; };
+    ops.deinit = [](void *p) { ++static_cast<Counters *>(p)->deinits; };
+    ops.read = [](void *, uint64_t, uint8_t *buf, uint32_t len) {
+        std::memset(buf, 0, len);
+        return 1u;
+    };
+    ops.size = 512;
+    vp->setBackend(ops);
+    ASSERT_EQ(c.compile().code, ErrorCode::OK);
+    c.init();
+    EXPECT_EQ(ctr.inits, 1);
+    c.init();
+    EXPECT_EQ(ctr.inits, 1) << "第二次 init 不能再调后端 init";
+    c.deinit();
+    EXPECT_EQ(ctr.deinits, 1);
+}

@@ -52,6 +52,8 @@ DCS_DLL_EXPORT void dcs_dll_tick_comb(void *st, const uint8_t *inputs, uint8_t *
 }
 
 DCS_DLL_EXPORT void dcs_dll_reset(void *st, uint8_t *outputs) {
-    (void) st;
+    // 真实 DLL 会用 state 复位内部状态；这里故意解引用，好让"init 之前
+    // 调 reset 传进来空指针"这类调用直接崩掉而不是静默通过
+    ((AndState *) st)->dummy = 0;
     memset(outputs, 0, 16);
 }

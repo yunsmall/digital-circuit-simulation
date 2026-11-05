@@ -131,6 +131,21 @@ bool loadImage(dsc::WishboneMemory *mem, const dsc::ElfImage &img) {
     return true;
 }
 
+// --forever 的串口读线程没有退出条件，只能靠停止标志让它自然退出。
+// runSoc 的任何返回路径都可能是错误路径（线程还在），而线程可能正卡在
+// readConsoleChar 里，join 不了：停止标志和电路都在守卫里故意不析构，
+// 进程马上退出，留着它们才能保证 detach 的线程不会访问已释放对象
+struct ForeverReaderGuard {
+    std::atomic<bool> *stop = nullptr;
+    std::unique_ptr<dsc::Circuit> &circuit;
+    ~ForeverReaderGuard() {
+        if (!stop)
+            return;
+        stop->store(true, std::memory_order_release);
+        (void) circuit.release();
+    }
+};
+
 int runSoc(const std::string &path, const std::string &elf_path, const std::string &disk_path, uint64_t ticks,
            int delay_ms, bool forever, const std::string &dump_mem, const std::string &feed_file,
            uint64_t feed_after, const std::string &watch_file, bool trace_cpu, dsc::Context &ctx) {
@@ -263,14 +278,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             }
         }).detach();
     }
-    // 运行期错误返回时读线程可能正卡在阻塞读/推队列里，无法 join。进程马上退出，
-    // 这里故意不析构电路和停止标志：否则 detach 线程下一次 push 会访问已释放的 UartFeed
-    auto abortForeverReader = [&]() {
-        if (reader_stop) {
-            reader_stop->store(true, std::memory_order_release);
-            (void) circuit.release();
-        }
-    };
+    // 守卫覆盖本函数之后的所有返回路径（含 --feed 打开失败这类错误退出）
+    ForeverReaderGuard reader_guard{reader_stop, circuit};
 
     // --feed：把一段脚本预先塞进串口输入队列，启动完成后自动执行。
     // 每次改动机器模型都要重启内核跑几十亿拍，逐个命令交互验证太慢，
@@ -297,7 +306,6 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-                abortForeverReader();
                 return 1;
             }
         }
@@ -325,7 +333,6 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             // 总线冲突时批量入口会提前返回，不查就在这里无限空转
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-                abortForeverReader();
                 return 1;
             }
             if (trace_cpu) {
