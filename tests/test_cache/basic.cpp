@@ -193,3 +193,41 @@ TEST(CacheTest, AckHeldWhileStbHigh) {
     }
     EXPECT_GT(ack_seen, 1) << "主设备保持 stb 期间 ack 必须持续有效，否则会丢应答";
 }
+
+// 填充期间上游撤销 stb 又重新拉起新请求：新请求不能被吞掉
+TEST(CacheTest, StbRetriggeredDuringFillIsNotLost) {
+    Fixture f;
+    f.compile();
+    f.put(0x100, 0xDEADBEEF);
+    f.put(0x104, 0x12345678);
+    // 发起 A（未命中，开始填充）
+    f.circuit->setWire(f.c_adr->id(), {0x00, 0x01, 0x00, 0x00});
+    f.circuit->setWire(f.c_we->id(), 0);
+    f.circuit->setWire(f.c_sel->id(), 0x0F);
+    f.circuit->setWire(f.c_stb->id(), 1);
+    f.circuit->setWire(f.c_cyc->id(), 1);
+    for (int i = 0; i < 3; ++i)
+        f.cycle();
+    // 填充还没结束时撤销 stb，再以同一行另一个地址重新发起
+    f.circuit->setWire(f.c_stb->id(), 0);
+    f.circuit->setWire(f.c_cyc->id(), 0);
+    for (int i = 0; i < 2; ++i)
+        f.cycle();
+    f.circuit->setWire(f.c_adr->id(), {0x04, 0x01, 0x00, 0x00});
+    f.circuit->setWire(f.c_stb->id(), 1);
+    f.circuit->setWire(f.c_cyc->id(), 1);
+
+    bool got_new = false;
+    for (int i = 0; i < 40; ++i) {
+        f.cycle();
+        if (f.circuit->getWire(f.c_ack->id())[0]) {
+            auto v = f.circuit->getWire(f.c_dat_i->id());
+            if ((uint32_t(v[0]) | (uint32_t(v[1]) << 8) | (uint32_t(v[2]) << 16) | (uint32_t(v[3]) << 24)) ==
+                0x12345678u) {
+                got_new = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(got_new) << "填充期间撤销又重新拉起的 stb 不能被吞掉";
+}

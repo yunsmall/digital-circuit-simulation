@@ -57,7 +57,7 @@ std::string WishboneCache::genStateDecl() const {
             "static uint8_t  _cache_hold_ack_{0}, _cache_prev_stb_{0};\n"
             "static uint32_t _cache_dn_adr_{0}, _cache_dn_dat_{0};\n"
             "static uint8_t  _cache_dn_we_{0}, _cache_dn_stb_{0}, _cache_dn_cyc_{0};\n"
-            "static uint8_t  _cache_fill_state_{0};\n"
+            "static uint8_t  _cache_fill_state_{0}, _cache_fill_stb_low_{0};\n"
             "static uint32_t _cache_fill_addr_{0}, _cache_fill_line_{0}, _cache_fill_word_{0};\n"
             "static uint32_t _cache_pend_adr_{0}, _cache_pend_wdata_{0}, _cache_pend_sel_{0};\n"
             "static uint8_t  _cache_pend_we_{0};\n",
@@ -73,7 +73,7 @@ std::string WishboneCache::genInitCode() const {
             "    _cache_latched_{0} = 0; _cache_hold_ack_{0} = 0; _cache_prev_stb_{0} = 0;\n"
             "    _cache_dn_adr_{0} = 0; _cache_dn_dat_{0} = 0;\n"
             "    _cache_dn_we_{0} = 0; _cache_dn_stb_{0} = 0; _cache_dn_cyc_{0} = 0;\n"
-            "    _cache_fill_state_{0} = 0; _cache_fill_addr_{0} = 0; _cache_fill_line_{0} = 0;\n"
+            "    _cache_fill_state_{0} = 0; _cache_fill_stb_low_{0} = 0; _cache_fill_addr_{0} = 0; _cache_fill_line_{0} = 0;\n"
             "    _cache_fill_word_{0} = 0;\n"
             "    _cache_pend_adr_{0} = 0; _cache_pend_wdata_{0} = 0; _cache_pend_sel_{0} = 0;\n"
             "    _cache_pend_we_{0} = 0;\n",
@@ -138,6 +138,7 @@ std::string WishboneCache::genFuncDef_seq() const {
                      "            }}\n"
                      "        }}\n"
                      "    }} else {{\n"
+                     "        if (!_up_active) _cache_fill_stb_low_{0} = 1;\n"
                      "        const uint32_t _faddr = _cache_fill_addr_{0} + _cache_fill_word_{0} * 4u;\n"
                      "        if (_cache_fill_state_{0} == 1) {{\n"
                      "            _cache_dn_adr_{0} = _faddr;\n"
@@ -179,9 +180,14 @@ std::string WishboneCache::genFuncDef_seq() const {
             "    }}\n"
             "    if (_up_ack) {{ _cache_latched_{0} = _dout; _cache_hold_ack_{0} = 1; }}\n"
             "    if (!_up_active) _cache_hold_ack_{0} = 0;\n"
-            // 填充期间不改 prev_stb：否则上游在填充中拉低再拉高的 stb 会被吞掉，
-            // 缓存停在填充态，新请求永远进不来
-            "    if (_cache_fill_state_{0} == 0) _cache_prev_stb_{0} = _up_active;\n"
+            // 填充期间上游可能在撤销 stb 后又重新拉起（协议上主设备应保持 stb 到 ack，
+            // 但复位/异常恢复路径可能不守）。单个 prev_stb 位记不住填充中的沿，
+            // 所以用一个 sticky 位记录"期间出现过低电平"：填充结束那拍若 stb 仍高，
+            // 就把 prev 清 0，下一拍能识别到新请求。没撤销过时保持 prev=stb，
+            // 避免把同一笔请求当成第二笔
+            "    if (_cache_fill_stb_low_{0} && _up_active) _cache_prev_stb_{0} = 0;\n"
+            "    else _cache_prev_stb_{0} = _up_active;\n"
+            "    if (_cache_fill_state_{0} == 0) _cache_fill_stb_low_{0} = 0;\n"
             "    const uint8_t _dsel = _cache_dn_we_{0} ? _cache_pend_sel_{0} : 0x0F;\n",
             _id);
     c += "    " + genOutputWrite(O_DAT, "_dout", 32) + "\n";
