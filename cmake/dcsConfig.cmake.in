@@ -11,8 +11,10 @@ find_dependency(elfio CONFIG)
 # 就会在加载 dcsTargets 时报 "target not found"。下游需要能定位到
 # 与安装 dcs 时同一套 LLVM（必要时给 -DLLVM_DIR=.../lib/cmake/llvm）
 if(@DCS_EXPORT_NEEDS_LLVM@)
-    find_dependency(LLVM CONFIG)
-    find_dependency(Clang CONFIG)
+    # 带上构建时的主.次版本：LLVM 的 ConfigVersion 本身也只认主.次相同，
+    # 补丁不小于构建版本；不写版本会静默接受任意大版本
+    find_dependency(LLVM @DCS_LLVM_ABI_VERSION@ CONFIG)
+    find_dependency(Clang @DCS_LLVM_ABI_VERSION@ CONFIG)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/dcsTargets.cmake")

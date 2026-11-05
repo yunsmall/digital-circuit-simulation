@@ -17,6 +17,12 @@ option(DCS_USE_TCC "Use TinyCC backend instead of LLVM/Clang" OFF)
 # guest 通过 virtio-net 访问宿主和互联网：用 libslirp 做用户态 NAT，
 # 宿主零配置、不需要驱动；默认关闭，避免给不需要网络的构建引入依赖
 option(DCS_BUILD_NET "启用 libslirp 用户态网络后端" OFF)
+# 网络后端只编进 dcs/dcs_soc 两个可执行文件，不进 dcs_lib；关掉可执行文件时
+# 打开它不会报错，但也不会产出任何用到它的目标
+if(DCS_BUILD_NET AND NOT DCS_BUILD_EXECUTABLE)
+    message(WARNING "DCS_BUILD_NET=ON 但 DCS_BUILD_EXECUTABLE=OFF：slirp 后端只编进 "
+                    "dcs/dcs_soc，当前配置不会构建这两个可执行文件")
+endif()
 
 if(DCS_USE_TCC)
     # TinyCC 后端
@@ -146,6 +152,9 @@ else()
     find_package(LLVM REQUIRED CONFIG)
     find_package(Clang REQUIRED CONFIG)
     message(STATUS "Using LLVM backend: ${LLVM_PACKAGE_VERSION}")
+    # LLVM 的 ConfigVersion 只接受主.次相同、补丁不小于构建时的版本。把这一
+    # ABI 前提写进导出的 find_dependency，下游就不会拿到另一个大版本的 LLVM
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" DCS_LLVM_ABI_VERSION "${LLVM_PACKAGE_VERSION}")
     set(DCS_BACKEND_LIBS
         clangFrontend clangCodeGen clangDriver clangParse clangSema
         clangSerialization clangAnalysis clangAST clangBasic clangLex
@@ -222,6 +231,12 @@ else()
     # --list-types 一个元件都不剩。WHOLE_ARCHIVE 生成表达式由 CMake 按工具链
     # 展开成 /WHOLEARCHIVE（MSVC/clang-cl）或 --whole-archive（GCC/Clang）
     set(DCS_LIB_LINK "$<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>")
+endif()
+# 共享库把 libtcc 记为运行时依赖（DT_NEEDED）。Windows 会把 DLL 一起装上，
+# 类 Unix 则依赖系统的动态库搜索路径，安装规则不复制 libtcc.so
+if(DCS_USE_TCC AND DCS_SHARED_LIB AND NOT WIN32)
+    message(WARNING "TCC 共享库构建：libtcc 是运行时依赖，装到别的机器上要保证 "
+                    "libtcc.so 在动态库搜索路径里（本工程不会随安装复制它）")
 endif()
 target_include_directories(dcs_lib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

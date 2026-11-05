@@ -34,7 +34,9 @@ public:
     };
 
     // 后端注册表：第三方在自己的 .cpp 里用 DCS_REGISTER_VIRTIO_NET_BACKEND 自注册，
-    // 元件的 backend 参数只存名字，JSON 往返后能自动恢复
+    // 元件的 backend 参数只存名字，JSON 往返后能自动恢复。
+    // 表在 VirtioNet.cpp 里，registerBackend 是库内定义的函数：共享库构建下
+    // 可执行文件里的静态初始化器也注册到同一张表，不会各有一份
     static void registerBackend(const std::string &name, const BackendOps &ops);
 
     explicit VirtioNet(const std::string &name, const std::string &backend = "none",

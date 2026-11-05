@@ -47,6 +47,8 @@ struct SlirpBackend {
     // 唤醒通道：JIT 每推入一个 TX 包写一个字节，后端线程阻塞在它和网络 fd 上
     slirp_os_socket kick_rd = SLIRP_INVALID_SOCKET;
     slirp_os_socket kick_wr = SLIRP_INVALID_SOCKET;
+    // WSAStartup 会做进程级引用计数，成功一次就要配对一次 WSACleanup
+    bool wsa_started = false;
 
     void run();
 };
@@ -147,6 +149,19 @@ void closeWakePair(SlirpBackend *be) {
     be->kick_rd = be->kick_wr = SLIRP_INVALID_SOCKET;
 }
 
+// 和 backendCreate 里的 WSAStartup 配对：引用计数成功加过才减，
+// 失败路径同样要调用（在 socket 都关掉之后）
+void cleanupWinsock(SlirpBackend *be) {
+#ifdef _WIN32
+    if (be->wsa_started) {
+        WSACleanup();
+        be->wsa_started = false;
+    }
+#else
+    (void) be;
+#endif
+}
+
 void wakeBackend(SlirpBackend *be) {
     if (be->kick_wr == SLIRP_INVALID_SOCKET)
         return;
@@ -165,8 +180,14 @@ void drainWake(SlirpBackend *be) {
 
 slirp_ssize_t cbSendPacket(const void *buf, size_t len, void *opaque) {
     auto *be = static_cast<SlirpBackend *>(opaque);
-    // 环满就丢，TCP 会重传；这里是后端线程直接写设备的 RX 环
-    be->net->pushRxPacket((const uint8_t *) buf, (uint32_t) len);
+    // 环满就丢，TCP 会重传；这里是后端线程直接写设备的 RX 环。
+    // pushRxPacket 内部要拿 mutex，锁失败会抛 system_error，不能让它穿出
+    // C 回调边界
+    try {
+        be->net->pushRxPacket((const uint8_t *) buf, (uint32_t) len);
+    } catch (...) {
+        return 0;
+    }
     return (slirp_ssize_t) len;
 }
 
@@ -410,13 +431,17 @@ void applyHostForwards(Slirp *slirp, const std::string &spec) {
 void *backendCreate(void *cfg) {
 #ifdef _WIN32
     WSADATA wsa;
-    WSAStartup(MAKEWORD(2, 2), &wsa);
+    const bool wsa_ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
 #endif
     auto *be = new SlirpBackend;
     be->net = static_cast<VirtioNet *>(cfg);
+#ifdef _WIN32
+    be->wsa_started = wsa_ok;
+#endif
 
     if (!makeWakePair(be->kick_rd, be->kick_wr)) {
         std::fprintf(stderr, "[slirp] 无法创建唤醒 socket，网络后端不可用\n");
+        cleanupWinsock(be);
         delete be;
         return nullptr;
     }
@@ -441,6 +466,7 @@ void *backendCreate(void *cfg) {
     if (!be->slirp) {
         std::fprintf(stderr, "[slirp] slirp_new 失败，网络后端不可用\n");
         closeWakePair(be);
+        cleanupWinsock(be);
         delete be;
         return nullptr;
     }
@@ -458,6 +484,7 @@ void *backendCreate(void *cfg) {
         std::fprintf(stderr, "[slirp] 无法创建后端线程，网络后端不可用: %s\n", e.what());
         slirp_cleanup(be->slirp);
         closeWakePair(be);
+        cleanupWinsock(be);
         delete be;
         return nullptr;
     }
@@ -475,6 +502,7 @@ void backendDestroy(void *ctx) {
     closeWakePair(be);
     for (auto *t: be->timers)
         delete t;
+    cleanupWinsock(be);
     delete be;
 }
 
