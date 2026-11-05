@@ -48,8 +48,16 @@ namespace {
 void listTypes() {
     auto &f = dsc::ComponentFactory::instance();
     const auto &metas = f.metas();
-    std::cout << std::format("已注册元件类型: {} 种\n\n", metas.size());
-    for (auto &[name, meta]: metas) {
+    // metas 是 unordered_map，迭代顺序由哈希决定、跨进程不稳定。
+    // 输出给人和外部工具看的东西必须可复现，统一按类型名排序
+    std::vector<std::string> names;
+    names.reserve(metas.size());
+    for (auto &[name, meta]: metas)
+        names.push_back(name);
+    std::sort(names.begin(), names.end());
+    std::cout << std::format("已注册元件类型: {} 种\n\n", names.size());
+    for (auto &name: names) {
+        const auto &meta = metas.at(name);
         std::cout << std::format("  [{}]  ({})\n", meta.type_name, f.categoryDisplayName(meta.category));
         if (!meta.description.empty())
             std::cout << std::format("    {}\n", meta.description);
@@ -96,7 +104,14 @@ void listTypesJson() {
     auto &f = dsc::ComponentFactory::instance();
     nlohmann::json root;
     root["components"] = nlohmann::json::array();
-    for (auto &[name, meta]: f.metas()) {
+    // 和 listTypes 一样按类型名排序：外部工具会拿这个输出做 diff
+    std::vector<std::string> names;
+    names.reserve(f.metas().size());
+    for (auto &[name, meta]: f.metas())
+        names.push_back(name);
+    std::sort(names.begin(), names.end());
+    for (auto &name: names) {
+        const auto &meta = f.metas().at(name);
         nlohmann::json j;
         j["type"] = meta.type_name;
         j["category"] = meta.category;
@@ -393,6 +408,20 @@ std::string vcdBitString(const std::vector<uint8_t> &val) {
         }
     return bits.empty() ? std::string("0") : bits;
 }
+
+// VCD 的 $var 引用名以空白分词，以 $ 开头会被当成关键字。线网名来自用户 JSON，
+// 可能含空格、$、换行或控制字符，直接拼进去会让查看器解析失败
+std::string vcdRefName(const std::string &name, int index) {
+    std::string out;
+    out.reserve(name.size());
+    for (unsigned char ch: name) {
+        if (ch > 0x20 && ch < 0x7F && ch != '$')
+            out.push_back(char(ch));
+        else
+            out.push_back('_');
+    }
+    return out.empty() ? std::format("net{}", index) : out;
+}
 } // namespace
 
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
@@ -433,7 +462,7 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         for (int i = 0; i < circuit->netCount(); i++) {
             dsc::Net *n = circuit->nets()[i].get();
             int w = n->bit_width() > 0 ? n->bit_width() : 1;
-            vcd << std::format("$var wire {} n{} {} $end\n", w, i, n->name());
+            vcd << std::format("$var wire {} n{} {} $end\n", w, i, vcdRefName(n->name(), i));
         }
         vcd << "$upscope $end\n$enddefinitions $end\n";
         vcd_prev.assign(circuit->netCount(), std::vector<uint8_t>(16, 0));

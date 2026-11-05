@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 namespace dsc {
 
 class Circuit;
@@ -13,6 +15,10 @@ class Context;
 // JSON 数据格式版本，写在 $meta.format 里。新增可选字段不用升版本，
 // 只有改变已有字段含义时才升；加载时拒绝比自己支持的新版本
 inline constexpr int kJsonFormatVersion = 1;
+
+// 校验并读取 $meta（kind 类型、format 版本、元数据字段类型），规则与加载时完全一致。
+// --check 这类只做静态检查的工具用它，避免同一个文件在检查和加载两边结论不同
+bool readJsonMeta(const nlohmann::json &root, std::string &kind, std::string &error);
 
 // base_dir 用于解析复合元件定义里的相对路径；context 为空时用进程默认上下文。
 // 失败时写 error 并返回 nullptr

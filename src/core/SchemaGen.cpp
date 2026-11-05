@@ -34,7 +34,10 @@ std::string componentSchemaJson() {
             json props = json::object();
             for (auto &p: meta.params) {
                 json prop;
-                prop["type"] = "string"; // 参数值在 JSON 里统一是字符串或标量
+                // 参数值在 JSON 里可以写成字符串，也可以直接写数字/布尔
+                // （flattenParams 会把标量 dump 成字符串）。schema 只给 IDE 做提示，
+                // 标成 string 会把运行时明明能接受的值标红
+                prop["type"] = json::array({"string", "integer", "number", "boolean"});
                 if (!p.default_val.empty())
                     prop["default"] = p.default_val;
                 if (!p.valid_values.empty())

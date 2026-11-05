@@ -1,6 +1,7 @@
 #include "dcs/CircuitSerializer.h"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -223,6 +224,10 @@ private:
 
 } // namespace
 
+bool readJsonMeta(const nlohmann::json &root, std::string &kind, std::string &error) {
+    return readMeta(root, kind, error);
+}
+
 std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::string &error,
                                            const std::string &base_dir, Context *context) {
     using json = nlohmann::json;
@@ -409,6 +414,11 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
         return circuit;
     } catch (const json::exception &e) {
         error = std::format("JSON 字段类型错误: {}", e.what());
+        return nullptr;
+    } catch (const std::exception &e) {
+        // 这段里还会做路径解析和文件系统操作，用户给的路径在 Windows 上可能
+        // 触发编码转换异常。输入问题一律转成错误字符串，不能把进程带走
+        error = std::format("加载电路时发生异常: {}", e.what());
         return nullptr;
     }
 }

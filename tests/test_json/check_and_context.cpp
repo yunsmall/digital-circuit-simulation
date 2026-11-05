@@ -7,6 +7,7 @@
 #include <dcs/SchemaGen.h>
 #include <dcs/util/PathList.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -257,6 +258,29 @@ TEST(CheckTool, ReadJsonKindDefaultsToCircuit) {
     EXPECT_EQ(kind, "blueprint");
 }
 
+// --check 与加载必须用同一套 $meta 校验：format 比程序新时两边都要拒绝，
+// 否则检查报告"通过"、加载却报版本不支持
+TEST(CheckTool, ReadJsonKindRejectsNewerFormat) {
+    TempDir dir;
+    dir.write("new.json", R"JSON({"$meta": {"kind": "blueprint", "format": 99}, "definitions": {}})JSON");
+    std::string kind, error;
+    EXPECT_FALSE(readJsonKind((dir.root / "new.json").string(), kind, error));
+    EXPECT_NE(error.find("格式版本"), std::string::npos) << error;
+}
+
+// 蓝图校验走 readJsonKind 分流，也必须拒绝新格式（以前只有加载路径看 format）
+TEST(CheckTool, CheckBlueprintRejectsNewerFormat) {
+    TempDir dir;
+    dir.write("new_bp.json", std::string(R"JSON({
+      "$meta": {"kind": "blueprint", "format": 99},
+      "definitions": {"fmt_bp": )JSON") + kNotDef + "}}");
+    Context ctx;
+    CheckReport report;
+    std::string error;
+    EXPECT_FALSE(checkBlueprintFile((dir.root / "new_bp.json").string(), &ctx, report, error));
+    EXPECT_NE(error.find("格式版本"), std::string::npos) << error;
+}
+
 // schema 由注册表生成，能解析且带上已注册类型
 TEST(SchemaGen, GeneratesParseableSchema) {
     const auto text = componentSchemaJson();
@@ -267,6 +291,12 @@ TEST(SchemaGen, GeneratesParseableSchema) {
         if (variant["properties"]["type"]["const"] == "not") {
             found_not = true;
             ASSERT_TRUE(variant["properties"]["params"]["properties"].contains("bit_width"));
+            // 参数在 JSON 里也可以直接写数字（flattenParams 会 dump 成字符串），
+            // schema 必须把标量类型也列为合法，否则 IDE 会把能跑的文件标红
+            const auto &bw_type = variant["properties"]["params"]["properties"]["bit_width"]["type"];
+            ASSERT_TRUE(bw_type.is_array());
+            EXPECT_NE(std::find(bw_type.begin(), bw_type.end(), "integer"), bw_type.end());
+            EXPECT_NE(std::find(bw_type.begin(), bw_type.end(), "string"), bw_type.end());
             // 和工厂的未知参数校验一致：不允许额外参数的类型，schema 也要标红
             EXPECT_FALSE(variant["properties"]["params"]["additionalProperties"].get<bool>());
         }

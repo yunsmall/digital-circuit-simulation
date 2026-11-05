@@ -13,6 +13,7 @@
 
 #include "dcs/Circuit.h"
 #include "dcs/CircuitLibrary.h"
+#include "dcs/CircuitSerializer.h"
 #include "dcs/Context.h"
 
 namespace dsc {
@@ -92,14 +93,11 @@ bool readJsonKind(const std::string &path, std::string &kind, std::string &error
         error = std::format("{} 的根必须是对象", path);
         return false;
     }
-    if (auto m = root.find("$meta"); m != root.end() && m->is_object()) {
-        if (auto k = m->find("kind"); k != m->end()) {
-            if (!k->is_string()) {
-                error = std::format("{}: $meta.kind 必须是字符串", path);
-                return false;
-            }
-            kind = k->get<std::string>();
-        }
+    // 复用加载路径的 $meta 校验：--check 若不看 format 版本，会把一个加载时
+    // 直接被拒的文件报成"校验通过"，用户按检查结果改完再加载又是一条新错误
+    if (!readJsonMeta(root, kind, error)) {
+        error = std::format("{}: {}", path, error);
+        return false;
     }
     return true;
 }
