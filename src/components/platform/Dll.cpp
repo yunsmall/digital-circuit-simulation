@@ -500,7 +500,9 @@ std::string DllComponent::genInitCode() const {
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
     code += "        dcs_memset(_out, 0, sizeof(_out));\n";
-    code += std::format("        _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
+    // create 可能返回空指针（DLL 自己的初始化失败）：空状态不能传给 reset，
+    // 和 genResetCode 用同样的保护
+    code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
     code += "    }";
     return code;
 }

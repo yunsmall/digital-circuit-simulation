@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -352,9 +353,15 @@ bool parseHostPort(const std::string &s, in_addr &addr, int &port, const char *d
     const std::string port_s = s.substr(colon + 1);
     if (port_s.empty() || port_s.size() > 5)
         return false;
-    port = std::atoi(port_s.c_str());
-    if (port <= 0 || port > 65535)
+    // atoi 会接受 "12abc" 这种前缀数字、把后面的垃圾静默丢掉；
+    // 端口必须是完整数字串
+    int value = 0;
+    const auto [end, ec] = std::from_chars(port_s.data(), port_s.data() + port_s.size(), value);
+    if (ec != std::errc{} || end != port_s.data() + port_s.size())
         return false;
+    if (value <= 0 || value > 65535)
+        return false;
+    port = value;
     return inet_pton(AF_INET, host.c_str(), &addr) == 1;
 }
 

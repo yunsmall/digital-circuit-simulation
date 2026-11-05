@@ -367,3 +367,32 @@ TEST(VirtioTest, DescriptorIndexOutOfRangeIsRejected) {
     EXPECT_EQ(f.get16(used + 2), 1) << "越界索引也要完成请求，不能让驱动永久等待";
     EXPECT_EQ(f.usedLen(used, 0), 0u);
 }
+
+// dnext 来自 guest：越界时必须按零字节完成，不能把描述符表外的内存
+// 当成描述符继续解析（否则会对任意 guest 地址发起事务）
+TEST(VirtioTest, OutOfRangeNextCompletesRequest) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 1 /*OUT*/, 0, false);
+    f.configureQueue(desc, avail, used, 4);
+    f.putDesc(desc, 0, hdr, 16, 1, 100); // next >= qnum
+    f.write(0x050, 0);                   // notify
+    for (int i = 0; i < 200; i++) f.tick();
+    EXPECT_EQ(f.get16(used + 2), 1) << "畸形链必须被回收而不是卡死在数据阶段";
+}
+
+// 链尾状态描述符声明 dlen=0 时没有 1 字节可写，不能写到描述符范围之外
+TEST(VirtioTest, ZeroLengthStatusDescriptorIsNotWritten) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 1 /*OUT*/, 0, false);
+    f.configureQueue(desc, avail, used, 4);
+    f.mem()[status] = 0xAA;
+    f.putDesc(desc, 2, status, 0, 0, 0); // 状态描述符 dlen=0、无 NEXT
+    f.write(0x050, 0);
+    for (int i = 0; i < 200; i++) f.tick();
+    EXPECT_EQ(f.get16(used + 2), 1);
+    EXPECT_EQ(f.mem()[status], 0xAA) << "dlen=0 时不能写状态字节";
+}

@@ -237,6 +237,9 @@ std::string genDone(const DeviceSpec &s) {
         c += std::format("                            ((uint32_t)_vio_mp_buf_{0}[10] << 16) | ((uint32_t)_vio_mp_buf_{0}[11] << 24);\n", s.id);
         c += std::format("                _qv->dflags = (uint16_t)((uint32_t)_vio_mp_buf_{0}[12] | ((uint32_t)_vio_mp_buf_{0}[13] << 8));\n", s.id);
         c += std::format("                _qv->dnext = (uint32_t)_vio_mp_buf_{0}[14] | ((uint32_t)_vio_mp_buf_{0}[15] << 8);\n", s.id);
+        // 描述符的地址/长度都来自 guest：daddr+dlen 必须落在 32 位主端口地址空间内，
+        // 否则拼地址时会回绕，事务落到错误的地址上
+        c += "                if ((uint64_t)_qv->daddr + _qv->dlen > 0x100000000ull) { _qv->phase = 7; break; }\n";
         c += "                _qv->off = 0;\n";
         c += std::format(
                 "                dcs_virtio_trace({0}u, 0x304u, {1}u, _qv->daddr, _qv->dlen, (uint32_t) _qv->dflags, "
@@ -427,11 +430,16 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "                    else {{ _qv->step = 1; _qv->phase = {0}; }}\n"
             "                }} else if (_qv->dflags & 1) {{\n"
             // 零长度数据段没有可搬运的字节，直接跳到下一个描述符；
-            // 否则 q.start 里 _l=0，genQueue 不启动主端口事务，请求永远卡在数据阶段
-            "                    if (_qv->dlen == 0) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            // 否则 q.start 里 _l=0，genQueue 不启动主端口事务，请求永远卡在数据阶段。
+            // dnext 来自 guest，必须落在队列表内，否则下一轮会把表外内存当描述符
+            "                    if (_qv->dlen == 0) {{ if (_qv->dnext >= _qv->qnum) _qv->phase = {3}; "
+            "else {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }} }}\n"
             "                    else _qv->phase = {1};\n"
             "                }} else {{\n"
-            "                    _qv->phase = {2};\n"
+            // 链尾描述符没有 NEXT 时原本按状态字节处理；dlen==0 没有 1 字节可写，
+            // 按零字节完成，别把状态写到描述符声明范围之外
+            "                    if (_qv->dlen == 0) _qv->phase = {3};\n"
+            "                    else _qv->phase = {2};\n"
             "                }}\n",
             Q_DEV, Q_DEV + 1, Q_DEV + 2, Q_USED, Q_DESC);
     q.start = std::format(
@@ -455,6 +463,9 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "        }}\n"
             "        case {4}: _a = _qv->daddr; _l = 1; _wr = 1; _vio_mp_buf_{1}[0] = _vio_status_byte_{1}; break;\n",
             Q_DEV, id, p.read_stmt, Q_DEV + 1, Q_DEV + 2);
+    // used.len 统计的是请求处理走的描述符字节数（written），和 QEMU 的行为一致：
+    // 介质写失败只把状态字节置成 IOERR，已经读走的字节数不回退。
+    // 别按"实际写进介质的字节"去改，guest 驱动不依赖这个区分
     q.done = std::format(
             "            case {0}: {{ // 请求头读完，进入数据段\n"
             // 头描述符没有 NEXT 就没有状态描述符，按原流程会把状态字节写回请求头
@@ -465,7 +476,8 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             // 规范里 virtio_blk_req.sector 是 64 位字段，低 32 位装不下大盘
             "                dcs_memcpy(&_vio_sec_{1}, _vio_mp_buf_{1} + 8, 8);\n"
             "                _qv->written = 0; _vio_status_byte_{1} = 0;\n"
-            "                if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            "                if (_qv->dflags & 1) {{ if (_qv->dnext >= _qv->qnum) _qv->phase = {6}; "
+            "else {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }} }}\n"
             "                else _qv->phase = {3};\n"
             "                break;\n"
             "            }}\n"
@@ -483,7 +495,8 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "                }} else if (_vio_type_{1} != 4) _vio_status_byte_{1} = 2;\n"
             "                _qv->off += _c;\n"
             "                if (_qv->off >= _qv->dlen) {{\n"
-            "                    if (_qv->dflags & 1) {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }}\n"
+            "                    if (_qv->dflags & 1) {{ if (_qv->dnext >= _qv->qnum) _qv->phase = {6}; "
+            "else {{ _qv->idx = _qv->dnext; _qv->phase = {4}; }} }}\n"
             "                    else _qv->phase = {5};\n"
             "                }}\n"
             "                break;\n"
