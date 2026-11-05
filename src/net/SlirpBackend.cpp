@@ -388,7 +388,8 @@ void SlirpBackend::run() {
                 entries[i].revents = fds[i].revents;
 #endif
 
-            if (entries[kick_idx].revents != 0)
+            // poll 失败（rc<0）时不读 revents：POSIX 没保证失败时会把它们清零
+            if (rc > 0 && entries[kick_idx].revents != 0)
                 drainWake(this);
 
             slirp_pollfds_poll(
