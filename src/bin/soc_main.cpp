@@ -155,6 +155,11 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         std::cerr << "错误: --forever 下仿真不会正常结束，--dump-mem 无法执行\n";
         return 1;
     }
+    // --watch 只在 --forever 分支里轮询文件；漏写 --forever 时会被静默忽略
+    if (!forever && !watch_file.empty()) {
+        std::cerr << "错误: --watch 必须配合 --forever 使用\n";
+        return 1;
+    }
     auto circuit = dcs_cli::loadCircuit(path, ctx);
     if (!circuit)
         return 1;

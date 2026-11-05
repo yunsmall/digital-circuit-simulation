@@ -381,6 +381,20 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
 }
 
 // ---- simulate ----
+namespace {
+// VCD 值：去掉冗余的前导 0；全 0 写成一个 "0"
+std::string vcdBitString(const std::vector<uint8_t> &val) {
+    std::string bits;
+    for (int b = 15; b >= 0; --b)
+        for (int k = 7; k >= 0; --k) {
+            int bit = (val[b] >> k) & 1;
+            if (!bits.empty() || bit)
+                bits.push_back(char('0' + bit));
+        }
+    return bits.empty() ? std::string("0") : bits;
+}
+} // namespace
+
 int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor, bool forever,
               const std::string &vcd_path, const std::string &dump_mem, dsc::Context &ctx) {
     // --forever 不会正常返回（tickForever 或 Ctrl+C 结束进程），后段的 dump-mem
@@ -423,6 +437,14 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         }
         vcd << "$upscope $end\n$enddefinitions $end\n";
         vcd_prev.assign(circuit->netCount(), std::vector<uint8_t>(16, 0));
+        // VCD 规定第一个值变化之前的信号状态是 x。不写 $dumpvars 的话，全程
+        // 保持 0 的线网在查看器里永远是 x，分不清"恒 0"和"没驱动"
+        vcd << "$dumpvars\n";
+        for (int i = 0; i < circuit->netCount(); i++) {
+            vcd_prev[i] = circuit->getWire(i);
+            vcd << "b" << vcdBitString(vcd_prev[i]) << " n" << i << "\n";
+        }
+        vcd << "$end\n";
     }
 
     // --forever：死循环在 JIT 里，C++ 不再逐拍往返，Ctrl+C 终止进程
@@ -467,16 +489,7 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
                 if (val == vcd_prev[i])
                     continue;
                 vcd_prev[i] = val;
-                std::string bits;
-                for (int b = 15; b >= 0; --b)
-                    for (int k = 7; k >= 0; --k) {
-                        int bit = (val[b] >> k) & 1;
-                        if (!bits.empty() || bit)
-                            bits.push_back(char('0' + bit));
-                    }
-                if (bits.empty())
-                    bits = "0";
-                vcd << "b" << bits << " n" << i << "\n";
+                vcd << "b" << vcdBitString(val) << " n" << i << "\n";
             }
         }
         if (monitor) {

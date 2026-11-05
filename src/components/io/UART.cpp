@@ -55,7 +55,8 @@ std::string UART::genStateDecl() const {
             "static uint8_t _uart_rx_active_{0}, _uart_rx_confirm_{0}, _uart_rx_bit_{0}, _uart_prev_rx_{0};\n"
             "static uint32_t _uart_rx_cnt_{0}, _uart_rx_shift_{0};\n"
             "static uint8_t _uart_rx_fifo_{0}[16], _uart_rx_head_{0}, _uart_rx_tail_{0}, _uart_rx_count_{0};\n"
-            "static uint8_t _uart_rx_overrun_{0}, _uart_prev_stb_{0};\n"
+            "static uint8_t _uart_rx_overrun_{0}, _uart_rx_fe_{0}, _uart_prev_stb_{0};\n"
+            "static uint8_t _uart_thre_{0};\n"
             "static uint32_t _uart_ier_{0}, _uart_lcr_{0}, _uart_mcr_{0}, _uart_fcr_{0}, _uart_scr_{0};\n"
             "static uint32_t _uart_dll_{0}, _uart_dlm_{0}, _uart_latched_{0};\n",
             _id);
@@ -68,6 +69,9 @@ std::string UART::genInitCode() const {
             "    _uart_rx_active_{0} = 0; _uart_rx_confirm_{0} = 0; _uart_rx_bit_{0} = 0; _uart_prev_rx_{0} = 1;\n"
             "    _uart_rx_cnt_{0} = 0; _uart_rx_shift_{0} = 0;\n"
             "    _uart_rx_head_{0} = 0; _uart_rx_tail_{0} = 0; _uart_rx_count_{0} = 0; _uart_rx_overrun_{0} = 0;\n"
+            "    _uart_rx_fe_{0} = 0;\n"
+            // THRE 中断按 16550 的语义锁存：THR 空时挂起，读 IIR（源为 THRE）或写 THR 清除
+            "    _uart_thre_{0} = 1;\n"
             "    _uart_prev_stb_{0} = 0;\n"
             "    _uart_ier_{0} = 0; _uart_lcr_{0} = 0x03; _uart_mcr_{0} = 0; _uart_fcr_{0} = 0; _uart_scr_{0} = 0;\n"
             "    _uart_dll_{0} = 0; _uart_dlm_{0} = 0; _uart_latched_{0} = 0;\n",
@@ -111,7 +115,7 @@ std::string UART::genFuncDef_seq() const {
             "    if (_uart_tx_busy_{0}) {{\n"
             "        if (++_uart_tx_cnt_{0} >= _uart_baud_{0}) {{\n"
             "            _uart_tx_cnt_{0} = 0;\n"
-            "            if (++_uart_tx_bit_{0} > 9) _uart_tx_busy_{0} = 0;\n"
+            "            if (++_uart_tx_bit_{0} > 9) {{ _uart_tx_busy_{0} = 0; _uart_thre_{0} = 1; }}\n"
             "        }}\n"
             "    }}\n",
             _id);
@@ -138,7 +142,7 @@ std::string UART::genFuncDef_seq() const {
             "                    _uart_rx_fifo_{0}[_uart_rx_head_{0} & 15] = (uint8_t)(_uart_rx_shift_{0} & 0xFFu);\n"
             "                    _uart_rx_head_{0}++; _uart_rx_count_{0}++;\n"
             "                }} else _uart_rx_overrun_{0} = 1;\n"
-            "            }}\n"
+            "            }} else _uart_rx_fe_{0} = 1;\n"
             "        }}\n"
             "    }}\n"
             "    _uart_prev_rx_{0} = _rx;\n",
@@ -161,7 +165,9 @@ std::string UART::genFuncDef_seq() const {
             "            case _UART_{0}_IIR: {{\n"
             "                uint32_t _iir = 0x1;\n"
             "                if (_uart_rx_count_{0} && (_uart_ier_{0} & 0x01)) _iir = 0x4;\n"
-            "                else if (!_uart_tx_busy_{0} && (_uart_ier_{0} & 0x02)) _iir = 0x2;\n"
+            // THRE 中断读 IIR 会清除，直到 THR 再次写空；不锁存的话软件不立刻写
+            // THR 时会一直收中断（真实 16550A 不会这样）
+            "                else if (_uart_thre_{0} && (_uart_ier_{0} & 0x02)) {{ _iir = 0x2; _uart_thre_{0} = 0; }}\n"
             // 不报 FIFO 位：TX 只有单字节寄存器，声称有 16 字节 FIFO 会让内核一次
             // 连写 16 个字符，只有最后一个留下来
             "                _dout = _iir; break;\n"
@@ -170,8 +176,10 @@ std::string UART::genFuncDef_seq() const {
             "            case _UART_{0}_MCR: _dout = _uart_mcr_{0}; break;\n"
             "            case _UART_{0}_LSR:\n"
             "                _dout = (_uart_rx_count_{0} ? 0x01u : 0u) | (_uart_rx_overrun_{0} ? 0x02u : 0u) |\n"
+            "                        (_uart_rx_fe_{0} ? 0x08u : 0u) |\n"
             "                        (!_uart_tx_busy_{0} ? 0x60u : 0u);\n"
             "                _uart_rx_overrun_{0} = 0;\n"
+            "                _uart_rx_fe_{0} = 0;\n"
             "                break;\n"
             "            case _UART_{0}_MSR: _dout = 0x30; break;\n"
             "            case _UART_{0}_SCR: _dout = _uart_scr_{0}; break;\n"
@@ -184,6 +192,7 @@ std::string UART::genFuncDef_seq() const {
             "                else if (!_uart_tx_busy_{0}) {{\n"
             "                    _uart_tx_shift_{0} = _wdat & 0xFFu;\n"
             "                    _uart_tx_busy_{0} = 1; _uart_tx_bit_{0} = 0; _uart_tx_cnt_{0} = 0;\n"
+            "                    _uart_thre_{0} = 0;\n"
             "                }}\n"
             "                break;\n"
             "            case _UART_{0}_IER: if (_dlab) _uart_dlm_{0} = _wdat & 0xFFu; else _uart_ier_{0} = _wdat & 0x0Fu; break;\n"
@@ -202,7 +211,7 @@ std::string UART::genFuncDef_seq() const {
             "    }}\n"
             "    if (!_active) _uart_latched_{0} = 0;\n"
             "    uint8_t _irq = (_uart_rx_count_{0} && (_uart_ier_{0} & 0x01)) ||\n"
-            "                    (!_uart_tx_busy_{0} && (_uart_ier_{0} & 0x02));\n"
+            "                    (_uart_thre_{0} && (_uart_ier_{0} & 0x02));\n"
             "    uint32_t _txl = 1;\n"
             "    if (_uart_tx_busy_{0}) {{\n"
             "        if (_uart_tx_bit_{0} == 0) _txl = 0;\n"
