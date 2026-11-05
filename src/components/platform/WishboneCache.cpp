@@ -163,6 +163,10 @@ std::string WishboneCache::genFuncDef_seq() const {
                      "        }}\n"
                      "    }}\n",
                      _id);
+    // 填充期间上游撤销过 stb、完成这拍又拉起：旧请求已经放弃，不能拿它的
+    // ack/数据应答新请求。sticky 位在时序阶段随填充结束清掉，下一拍新请求
+    // 会走正常路径（prev_stb 已清 0）
+    c += std::format("    if (_cache_fill_stb_low_{0} && _up_active) _up_ack = 0;\n", _id);
     // 写直通：把写请求送到下游并等应答，不做写分配
     c += std::format(
             "    if (_cache_pend_we_{0} && _cache_fill_word_{0} == 1) {{\n"

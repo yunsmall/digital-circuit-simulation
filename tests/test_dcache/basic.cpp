@@ -419,3 +419,44 @@ TEST(DcacheTest, RejectsParamsAbove32Bits) {
     EXPECT_EQ(c2, nullptr);
     EXPECT_NE(err.find("32 位"), std::string::npos) << err;
 }
+
+// 读未命中填充期间，其它主设备写中同一行：必须重发读，不能把写之前的旧值回给 CPU
+TEST(DcacheTest, SnoopDuringFillRetriesFreshData) {
+    Fixture f;
+    f.compile();
+    f.put(Fixture::BASE + 0x400, 0x11111111);
+
+    // 监听口先拉起：第一拍填充启动后，同一拍就能识别到外部写沿
+    f.setAddr(f.sn_adr, Fixture::BASE + 0x400);
+    f.setWire(f.sn_we, 1);
+    f.setWire(f.sn_stb, 1);
+    f.setWire(f.sn_cyc, 1);
+
+    f.setAddr(f.c_adr, Fixture::BASE + 0x400);
+    f.setWire(f.c_sel, 0x0F);
+    f.setWire(f.c_we, 0);
+    f.setWire(f.c_stb, 1);
+    f.setWire(f.c_cyc, 1);
+    f.tick(); // 填充事务已经读到旧值
+
+    // 外部写落进 RAM（监听沿已在上一拍打过），这次填充必须作废重发
+    f.put(Fixture::BASE + 0x400, 0x22222222);
+    f.setWire(f.sn_stb, 0);
+    f.setWire(f.sn_cyc, 0);
+
+    uint32_t got = 0;
+    bool acked = false;
+    for (int i = 0; i < 50; i++) {
+        f.tick();
+        if (f.circuit->getWire(f.c_ack->id())[0]) {
+            got = Fixture::u32(f.circuit->getWire(f.c_dat_i->id()));
+            acked = true;
+            break;
+        }
+    }
+    f.setWire(f.c_stb, 0);
+    f.setWire(f.c_cyc, 0);
+    f.tick();
+    EXPECT_TRUE(acked) << "重发读应该最终拿到应答";
+    EXPECT_EQ(got, 0x22222222u) << "不能返回填充窗口开始时的旧值";
+}

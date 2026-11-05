@@ -80,6 +80,9 @@ std::string WishboneDcache::genStateDecl() const {
             "static uint8_t  _dc_busy_{0}, _dc_rsp_{0}, _dc_done_{0}, _dc_snprev_{0}, _dc_pact_{0};\n"
             // 填充窗口内其它主设备写了目标行：这次填充读到的是旧值，不能标有效
             "static uint8_t  _dc_fill_abort_{0};\n"
+            // 填充被打断后要重发读：主端口必须先拉低一拍 stb，
+            // 否则从设备把重发当成同一笔事务继续返回旧数据
+            "static uint8_t  _dc_retry_hold_{0};\n"
             "static uint32_t _dc_padr_{0}, _dc_pdat_{0}, _dc_rdat_{0};\n"
             "static uint8_t  _dc_pwe_{0}, _dc_psel_{0};\n"
             // 自己的写直通也会出现在监听总线上，用它把这条回波认出来
@@ -96,6 +99,7 @@ std::string WishboneDcache::genInitCode() const {
             "    dcs_memset(_dc_v_{0}, 0, sizeof(_dc_v_{0}));\n"
             "    _dc_busy_{0} = 0; _dc_rsp_{0} = 0; _dc_done_{0} = 0; _dc_snprev_{0} = 0; _dc_pact_{0} = 0;\n"
             "    _dc_fill_abort_{0} = 0;\n"
+            "    _dc_retry_hold_{0} = 0;\n"
             "    _dc_own_{0} = 0; _dc_ownadr_{0} = 0;\n"
             "    _dc_stats_{0}[0] = 0; _dc_stats_{0}[1] = 0; _dc_stats_{0}[2] = 0;\n"
             "    _dc_padr_{0} = 0; _dc_pdat_{0} = 0; _dc_rdat_{0} = 0; _dc_pwe_{0} = 0; _dc_psel_{0} = 0;\n",
@@ -124,7 +128,10 @@ std::string WishboneDcache::genFuncDef_comb() const {
             "    const uint8_t _hit = (uint8_t)(_dc_tag_{0}[_li] == (_adr >> 4)) & "
             "(uint8_t)((_dc_v_{0}[_li] >> _wi) & 1u);\n",
             _id);
-    // CPU 侧应答：命中读直接给数据；写和填充的应答由时序阶段置 _dc_rsp 后由这里保持
+    // CPU 侧应答：命中读直接给数据；写和填充的应答由时序阶段置 _dc_rsp 后由这里保持。
+    // 前提是一笔 stb 事务内 we 不翻转（dcs 的 CPU/DMA 主设备都保持 we 到 ack）：
+    // 写直通完成时 _dc_rdat_ 没有更新，若中途把 we 改成读，这里会把上一次的
+    // 读数据当成这次的结果
     c += std::format(
             "    uint32_t _dout = 0; uint8_t _ack = 0;\n"
             "    if (_active) {{\n"
@@ -151,7 +158,7 @@ std::string WishboneDcache::genFuncDef_comb() const {
             "    if (_dc_busy_{0}) {{\n"
             "        _madr = _dc_padr_{0}; _mdat = _dc_pdat_{0}; _mwe = _dc_pwe_{0}; _msel = _dc_psel_{0};\n"
             "        _mstb = 1; _mcyc = 1;\n"
-            "    }} else if (_active && !_dc_rsp_{0}) {{\n"
+            "    }} else if (_active && !_dc_rsp_{0} && !_dc_retry_hold_{0}) {{\n"
             "        if (_ce) {{\n"
             // 读命中不需要总线；未命中和写都要走主端口
             "            if (_we || !_hit) {{\n"
@@ -194,6 +201,9 @@ std::string WishboneDcache::genFuncDef_seq() const {
     c += "    uint32_t _uadr = 0; dcs_memcpy(&_uadr, _w[" + nid(U_ADR) + "], 4);\n";
     c += "    uint8_t _uwe = _w[" + nid(U_WE) + "][0] & 1;\n";
     c += "    const uint8_t _active = _stb & _cyc;\n";
+    // 重发等待位只挡一拍：上一拍组合阶段已经用它拉低了主端口 stb，
+    // 这一拍清掉，下一拍就能重新发起事务
+    c += std::format("    if (_dc_retry_hold_{0}) _dc_retry_hold_{0} = 0;\n", _id);
     // 统计：每笔上游请求各记一次命中/未命中
     c += std::format(
             "    if (_active && !_dc_pact_{0}) {{\n"
@@ -249,25 +259,28 @@ std::string WishboneDcache::genFuncDef_seq() const {
     c += std::format(
             "    if (!_mstb) {{ _dc_done_{0} = 0; _dc_own_{0} = 0; }}\n"
             "    else if (_ce && _mack && !_dc_done_{0}) {{\n"
+            "        uint8_t _dc_retry = 0;\n"
             "        if (_dc_busy_{0} == 1) {{\n"
             "            const uint32_t _li = (_dc_padr_{0} >> 4) & (_DC_LINES_{0} - 1u);\n"
             "            const uint32_t _wi = (_dc_padr_{0} >> 2) & 3u;\n"
             "            const uint32_t _tag = _dc_padr_{0} >> 4;\n"
             // 填充窗口内有其它主设备写了这一行：读回来的是写之前的旧值，
-            // 不能把它标成有效，否则后续读会命中过时数据
+            // 既不能标成有效，也不能把旧值回给 CPU。撤掉 busy 让组合阶段
+            // 用同一笔请求重新发起读——重发排在外部写之后，读到的是新值
             "            if (_dc_fill_abort_{0}) {{\n"
             "                _dc_fill_abort_{0} = 0;\n"
+            "                _dc_retry_hold_{0} = 1;\n"
+            "                _dc_retry = 1;\n"
             "            }} else {{\n"
             // 换 tag 的时候旧行的有效位必须整体作废
             "                if (_dc_tag_{0}[_li] != _tag) {{ _dc_tag_{0}[_li] = _tag; _dc_v_{0}[_li] = 0; }}\n"
             "                dcs_memcpy(&_dc_data_{0}[_li][_wi * 4u], &_mdat_i, 4);\n"
             "                _dc_v_{0}[_li] |= (uint8_t)(1u << _wi);\n"
+            "                _dc_rdat_{0} = _mdat_i;\n"
             "            }}\n"
-            "            _dc_rdat_{0} = _mdat_i;\n"
             "        }}\n"
-            "        _dc_rsp_{0} = 1;\n"
+            "        if (!_dc_retry) {{ _dc_rsp_{0} = 1; _dc_done_{0} = 1; }}\n"
             "        _dc_busy_{0} = 0;\n"
-            "        _dc_done_{0} = 1;\n"
             "    }}\n",
             _id);
     // 监听失效放在状态机之后：这样 _dc_own 已经反映本拍启动的写直通。
