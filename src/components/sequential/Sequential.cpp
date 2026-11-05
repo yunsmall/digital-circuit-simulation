@@ -634,10 +634,13 @@ ClockGen::ClockGen(const std::string &name, int high_ticks, int low_ticks) :
 }
 
 std::string ClockGen::genStructDef() const {
+    // 1/1 就是每拍翻转的 50% 时钟，是最常见的接法：状态只要一位，
+    // 不需要 period/位置这些信息
+    const char *field = (_high == 1 && _low == 1) ? "uint8_t _clk;" : "int _cnt;";
     return std::format(R"(typedef struct {{
-    int _cnt;
+    {}
 }} {};)",
-                       stateTypeName());
+                       field, stateTypeName());
 }
 
 std::string ClockGen::genStateDecl() const {
@@ -645,6 +648,8 @@ std::string ClockGen::genStateDecl() const {
 }
 
 std::string ClockGen::genInitCode() const {
+    if (_high == 1 && _low == 1)
+        return std::format("    {}._clk = 0;", stateVarName());
     return std::format("    {}._cnt = 0;", stateVarName());
 }
 
@@ -656,6 +661,14 @@ std::string ClockGen::genFuncDef_seq() const {
         write_o = std::format("    {}\n", genOutputWrite(0, "_clk", 1));
     else
         write_o = "    // 输出悬空\n";
+    // 周期 2：初值 0，每拍异或 1，第一拍就是高电平，和计数器的相位一致。
+    // 热路径上省掉 ++/比较/回绕分支
+    if (_high == 1 && _low == 1)
+        return std::format(R"(static void {}() {{
+    uint8_t _clk = ({}._clk ^= 1);
+{}
+}})",
+                           funcName_seq(), st, write_o);
     return std::format(R"(static void {}() {{
     int _pos = {}._cnt;
     uint8_t _clk = (_pos < {}) ? 1 : 0;
