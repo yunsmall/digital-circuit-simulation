@@ -257,9 +257,10 @@ def parse_design(ast_path: pathlib.Path, top: str):
             continue
         if "[" in p["cpp"]:
             raise SystemExit(f"inout 数组端口 {p['name']} 暂不支持，请拆成多个标量端口")
-        expanded.append(dict(p, dir="input", name=p["name"] + "_i"))
+        expanded.append(dict(p, dir="input", name=p["name"] + "_i", from_inout=True))
         expanded.append(dict(p, dir="output", tristate=True, name=p["name"],
-                             data_sig=p["cpp"] + "__out", oe_sig=p["cpp"] + "__en"))
+                             data_sig=p["cpp"] + "__out", oe_sig=p["cpp"] + "__en",
+                             from_inout=True))
     ports = expanded
 
     # 沿触发的 always 才算时序。Verilator 会自己保存上一拍时钟做边沿检测，

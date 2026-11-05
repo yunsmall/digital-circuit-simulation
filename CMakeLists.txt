@@ -6,10 +6,11 @@ include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 23)
 
-option(DCS_BUILD_EXECUTABLE "构建主程序 dcs" ON)
-# 作为子目录集成时默认不编测试：父项目没装 GTest 不该让整个配置失败
+# 作为子目录集成时，dcs 自己的可执行文件/Verilator 测试默认不构建：
+# 父项目不一定有 cxxopts/verilator，不能因为 REQUIRED 查找让配置失败
+option(DCS_BUILD_EXECUTABLE "构建主程序 dcs" ${PROJECT_IS_TOP_LEVEL})
 option(DCS_BUILD_TESTS "构建测试" ${PROJECT_IS_TOP_LEVEL})
-option(DCS_BUILD_VERILOG "构建 Verilator 集成测试 DLL" ON)
+option(DCS_BUILD_VERILOG "构建 Verilator 集成测试 DLL" ${PROJECT_IS_TOP_LEVEL})
 option(DCS_BUILD_BENCHMARK "构建性能基准 dcs_bench" ON)
 
 # ---- 后端选择 ----

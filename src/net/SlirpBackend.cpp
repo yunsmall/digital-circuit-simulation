@@ -458,14 +458,12 @@ void applyHostForwards(Slirp *slirp, const std::string &spec) {
 }
 
 void *backendCreate(void *cfg) {
-#ifdef _WIN32
-    WSADATA wsa;
-    const bool wsa_ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
-#endif
+    // 先分配对象再 WSAStartup：分配失败时还没有拿走引用计数，不需要回滚
     auto *be = new SlirpBackend;
     be->net = static_cast<VirtioNet *>(cfg);
 #ifdef _WIN32
-    be->wsa_started = wsa_ok;
+    WSADATA wsa;
+    be->wsa_started = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
 #endif
 
     if (!makeWakePair(be->kick_rd, be->kick_wr)) {
@@ -496,6 +494,9 @@ void *backendCreate(void *cfg) {
         std::fprintf(stderr, "[slirp] slirp_new 失败，网络后端不可用\n");
         closeWakePair(be);
         cleanupWinsock(be);
+        // 失败路径没有 slirp_cleanup 可调，自己回收可能已注册的定时器
+        for (auto *t: be->timers)
+            delete t;
         delete be;
         return nullptr;
     }

@@ -203,13 +203,12 @@ def gen_smoke_json(top: str, dll_rel: str, ports) -> str:
     inout 端口在 DLL 接口里是一对引脚：<name>_i（输入）和 <name>（三态输出）。
     两者指的是同一根外部总线，所以接同名线网，让三态输出和输入落在同一根线上。
     """
-    out_names = {p["name"] for p in ports if p["dir"] == "output"}
-
     def net_of(p):
-        name = p["name"]
-        if p["dir"] == "input" and name.endswith("_i") and name[:-2] in out_names:
-            return name[:-2]
-        return name
+        # 只有 inout 拆出来的 <name>_i 才和同名三态输出是一根线；普通输入
+        # 恰好以 _i 结尾（且存在同名输出）时不能改接
+        if p.get("from_inout") and p["dir"] == "input" and p["name"].endswith("_i"):
+            return p["name"][:-2]
+        return p["name"]
 
     nets = []
     conns = []
