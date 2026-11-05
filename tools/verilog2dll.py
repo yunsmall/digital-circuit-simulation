@@ -121,6 +121,12 @@ set(VERILATOR_INCLUDE "@VERILATOR_INCLUDE@" CACHE PATH "Verilator include 目录
 set(DCS_INCLUDE "@DCS_INCLUDE@" CACHE PATH "dcs 的 include 目录（dll_interface.h）")
 
 file(GLOB MODEL_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/obj_dir/V*.cpp")
+# 有的 Verilator 版本会额外生成 V<top>__ALL.cpp，它自己 #include 其余 .cpp；
+# 和其它源一起编译会重复定义。存在时只编它
+file(GLOB MODEL_ALL "${CMAKE_CURRENT_SOURCE_DIR}/obj_dir/V*__ALL.cpp")
+if(MODEL_ALL)
+    set(MODEL_SOURCES ${MODEL_ALL})
+endif()
 
 add_library(@NAME@ SHARED
     @NAME@_wrapper.cpp

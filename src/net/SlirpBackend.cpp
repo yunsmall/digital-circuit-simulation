@@ -527,10 +527,21 @@ void *backendCreate(void *cfg) {
         return nullptr;
     }
     // 后端私有选项：主机端口转发（元件不解释这些键，见 dcs/net/BackendOpts.h）
-    if (be->net) {
-        const auto &opts = be->net->backendOpts();
-        if (auto it = opts.find("hostfwd"); it != opts.end())
-            applyHostForwards(be->slirp, it->second);
+    // 解析里的字符串构造可能抛 bad_alloc，不能穿出 create 的“失败返回 nullptr”契约
+    try {
+        if (be->net) {
+            const auto &opts = be->net->backendOpts();
+            if (auto it = opts.find("hostfwd"); it != opts.end())
+                applyHostForwards(be->slirp, it->second);
+        }
+    } catch (...) {
+        std::fprintf(stderr, "[slirp] hostfwd 解析失败，网络后端不可用\n");
+        slirp_cleanup(be->slirp);
+        freeTimers(be);
+        closeWakePair(be);
+        cleanupWinsock(be);
+        delete be;
+        return nullptr;
     }
     // 线程创建可能因系统资源不足抛 system_error；这时 be/slirp/socket 都已分配，
     // 异常一旦穿到 Circuit::init，设备侧拿不到 backend_ctx，destroy 不会执行
