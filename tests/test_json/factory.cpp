@@ -291,6 +291,15 @@ TEST(JsonRoundTrip, DcacheSegmentOverflowRejected) {
     EXPECT_NE(err.find("32 位"), std::string::npos) << err;
 }
 
+// 负数不是合法的无符号参数：解析失败不能静默回退默认段
+TEST(JsonRoundTrip, DcacheNegativeSegmentRejected) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    EXPECT_EQ(f.create("wb_dcache", "d", {{"lines", "16"}, {"base", "-1"}}, err), nullptr);
+    EXPECT_NE(err.find("非负"), std::string::npos) << err;
+    EXPECT_EQ(f.create("wb_dcache", "d", {{"lines", "16"}, {"size", "-1024"}}, err), nullptr);
+}
+
 // ROM / ROM 适配器的读延迟同样进入生成代码的数组维度或等待拍数
 TEST(JsonRoundTrip, RomLatencyUpperBound) {
     auto &f = ComponentFactory::instance();

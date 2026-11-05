@@ -316,8 +316,10 @@ uint32_t paramU32(const std::unordered_map<std::string, std::string> &p, const s
         return d;
     unsigned long long v = 0;
     auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), v);
+    // validateParams 只保证"是 int64 整数"，负数在这里才会解析失败。
+    // 静默回退默认值会让用户写的 base/size 悄悄变成别的段
     if (ec != std::errc{} || ptr != it->second.data() + it->second.size())
-        return d;
+        throw std::invalid_argument(std::format("wishbone_dcache 参数 '{}' 必须是非负整数: {}", k, it->second));
     // meta 标了 wide_int，validateParams 不查 32 位上限；截断会让缓存段悄悄变到
     // 别的地址（例如 base=2^32 变成 0），必须明确拒绝
     if (v > UINT32_MAX)

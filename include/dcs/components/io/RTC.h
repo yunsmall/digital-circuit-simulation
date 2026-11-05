@@ -27,8 +27,9 @@ public:
     std::string genInitCode() const override;
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
-    // 外部 API：基准时间（Unix 纳秒）。必须在 compile 之前设置，值会被编进 JIT 代码
-    void setBaseNs(uint64_t ns) { _base_ns = ns; }
+    // 外部 API：基准时间（Unix 纳秒）。必须在 compile 之前设置，值会被编进 JIT 代码；
+    // 写入 setParam，exportJson/fromJson 往返不会丢时间基准
+    void setBaseNs(uint64_t ns);
     uint64_t baseNs() const { return _base_ns; }
     uint32_t nsPerTick() const { return _ns_per_tick; }
 

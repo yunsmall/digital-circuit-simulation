@@ -144,6 +144,18 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
     std::string prefix = name() + "_";
     std::unordered_map<std::string, Net *> net_map; // 配方 net_name → parent Net*
 
+    // 两个 expose 的 net 字面量不同、模板求值后却可能撞成同一个名字
+    // （例如 "n1" 和 "n${x}"）；静默覆盖会让其中一个引脚凭空悬空
+    auto bind_exposed = [&](const std::string &key, Net *ext, const std::string &pin_name) {
+        auto [it, inserted] = net_map.try_emplace(key, ext);
+        if (!inserted && it->second != ext) {
+            out.error = std::format("复合元件 '{}' 展开失败：引脚 '{}' 的内部线网 '{}' 与已有绑定冲突", name(),
+                                    pin_name, key);
+            return false;
+        }
+        return true;
+    };
+
     // ---- 1. 输出引脚：内部线网直接映射到外部线网 ----
     for (auto &[pin_name, ep]: def->output_expose) {
         Net *ext_net = nullptr;
@@ -157,7 +169,8 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
             std::string net_name;
             if (!R(ep.net, net_name))
                 return;
-            net_map[net_name] = ext_net;
+            if (!bind_exposed(net_name, ext_net, pin_name))
+                return;
             out.output_bindings.push_back({-1, ext_net->id()}); // 标记为输出绑定
         }
     }
@@ -175,7 +188,8 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
             std::string net_name;
             if (!R(ep.net, net_name))
                 return;
-            net_map[net_name] = ext_net;
+            if (!bind_exposed(net_name, ext_net, pin_name))
+                return;
             out.input_bindings.push_back({ext_net->id(), -1}); // 标记为输入绑定
         }
     }
@@ -240,8 +254,15 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
             if (!R(net_name, resolved))
                 return;
             auto it = net_map.find(resolved);
-            if (it == net_map.end())
-                continue;
+            if (it == net_map.end()) {
+                // 线网名拼错时静默跳过会让子元件引脚悬空，运行期只表现为
+                // "莫名其妙不工作"；和引脚名写错一样必须当展开失败报出来
+                out.error = std::format(
+                        "复合元件 '{}' 展开失败：元件 '{}' 的引脚 '{}' 连接的线网 '{}' "
+                        "既不在定义的 nets 里，也不在任何 expose 引脚上",
+                        name(), recipe.instance_name, pin_name, resolved);
+                return;
+            }
             auto err = parent.connect(cptr, pin_name, it->second);
             if (err.code != ErrorCode::OK) {
                 // 配方写错引脚名时不能静默悬空——展开后的电路和配方不符，

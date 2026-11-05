@@ -1,6 +1,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/RTC.h"
 
+#include <charconv>
 #include <format>
 #include <stdexcept>
 
@@ -16,6 +17,7 @@ RTC::RTC(const std::string &name, uint32_t ns_per_tick) : SequentialComponent(na
     if (_ns_per_tick == 0)
         throw std::invalid_argument("ns_per_tick 必须大于 0");
     setParam("ns_per_tick", std::to_string(_ns_per_tick));
+    setParam("base_ns", "0");
     addInput("clk", 1);
     addInput("addr", 8);
     addInput("wdata", 32);
@@ -27,6 +29,13 @@ RTC::RTC(const std::string &name, uint32_t ns_per_tick) : SequentialComponent(na
 }
 
 RTC::~RTC() = default;
+
+void RTC::setBaseNs(uint64_t ns) {
+    _base_ns = ns;
+    // 基准时间编进生成代码，属于配置而不是运行期状态；不记录的话
+    // exportJson/fromJson 往返会把时间基准丢回 1970
+    setParam("base_ns", std::to_string(ns));
+}
 
 std::string RTC::genStateDecl() const {
     // 时间基准直接编进常量：setBaseNs 必须在 compile 前调用。
@@ -110,13 +119,22 @@ std::unique_ptr<Component> RTC::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"rtc", {{"ns_per_tick", "100"}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
+    {"rtc", {{"ns_per_tick", "100"}, {"base_ns", "0", {}, true}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             const int npt = dsc::paramInt(p, "ns_per_tick", 100);
             // 负值强转 uint32 会变成 40 多亿 ns/tick，RTC 看起来正常却能跳出天文数字；
             // 和 WallClock 用同一范围和同一语义（0 也拒绝）
             if (npt < 1 || npt > 1000000000)
                 throw std::invalid_argument("ns_per_tick 必须在1-1000000000之间");
-            return std::make_unique<dsc::RTC>(n, (uint32_t) npt);
+            auto rtc = std::make_unique<dsc::RTC>(n, (uint32_t) npt);
+            auto it = p.find("base_ns");
+            if (it != p.end()) {
+                uint64_t v = 0;
+                auto [ptr, ec] = std::from_chars(it->second.data(), it->second.data() + it->second.size(), v);
+                if (ec != std::errc{} || ptr != it->second.data() + it->second.size())
+                    throw std::invalid_argument(std::format("base_ns 必须是非负整数: {}", it->second));
+                rtc->setBaseNs(v);
+            }
+            return rtc;
         });
 } // namespace

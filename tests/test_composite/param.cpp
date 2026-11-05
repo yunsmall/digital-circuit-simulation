@@ -257,4 +257,61 @@ TEST(BlueprintParam, BadWidthExpressionIsRejected) {
     EXPECT_NE(error.find("除数为 0"), std::string::npos) << error;
 }
 
+// 配方连线引用未声明的线网时必须报错，不能静默让引脚悬空
+TEST(BlueprintParam, UndeclaredConnectionNetRejected) {
+    const char *json = R"JSON({
+  "definitions": {
+    "bad_net": {
+      "nets": ["a", "tmp"],
+      "components": [
+        {"type": "buf", "name": "u0", "params": {"bit_width": "1"},
+         "connections": {"in": "a", "out": "typo"}}
+      ],
+      "expose": {"inputs": {"a": "a"}, "outputs": {"y": "tmp"}}
+    }
+  },
+  "nets": ["in", "out"],
+  "components": [
+    {"type": "composite", "name": "u", "params": {"definition": "bad_net"},
+     "connections": {"a": "in", "y": "out"}}
+  ]
+})JSON";
+    dsc::Context ctx;
+    std::string error;
+    auto c = dsc::Circuit::fromJson(json, error, "", &ctx);
+    ASSERT_TRUE(c) << error;
+    auto err = c->compile();
+    EXPECT_EQ(err.code, dsc::ErrorCode::PREPARE_FAILED);
+    EXPECT_NE(err.message.find("typo"), std::string::npos) << err.message;
+}
+
+// 两个 expose 的 net 字面量不同、模板求值后撞成同一个名字：不能静默覆盖
+TEST(BlueprintParam, ExposedNetTemplateCollisionRejected) {
+    const char *json = R"JSON({
+  "definitions": {
+    "collide": {
+      "params": {"x": "1"},
+      "nets": ["n1", "y"],
+      "components": [
+        {"type": "buf", "name": "u0", "params": {"bit_width": "1"},
+         "connections": {"in": "n1", "out": "y"}}
+      ],
+      "expose": {"inputs": {"a": "n1", "b": "n${x}"}, "outputs": {"y": "y"}}
+    }
+  },
+  "nets": ["in1", "in2", "out"],
+  "components": [
+    {"type": "composite", "name": "u", "params": {"definition": "collide"},
+     "connections": {"a": "in1", "b": "in2", "y": "out"}}
+  ]
+})JSON";
+    dsc::Context ctx;
+    std::string error;
+    auto c = dsc::Circuit::fromJson(json, error, "", &ctx);
+    ASSERT_TRUE(c) << error;
+    auto err = c->compile();
+    EXPECT_EQ(err.code, dsc::ErrorCode::PREPARE_FAILED);
+    EXPECT_NE(err.message.find("冲突"), std::string::npos) << err.message;
+}
+
 } // namespace

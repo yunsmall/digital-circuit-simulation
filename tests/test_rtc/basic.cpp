@@ -170,3 +170,28 @@ TEST(RtcTest, ZeroNsPerTickRejected) {
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(err.find("ns_per_tick"), std::string::npos) << err;
 }
+
+// setBaseNs 写的是编进 JIT 的配置，不属于运行期状态，必须随 JSON 往返
+TEST(RtcTest, BaseNsRoundTrip) {
+    dsc::Circuit c;
+    auto p = std::make_unique<dsc::RTC>("rtc0");
+    auto *rtc = p.get();
+    c.addComponent(std::move(p));
+    rtc->setBaseNs(1700000000123456789ULL);
+
+    std::string error;
+    auto c2 = dsc::Circuit::fromJson(c.exportJson(), error);
+    ASSERT_TRUE(c2) << error;
+    auto *rtc2 = dynamic_cast<dsc::RTC *>(c2->components()[0].get());
+    ASSERT_NE(rtc2, nullptr);
+    EXPECT_EQ(rtc2->baseNs(), 1700000000123456789ULL);
+}
+
+// 负的 base_ns 会被 uint64 解析拒绝，不能静默当成 0
+TEST(RtcTest, NegativeBaseNsRejected) {
+    auto &f = dsc::ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("rtc", "r", {{"base_ns", "-1"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("base_ns"), std::string::npos) << err;
+}
