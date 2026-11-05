@@ -60,6 +60,23 @@ if(DCS_USE_TCC)
         set(DCS_BACKEND_LIBS ${TCC_LIBRARY})
         set(DCS_BACKEND_INCLUDES ${TCC_INCLUDE_DIR})
     endif()
+    # 运行时资源：TCC 的预处理器会 #include <tccdefs.h>，需要真实文件；
+    # Windows 还要 libtcc.dll。TCC_ROOT 和系统搜索两种分支都必须能定位，
+    # 否则装出来的 dcs 启动缺 DLL / 编译生成代码时报找不到 tccdefs.h
+    if(DEFINED TCC_ROOT AND EXISTS "${TCC_ROOT}/include/tccdefs.h")
+        set(DCS_TCC_DEFS "${TCC_ROOT}/include/tccdefs.h")
+    elseif(TCC_INCLUDE_DIR AND EXISTS "${TCC_INCLUDE_DIR}/tccdefs.h")
+        set(DCS_TCC_DEFS "${TCC_INCLUDE_DIR}/tccdefs.h")
+    endif()
+    if(WIN32 AND NOT DCS_TCC_DLL AND TCC_LIBRARY)
+        get_filename_component(_dcs_tcc_lib_dir "${TCC_LIBRARY}" DIRECTORY)
+        find_file(_dcs_tcc_dll libtcc.dll
+            PATHS "${_dcs_tcc_lib_dir}" "${_dcs_tcc_lib_dir}/../bin"
+            NO_DEFAULT_PATH)
+        if(_dcs_tcc_dll)
+            set(DCS_TCC_DLL "${_dcs_tcc_dll}")
+        endif()
+    endif()
 else()
     # LLVM/Clang 后端
     if(DEFINED LLVM_ROOT)
@@ -214,13 +231,13 @@ endif()
 # dcs 自己的 shim 头已经内嵌进 dcs_lib，不用复制；这里只为 TCC 准备
 # 它自己的 tccdefs.h（TCC 的预处理器会 #include <tccdefs.h>，必须能读到文件）
 set(_COPY_CMDS)
-if(DCS_USE_TCC AND DEFINED TCC_ROOT AND EXISTS "${TCC_ROOT}/include/tccdefs.h")
+if(DCS_USE_TCC AND DCS_TCC_DEFS)
     list(APPEND _COPY_CMDS
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:dcs_lib>/shim"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TCC_ROOT}/include/tccdefs.h" "$<TARGET_FILE_DIR:dcs_lib>/shim/tccdefs.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DCS_TCC_DEFS}" "$<TARGET_FILE_DIR:dcs_lib>/shim/tccdefs.h"
     )
 endif()
-if(DCS_USE_TCC AND WIN32 AND DEFINED TCC_ROOT AND DCS_TCC_DLL)
+if(DCS_USE_TCC AND WIN32 AND DCS_TCC_DLL)
     list(APPEND _COPY_CMDS
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DCS_TCC_DLL}" "$<TARGET_FILE_DIR:dcs_lib>"
     )
@@ -285,10 +302,6 @@ if(GTest_FOUND)
         # 各测试用 #include "common/xxx.h" 引用
         target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         set_target_properties(${TEST_NAME} PROPERTIES CXX_STANDARD 23)
-        # whole-archive 只对静态库有意义：共享库的符号本来就全部保留
-        if(NOT DCS_SHARED_LIB AND DCS_WHOLEARCHIVE)
-            target_link_options(${TEST_NAME} PRIVATE ${DCS_WHOLEARCHIVE})
-        endif()
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endfunction()
 
@@ -425,13 +438,22 @@ endif()
 # Windows TCC：运行时 DLL 也需安装到 bin/；tccdefs.h 必须放在 exe 同目录的
 # shim/ 下（Circuit 的 shim 路径探测），否则 TCC 编译生成代码时报找不到 tccdefs.h。
 # dcs 自己的 shim 头已经内嵌进 dcs_lib，不需要安装
-if(DCS_USE_TCC AND WIN32 AND DEFINED TCC_ROOT AND DCS_TCC_DLL)
+if(DCS_USE_TCC AND WIN32 AND DCS_TCC_DLL)
     install(FILES "${DCS_TCC_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES "${TCC_ROOT}/include/tccdefs.h" DESTINATION ${CMAKE_INSTALL_BINDIR}/shim)
+endif()
+if(DCS_USE_TCC AND WIN32 AND DCS_TCC_DEFS)
+    install(FILES "${DCS_TCC_DEFS}" DESTINATION ${CMAKE_INSTALL_BINDIR}/shim)
 endif()
 
 # ---- CMake 包配置：下游 find_package(dcs CONFIG) ----
 set(DCS_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/dcs)
+# 静态库会把 target_link_libraries(dcs_lib PRIVATE ...) 写进导出接口
+# （$<LINK_ONLY:clangFrontend> 这种），下游必须先找到同一套 LLVM/Clang
+# 才能解析这些导入目标。共享库的 PRIVATE 依赖不进接口，TCC 后端也没有这些目标
+set(DCS_EXPORT_NEEDS_LLVM OFF)
+if(NOT DCS_USE_TCC AND NOT DCS_SHARED_LIB)
+    set(DCS_EXPORT_NEEDS_LLVM ON)
+endif()
 configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/dcsConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/dcsConfig.cmake
