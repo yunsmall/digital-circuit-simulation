@@ -80,7 +80,9 @@ public:
     // 断开元件的全部引脚（先输出后输入，保证 _bus_nets 正确清理）
     void disconnectAll(Component *comp);
 
-    // 移除元件：断开全部引脚并从电路中销毁。调用后原 Component* 失效
+    // 移除元件：断开全部引脚并从电路中销毁。调用后原 Component* 失效。
+    // 传进来的指针必须仍在有效期内（不能是已经 removeComponent 掉的野指针），
+    // 这一点无法在运行期验证
     void removeComponent(Component *comp);
 
     // 移除线网：断开所有连接到此线网的引脚，再从电路中移除并销毁
@@ -125,12 +127,15 @@ public:
     void setWire(int id, const std::vector<uint8_t> &value); // 设置线网值
     // 标量快捷路径：高频驱动时钟/复位这类 1 位线网时，不必每拍构造一次 vector
     void setWire(int id, uint64_t value);
-    // 直接拿 Net* 驱动，省掉调用方到处写 ->id()
+    // 直接拿 Net* 驱动，省掉调用方到处写 ->id()。空指针静默忽略，和其他
+    // 无效输入（越界 id、未编译）的处理保持一致；findNet() 的返回值可以直接传
     void setWire(Net *net, const std::vector<uint8_t> &value) {
-        setWire(net->id(), value);
+        if (net)
+            setWire(net->id(), value);
     }
     void setWire(Net *net, uint64_t value) {
-        setWire(net->id(), value);
+        if (net)
+            setWire(net->id(), value);
     }
     std::vector<uint8_t> getWire(int id); // 读取线网值
 
@@ -246,6 +251,8 @@ private:
     Context *_context = nullptr;
 
     Pin *findPin(Component *comp, const std::string &name);
+    // 摘掉单个引脚的连接并维护 _bus_nets，不重算位宽（由调用方统一重算一次）
+    void detachPin(Component *comp, Pin *pin);
     // 断开/删除后按当前连接重算所有线网位宽（连接时只做增量取最大）
     void recomputeNetWidths();
     void jitCleanup();

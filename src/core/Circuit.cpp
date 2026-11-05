@@ -59,11 +59,14 @@ namespace dsc {
 Circuit::Circuit() = default;
 
 Circuit::~Circuit() {
-    // 先放掉 JIT 里持有的外部资源（circuit_deinit 的 dcs_dll_destroy、
-    // DllComponent 的句柄引用计数），再拆电路。clear() 自己也做这一步，
-    // 所以"用户直接 clear() 重建"同样能归还资源
-    deinit();
-    clear();
+    // 析构函数默认 noexcept：JIT circuit_deinit 里的外部回调（DLL destroy）和
+    // 后端 simDeinit（线程 join、文件关闭）理论上都可能抛，穿出析构就是 terminate。
+    // clear() 内部还会再走一次 deinit，一并包住；显式调用 deinit() 仍保留异常语义
+    try {
+        deinit();
+        clear();
+    } catch (...) {
+    }
 }
 
 void Circuit::deinit() {
@@ -71,8 +74,11 @@ void Circuit::deinit() {
     // 用完置空：clear() 内部也会调 deinit()，用户显式 deinit() 之后再 clear()
     // 就会第二次执行 circuit_deinit，去访问已经被 simDeinit 卸载的 DLL 状态对象
     if (_jit.deinit) {
-        _jit.deinit();
+        // 先注销再执行：circuit_deinit 抛异常时下次 deinit 不会重入，
+        // 否则 DLL 状态对象已经被销毁过一次
+        auto fn = _jit.deinit;
         _jit.deinit = nullptr;
+        fn();
     }
     // deinit 之后 JIT 代码引用的外部状态（DLL 句柄、DLL 内部对象）已经失效，
     // 必须让 tick 系列停下；要重新仿真就重新 compile()
@@ -165,14 +171,16 @@ Component *Circuit::addComponent(std::unique_ptr<Component> comp, CircuitError *
 
 CircuitError Circuit::connect(Component *comp, const std::string &pin_name, Net *net) {
     if (!comp)
+        // 不新增对外枚举：空元件按"找不到引脚"返回，消息里写清真正原因
         return {ErrorCode::PIN_NOT_FOUND, -1, {}, "目标元件为空指针"};
     // 空线网和外来线网都要在动任何状态前拒绝：后面按 net->id() 写 _w[]
-    // 和 _bus_nets，外来 Net* 的 id 可能恰好撞上本电路的某根线
+    // 和 _bus_nets，外来 Net* 的 id 可能恰好撞上本电路的某根线。
+    // 报错消息不能碰 net 本身：指针可能已被 removeNet/另一个 Circuit 销毁，
+    // 读 net->name() 就是悬空解引用
     if (!net)
         return {ErrorCode::INVALID_NET, -1, {comp->id()}, "连接目标线网为空"};
     if (std::find_if(_nets.begin(), _nets.end(), [net](const auto &u) { return u.get() == net; }) == _nets.end())
-        return {ErrorCode::INVALID_NET, -1, {comp->id()},
-                std::format("线网 '{}' 不属于本电路", net->name())};
+        return {ErrorCode::INVALID_NET, -1, {comp->id()}, "连接目标线网不属于本电路（可能已删除或属于其它电路）"};
     Pin *pin = findPin(comp, pin_name);
     if (!pin)
         return {ErrorCode::PIN_NOT_FOUND, -1, {comp->id()},
@@ -231,10 +239,7 @@ CircuitError Circuit::connect(Component *comp, const std::string &pin_name, Net 
     return {ErrorCode::OK};
 }
 
-void Circuit::disconnect(Component *comp, const std::string &pin_name) {
-    if (!comp)
-        return;
-    Pin *pin = findPin(comp, pin_name);
+void Circuit::detachPin(Component *comp, Pin *pin) {
     if (!pin || !pin->net())
         return; // 未连接，无需操作
 
@@ -264,6 +269,17 @@ void Circuit::disconnect(Component *comp, const std::string &pin_name) {
     }
 
     pin->setNet(nullptr);
+}
+
+void Circuit::disconnect(Component *comp, const std::string &pin_name) {
+    if (!comp)
+        return;
+    Pin *pin = findPin(comp, pin_name);
+    if (!pin || !pin->net())
+        return;
+    detachPin(comp, pin);
+    // 位宽重算留在这里而不是 detachPin 里：disconnectAll 逐个引脚调用会变成
+    // O(引脚数 × (线网数 + 引脚数))
     recomputeNetWidths();
     _compiled = false;
 }
@@ -271,11 +287,20 @@ void Circuit::disconnect(Component *comp, const std::string &pin_name) {
 void Circuit::disconnectAll(Component *comp) {
     if (!comp)
         return;
-    // 先断输出（清理 _bus_nets），再断输入
-    for (auto &p : comp->outputs())
-        disconnect(comp, p->name());
-    for (auto &p : comp->inputs())
-        disconnect(comp, p->name());
+    // 先断输出（清理 _bus_nets），再断输入；所有引脚摘完统一重算一次位宽
+    bool any = false;
+    for (auto &p : comp->outputs()) {
+        any = any || (p->net() != nullptr);
+        detachPin(comp, p.get());
+    }
+    for (auto &p : comp->inputs()) {
+        any = any || (p->net() != nullptr);
+        detachPin(comp, p.get());
+    }
+    if (any) {
+        recomputeNetWidths();
+        _compiled = false;
+    }
 }
 
 void Circuit::removeComponent(Component *comp) {
@@ -778,8 +803,11 @@ void Circuit::tickCycles(int clk_net_id, uint64_t n) {
         _jit.tick_cycles(clk_net_id, n);
         return;
     }
-    for (uint64_t i = 0; i < n; i++)
+    for (uint64_t i = 0; i < n; i++) {
         tickCycle(clk_net_id);
+        if (_tick_error.code != ErrorCode::OK)
+            return;
+    }
 }
 
 void Circuit::tickBatch(uint64_t n) {
@@ -791,8 +819,12 @@ void Circuit::tickBatch(uint64_t n) {
         _jit.tick_batch(n);
         return;
     }
-    for (uint64_t i = 0; i < n; i++)
+    for (uint64_t i = 0; i < n; i++) {
         tick();
+        // tick() 遇到运行期错误会立即返回，外层不检查就会空转 n 次
+        if (_tick_error.code != ErrorCode::OK)
+            return;
+    }
 }
 
 void Circuit::tickForever() {

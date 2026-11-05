@@ -65,3 +65,20 @@ TEST(WireTest, InvalidNetIdsDoNotTouchMemory) {
     for (auto v: c.getWire(c.netCount()))
         EXPECT_EQ(v, 0);
 }
+
+// findNet() 找不到时返回空指针，直接传给 setWire 不能崩（和其他无效输入一致）
+TEST(WireTest, NullNetPointerIsIgnored) {
+    dsc::Circuit c;
+    auto *in0 = c.createNet("in0"), *out = c.createNet("out");
+    auto *g = c.addComponent(std::make_unique<dsc::LogicGate>("g", 2, 8, dsc::GateOp::AND));
+    c.connect(g, "in0", in0);
+    c.connect(g, "out", out);
+    ASSERT_EQ(c.compile().code, dsc::ErrorCode::OK);
+    c.init();
+    dsc::Net *missing = c.findNet("nope");
+    ASSERT_EQ(missing, nullptr);
+    c.setWire(missing, (uint64_t) 1);
+    c.setWire(missing, std::vector<uint8_t>{1});
+    c.tick();
+    EXPECT_EQ(c.getWire(out->id())[0], 0x00);
+}
