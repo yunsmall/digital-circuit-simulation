@@ -227,6 +227,14 @@ add_subdirectory(digital_circuit_simulation)
 target_link_libraries(my_app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>)
 ```
 
+`cmake --install` 会同时导出 CMake package，下游也可以用
+`find_package(dcs CONFIG REQUIRED)` + `dcs::dcs_lib`（静态库同样要 WHOLE_ARCHIVE）；
+config 里 `find_dependency` 了 nlohmann_json/elfio。安装布局：`bin/dcs`、`lib/dcs_lib`、
+`include/dcs/`、`share/dcs/examples/`、`share/dcs/tools/`（三个 Python 脚本）。
+dcs 自己的 shim 头已编进 dcs_lib，不随安装复制；Windows TCC 构建额外安装
+`libtcc.dll` 和 `bin/shim/tccdefs.h`（TCC 运行时需要读文件，除非用的是把
+`tccdefs.h` 编进 libtcc 的定制构建）。
+
 ## Context：集成时的可变状态
 
 `dsc::Context`（`include/dcs/Context.h`）按 LLVM 的 `LLVMContext` 那套组织：蓝图库

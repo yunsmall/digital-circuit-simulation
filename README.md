@@ -115,6 +115,30 @@ Reference it from a circuit with:
 interface has no tristate-enable channel, so `inout` ports are always driven;
 module parameters keep their source defaults.
 
+### Installing and find_package
+
+```bash
+cmake --install build --prefix <prefix>
+```
+
+Installs `bin/dcs`, `lib/` with dcs_lib, `include/dcs/` headers,
+`share/dcs/examples/`, and `share/dcs/tools/` (`verilog2dcs.py`,
+`verilog2dll.py`, `verilog_common.py`). Windows TCC builds additionally install
+`libtcc.dll` and `bin/shim/tccdefs.h` (TCC reads that file at runtime); the dcs
+shim headers are compiled into dcs_lib and are not installed.
+
+Downstream projects can use:
+
+```cmake
+find_package(dcs CONFIG REQUIRED)
+target_link_libraries(app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs::dcs_lib>)
+```
+
+Whole-archive is required for the static library (self-registering components
+would otherwise be dropped); with `DCS_SHARED_LIB=ON` link `dcs::dcs_lib`
+directly. The config file `find_dependency`s nlohmann_json and elfio, which the
+public headers use.
+
 ### CLI Usage
 
 ```bash

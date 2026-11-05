@@ -1,0 +1,31 @@
+@PACKAGE_INIT@
+
+# 公开头文件直接 include 了 nlohmann/json.hpp（CircuitSerializer/ParamFlatten）
+# 和 elfio（ElfLoader），消费者也必须能找到这两个包
+include(CMakeFindDependencyMacro)
+find_dependency(nlohmann_json CONFIG)
+find_dependency(elfio CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/dcsTargets.cmake")
+
+# 安装包通常只带一个构建配置（例如 Release）。VS 这类多配置生成器会为
+# Debug/MinSizeRel 等配置查找 IMPORTED_LOCATION，缺失时直接报错；把缺失的
+# 配置映射到已安装的那个，消费者不用迁就安装时的配置
+get_target_property(_dcs_configs dcs::dcs_lib IMPORTED_CONFIGURATIONS)
+if(_dcs_configs)
+    list(GET _dcs_configs 0 _dcs_default_config)
+    foreach(_cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        if(NOT _cfg IN_LIST _dcs_configs)
+            set_property(TARGET dcs::dcs_lib PROPERTY MAP_IMPORTED_CONFIG_${_cfg} ${_dcs_default_config})
+        endif()
+    endforeach()
+endif()
+unset(_dcs_configs)
+unset(_dcs_default_config)
+
+# 静态库构建下，元件靠静态初始化器自注册：链接器会丢掉没有被引用的 .obj，
+# 注册也就不会执行。消费者必须整库归档：
+#   target_link_libraries(app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs::dcs_lib>)
+# 共享库构建（DCS_SHARED_LIB=ON）直接用 dcs::dcs_lib 即可。
+
+check_required_components(dcs)

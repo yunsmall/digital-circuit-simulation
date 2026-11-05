@@ -141,7 +141,8 @@ find_package(elfio CONFIG REQUIRED)
 # 库里再来一个 main 会在链接时抢掉它
 file(GLOB DCS_SOURCES CONFIGURE_DEPENDS "src/core/*.cpp" "src/components/*/*.cpp" "src/util/*.cpp")
 
-# JIT 需要的 shim 头文件内容直接编进可执行文件：运行时不再需要 include 目录，
+# JIT 需要的 shim 头文件内容直接编进 dcs_lib（静态构建时随 exe，共享构建时在 dll 里）：
+# 运行时不再需要 include 目录，
 # TCC 的 add_include_path 和路径探测逻辑都可以省掉
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_stdint.h DCS_SHIM_STDINT)
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/shim/dcs_stdbool.h DCS_SHIM_STDBOOL)
@@ -190,7 +191,12 @@ else()
     set(DCS_LIB_LINK "$<LINK_LIBRARY:WHOLE_ARCHIVE,dcs_lib>")
 endif()
 target_include_directories(dcs_lib PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+# 生成目录里的内嵌 shim 头和后端头只在编译本库时用，不对外暴露；
+# 公开头里不 include 它们
+target_include_directories(dcs_lib PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${DCS_BACKEND_INCLUDES}
 )
@@ -205,17 +211,23 @@ endif()
 # ---- 运行时资源复制到输出目录 ----
 # 挂在 dcs_lib 的 POST_BUILD 上，所有链接 dcs_lib 的目标自动获得。
 # 用 $<TARGET_FILE_DIR:dcs_lib> 适配所有生成器（MSVC/Ninja/Makefile）。
-set(_COPY_CMDS
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:dcs_lib>/shim"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/shim" "$<TARGET_FILE_DIR:dcs_lib>/shim"
-)
-if(DCS_USE_TCC AND WIN32 AND DEFINED TCC_ROOT AND DCS_TCC_DLL)
+# dcs 自己的 shim 头已经内嵌进 dcs_lib，不用复制；这里只为 TCC 准备
+# 它自己的 tccdefs.h（TCC 的预处理器会 #include <tccdefs.h>，必须能读到文件）
+set(_COPY_CMDS)
+if(DCS_USE_TCC AND DEFINED TCC_ROOT AND EXISTS "${TCC_ROOT}/include/tccdefs.h")
     list(APPEND _COPY_CMDS
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DCS_TCC_DLL}" "$<TARGET_FILE_DIR:dcs_lib>"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:dcs_lib>/shim"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TCC_ROOT}/include/tccdefs.h" "$<TARGET_FILE_DIR:dcs_lib>/shim/tccdefs.h"
     )
 endif()
-add_custom_command(TARGET dcs_lib POST_BUILD ${_COPY_CMDS})
+if(DCS_USE_TCC AND WIN32 AND DEFINED TCC_ROOT AND DCS_TCC_DLL)
+    list(APPEND _COPY_CMDS
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DCS_TCC_DLL}" "$<TARGET_FILE_DIR:dcs_lib>"
+    )
+endif()
+if(_COPY_CMDS)
+    add_custom_command(TARGET dcs_lib POST_BUILD ${_COPY_CMDS})
+endif()
 
 # ---- 主程序（合并 simulator + tool）----
 if(DCS_BUILD_EXECUTABLE)
@@ -370,15 +382,23 @@ endif()
 
 # ---- 安装规则 ----
 include(GNUInstallDirs)
-install(TARGETS dcs_lib
+include(CMakePackageConfigHelpers)
+install(TARGETS dcs_lib EXPORT dcsTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 install(DIRECTORY include/dcs/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dcs
     FILES_MATCHING PATTERN "*.h"
 )
-install(DIRECTORY shim/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dcs/shim
+# dcs 的 shim 头已经内嵌进 dcs_lib，不需要安装；只有 TCC 自己的 tccdefs.h
+# 要随运行时放到 exe 同目录的 shim/ 下（见下方 TCC 分支）
+# Python 工具脚本（verilog2dcs.py / verilog2dll.py / verilog_common.py）
+# 只装脚本，dcs_tool.cpp 这类源码不随安装走
+install(DIRECTORY tools/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/dcs/tools
+    FILES_MATCHING PATTERN "*.py"
 )
 install(DIRECTORY examples/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/dcs/examples
@@ -386,11 +406,32 @@ install(DIRECTORY examples/
 if(DCS_BUILD_EXECUTABLE)
     install(TARGETS dcs DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
-# Windows TCC：运行时 DLL 也需安装到 bin/
+# Windows TCC：运行时 DLL 也需安装到 bin/；tccdefs.h 必须放在 exe 同目录的
+# shim/ 下（Circuit 的 shim 路径探测），否则 TCC 编译生成代码时报找不到 tccdefs.h。
+# dcs 自己的 shim 头已经内嵌进 dcs_lib，不需要安装
 if(DCS_USE_TCC AND WIN32 AND DEFINED TCC_ROOT AND DCS_TCC_DLL)
     install(FILES "${DCS_TCC_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES "${TCC_ROOT}/include/tccdefs.h" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dcs/shim)
+    install(FILES "${TCC_ROOT}/include/tccdefs.h" DESTINATION ${CMAKE_INSTALL_BINDIR}/shim)
 endif()
+
+# ---- CMake 包配置：下游 find_package(dcs CONFIG) ----
+set(DCS_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/dcs)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/dcsConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/dcsConfig.cmake
+    INSTALL_DESTINATION ${DCS_CMAKE_DIR})
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/dcsConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+install(EXPORT dcsTargets
+    NAMESPACE dcs::
+    FILE dcsTargets.cmake
+    DESTINATION ${DCS_CMAKE_DIR})
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/dcsConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/dcsConfigVersion.cmake
+    DESTINATION ${DCS_CMAKE_DIR})
 
 # ---- Verilator 集成（可选）----
 if(DCS_BUILD_VERILOG)

@@ -118,6 +118,29 @@ cmake --build verilog_dll/my_top/build
 `dcs --dll-info dist/my_top.dll` 可以先看 DLL 导出的引脚。限制：DLL 接口没有
 三态使能通道，`inout` 端口按常驱动处理；模块 parameter 只能使用源码默认值。
 
+### 安装与 find_package
+
+```bash
+cmake --install build --prefix <prefix>
+```
+
+安装内容：`bin/` 下的 `dcs`，`lib/` 下的 dcs_lib，`include/dcs/` 头文件，
+`share/dcs/examples/`，`share/dcs/tools/`（`verilog2dcs.py`、`verilog2dll.py`、
+`verilog_common.py`）。Windows 的 TCC 构建还会安装 `libtcc.dll` 和
+`bin/shim/tccdefs.h`（TCC 运行时必须能读到这个文件）；dcs 自己的 shim 头已经编进
+dcs_lib，不随安装复制。
+
+下游工程可以直接用：
+
+```cmake
+find_package(dcs CONFIG REQUIRED)
+target_link_libraries(app PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,dcs::dcs_lib>)
+```
+
+静态库必须整库归档，否则元件自注册对象会被链接器丢掉；`DCS_SHARED_LIB=ON` 的共享库
+直接链 `dcs::dcs_lib` 即可。config 会自动 `find_dependency` nlohmann_json 和 elfio
+（公开头文件里用到），下游环境需要有这两个包（vcpkg 或系统安装）。
+
 ### CLI 用法
 
 ```bash

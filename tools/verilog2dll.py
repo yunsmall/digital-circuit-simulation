@@ -19,6 +19,7 @@
     dist/<name>.dll          运行 `cmake -S . -B build && cmake --build build` 后出现
 """
 import argparse
+import os
 import pathlib
 import sys
 
@@ -211,6 +212,26 @@ def cmake_libs() -> str:
     return ".dll" if sys.platform == "win32" else ".so"
 
 
+def find_dcs_include() -> pathlib.Path:
+    """定位 dcs 的 include 目录（dll_interface.h 所在处）。
+
+    脚本既可能在源码树里（tools/../include），也可能被安装到
+    <prefix>/share/dcs/tools 或 <prefix>/bin；两种布局都试一遍，
+    最后允许用 DCS_INCLUDE 覆盖。
+    """
+    here = pathlib.Path(__file__).resolve().parent
+    candidates = []
+    if os.environ.get("DCS_INCLUDE"):
+        candidates.append(pathlib.Path(os.environ["DCS_INCLUDE"]))
+    candidates.append(here.parent / "include")       # 源码树 tools/../
+    candidates.append(here / ".." / ".." / "include")  # bin/ 安装布局
+    candidates.append(here / ".." / ".." / ".." / "include")  # share/dcs/tools 安装布局
+    for c in candidates:
+        if (c / "dcs" / "dll_interface.h").is_file():
+            return c.resolve()
+    raise SystemExit("找不到 dcs 的 include 目录（dll_interface.h），请设置 DCS_INCLUDE")
+
+
 def main():
     ap = argparse.ArgumentParser(description="把 Verilog 模块打包成 dcs 运行时加载的 DLL 元件")
     ap.add_argument("vfile")
@@ -252,7 +273,7 @@ def main():
         wrapper.write_text(gen_wrapper(top, type_name, ports, sequential), encoding="utf-8")
     (out / "sc_time_stamp.cpp").write_text(SC_TIME_STUB, encoding="utf-8")
 
-    project_include = pathlib.Path(__file__).resolve().parent.parent / "include"
+    project_include = find_dcs_include()
     (out / "CMakeLists.txt").write_text(
         CMAKE_TEMPLATE
         .replace("@TOP@", top)
