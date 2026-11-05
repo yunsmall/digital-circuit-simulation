@@ -220,6 +220,12 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     }
     const size_t cap = mem->memSize();
     const uint32_t tohost_addr = static_cast<uint32_t>(img.tohost & (cap - 1));
+    // tohost 的 4 字节必须整块落在存储器里；符号地址可以落在末尾 1..3 字节，
+    // 直接 memcpy 会读越界
+    const bool tohost_ok = img.tohost != 0 && (size_t) tohost_addr + 4 <= cap;
+    if (img.tohost != 0 && !tohost_ok)
+        std::cerr << std::format("警告: tohost 地址 0x{:X} 不在存储器范围（容量 0x{:X}），"
+                                 "无法按 tohost 判定结果\n", img.tohost, cap);
     std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
                              img.entry, img.tohost);
 
@@ -373,7 +379,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         }
         // 用 ELF 里的 tohost 符号判断有没有（可能是 0），不能用掩码后的地址：
         // 符号地址低位全 0 时 tohost_addr 也是 0，会被误判成"没有 tohost"
-        if (img.tohost) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
+        if (tohost_ok) { // riscv-tests 约定：写 1 通过，写 (用例号<<1)|1 失败
             uint32_t r = 0;
             std::memcpy(&r, mem->writableMemPtr() + tohost_addr, 4);
             if (r) {

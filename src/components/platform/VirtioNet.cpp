@@ -105,6 +105,8 @@ bool VirtioNet::prepareImpl(Context &, std::string &error) {
         // 让电路直接加载失败
         std::fprintf(stderr, "[dcs] 警告: virtio_net 后端 '%s' 未注册，按 none 运行（guest 无网络）\n",
                      _backend.c_str());
+        // 不把参数改成 "none"：保留原始配置，导出的 JSON 在网络后端可用的构建里
+        // 仍能恢复 slirp；每次加载都打印警告是有意的，比静默丢掉配置好
         _backend = "none";
         return true;
     }
@@ -364,6 +366,8 @@ std::string VirtioNet::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioNet::clone(const std::string &new_name) const {
+    // 外部注入的 BackendOps 不随 clone 复制：clone 用于复合元件展开，
+    // 宿主注入的上下文属于原实例，复制会让两个实例重复销毁同一个后端
     return std::make_unique<VirtioNet>(new_name, _backend, _backend_opts);
 }
 

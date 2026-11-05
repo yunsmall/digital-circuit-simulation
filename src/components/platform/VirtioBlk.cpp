@@ -232,6 +232,8 @@ std::string VirtioBlk::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioBlk::clone(const std::string &new_name) const {
+    // 外部注入的 BackendOps（介质）不随 clone 复制：clone 用于复合元件展开，
+    // 复制会让两个设备共享同一个介质并在销毁时重复关闭
     return std::make_unique<VirtioBlk>(new_name, _backend, _backend_opts);
 }
 

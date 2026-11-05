@@ -133,6 +133,7 @@ std::string VirtioRng::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioRng::clone(const std::string &new_name) const {
+    // 宿主注入的后端不复制：clone 用于复合元件展开，复制会共享并重复释放上下文
     return std::make_unique<VirtioRng>(new_name);
 }
 

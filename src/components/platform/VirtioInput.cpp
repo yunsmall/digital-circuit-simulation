@@ -172,7 +172,9 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
     s.out_write = [this](int i, const std::string &e, uint32_t w) { return genOutputWrite(i, e, w); };
 
     // config 空间：0x100 是 select/subsel/size 三个字节，0x108 起是 128 字节载荷。
-    // 载荷按 (select, subsel) 从宿主侧数组里取，生成代码只做一次指针选择 + 4 字节拷贝
+    // 载荷按 (select, subsel) 从宿主侧数组里取，生成代码只做一次指针选择 + 4 字节拷贝。
+    // 注意 _off 是 Wishbone 字地址（字对齐），驱动对 0x101/0x102 的单字节读会落在
+    // 0x100 这个 case 上，由 CPU 按字节偏移从返回的 32 位字里取；不要拆成 0x101/0x102 的 case
     std::string payload_cases;
     for (int k = 0; k < 32; k++)
         payload_cases += std::format("            case 0x{:X}: ", 0x108 + k * 4);
@@ -210,7 +212,8 @@ virtio_gen::DeviceSpec VirtioInput::makeSpec() const {
             "            }}\n",
             s.id, payload_cases, name_off, devids_off, keybits_off, ledbits_off);
 
-    // 写 select/subsel 都是单字节事务，落在同一个总线字的不同通道上，按 _sel 拆
+    // 写 select/subsel 都是单字节事务，总线地址仍是字对齐的 0x100，
+    // 具体写的哪个字节由 _sel 的位给出（0x101 的写是 _sel bit1，不是 _off=0x101）
     s.config_write = std::format(
             "            case 0x100: {{\n"
             "                if (_sel & 1u) _vio_icfg_sel_{0} = _wdat & 0xFFu;\n"
@@ -302,6 +305,8 @@ std::string VirtioInput::genInitCode() const {
 }
 
 std::unique_ptr<Component> VirtioInput::clone(const std::string &new_name) const {
+    // 宿主注入的后端不复制：clone 用于复合元件展开，复制会让两个实例共享
+    // 同一份后端上下文并在销毁时重复释放
     return std::make_unique<VirtioInput>(new_name);
 }
 
