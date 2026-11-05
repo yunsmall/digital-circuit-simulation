@@ -332,3 +332,38 @@ TEST(VirtioBlk, RepeatedInitCallsBackendOnce) {
     c.deinit();
     EXPECT_EQ(ctr.deinits, 1);
 }
+
+// 描述符 addr 是 64 位、主端口只有 32 位：高 32 位非零时必须按错误完成，
+// 不能截断成低 32 位去访问无关内存
+TEST(VirtioTest, DescriptorAddressAbove32BitsIsRejected) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 1 /*OUT*/, 0, true);
+    f.mem()[data] = 0x5A;
+    // 把 desc0（请求头）的地址高 32 位改成 1 → addr = 0x1_0000_0200
+    const uint32_t hi = 1;
+    std::memcpy(f.mem() + desc + 4, &hi, 4);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++) f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1) << "非法请求也要回收（used.idx 前进）";
+    EXPECT_EQ(f.usedLen(used, 0), 0u) << "越界地址不能产生任何数据搬运";
+    EXPECT_EQ(f.mem()[data], 0x5Au) << "不能按截断后的地址去写内存";
+}
+
+// avail.ring 里的描述符索引越界时，不能拿 idx*16 去算描述符地址（会回绕）
+TEST(VirtioTest, DescriptorIndexOutOfRangeIsRejected) {
+    VirtioFixture<VirtioBlk> f(BlkImage::ReadWrite);
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0 /*IN*/, 0, true);
+    f.put16(avail + 4, 4); // 队列长度 4，索引 4 越界
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++) f.tick();
+
+    EXPECT_EQ(f.get16(used + 2), 1) << "越界索引也要完成请求，不能让驱动永久等待";
+    EXPECT_EQ(f.usedLen(used, 0), 0u);
+}

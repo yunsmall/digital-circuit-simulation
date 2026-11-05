@@ -32,8 +32,16 @@ ElfImage loadElf32(const std::string &path) {
         const ELFIO::section *s = up.get();
         if (!isLoadable(s) || s->get_size() == 0)
             continue;
-        lo = std::min(lo, static_cast<uint64_t>(s->get_address()));
-        hi = std::max(hi, static_cast<uint64_t>(s->get_address() + s->get_size()));
+        // 地址和长度都来自外部文件：先证明 addr+size 不溢出，再参与跨度计算，
+        // 否则构造过的 ELF 能让 hi 回绕、跨度检查形同虚设
+        const uint64_t seg_addr = static_cast<uint64_t>(s->get_address());
+        const uint64_t seg_size = static_cast<uint64_t>(s->get_size());
+        if (seg_addr > UINT64_MAX - seg_size) {
+            img.error = "段地址溢出: " + s->get_name();
+            return img;
+        }
+        lo = std::min(lo, seg_addr);
+        hi = std::max(hi, seg_addr + seg_size);
     }
     if (lo == UINT64_MAX) {
         img.error = "ELF 里没有可装载的段";
@@ -62,11 +70,22 @@ ElfImage loadElf32(const std::string &path) {
             continue;
         const uint64_t addr = static_cast<uint64_t>(s->get_address());
         const size_t n = static_cast<size_t>(s->get_size());
-        if (addr < lo || addr - lo + n > img.data.size()) {
+        // 边界检查用减法，避免 addr - lo + n 在 uint64 上回绕后通过检查
+        if (addr < lo) {
             img.error = "段超出映像范围: " + s->get_name();
             return img;
         }
-        std::memcpy(img.data.data() + (addr - lo), s->get_data(), n);
+        const uint64_t off = addr - lo;
+        if (off > (uint64_t) img.data.size() || n > img.data.size() - (size_t) off) {
+            img.error = "段超出映像范围: " + s->get_name();
+            return img;
+        }
+        const char *seg_data = s->get_data();
+        if (n && !seg_data) {
+            img.error = "段数据为空: " + s->get_name();
+            return img;
+        }
+        std::memcpy(img.data.data() + (size_t) off, seg_data, n);
     }
 
     // riscv-tests 的通过/失败靠写 tohost 判定，顺手把符号地址找出来
@@ -111,8 +130,16 @@ ElfImage loadElf64(const std::string &path) {
         const ELFIO::section *s = up.get();
         if (!isLoadable(s) || s->get_size() == 0)
             continue;
-        lo = std::min(lo, static_cast<uint64_t>(s->get_address()));
-        hi = std::max(hi, static_cast<uint64_t>(s->get_address() + s->get_size()));
+        // 地址和长度都来自外部文件：先证明 addr+size 不溢出，再参与跨度计算，
+        // 否则构造过的 ELF 能让 hi 回绕、跨度检查形同虚设
+        const uint64_t seg_addr = static_cast<uint64_t>(s->get_address());
+        const uint64_t seg_size = static_cast<uint64_t>(s->get_size());
+        if (seg_addr > UINT64_MAX - seg_size) {
+            img.error = "段地址溢出: " + s->get_name();
+            return img;
+        }
+        lo = std::min(lo, seg_addr);
+        hi = std::max(hi, seg_addr + seg_size);
     }
     if (lo == UINT64_MAX) {
         img.error = "ELF 里没有可装载的段";
@@ -141,11 +168,22 @@ ElfImage loadElf64(const std::string &path) {
             continue;
         const uint64_t addr = static_cast<uint64_t>(s->get_address());
         const size_t n = static_cast<size_t>(s->get_size());
-        if (addr < lo || addr - lo + n > img.data.size()) {
+        // 边界检查用减法，避免 addr - lo + n 在 uint64 上回绕后通过检查
+        if (addr < lo) {
             img.error = "段超出映像范围: " + s->get_name();
             return img;
         }
-        std::memcpy(img.data.data() + (addr - lo), s->get_data(), n);
+        const uint64_t off = addr - lo;
+        if (off > (uint64_t) img.data.size() || n > img.data.size() - (size_t) off) {
+            img.error = "段超出映像范围: " + s->get_name();
+            return img;
+        }
+        const char *seg_data = s->get_data();
+        if (n && !seg_data) {
+            img.error = "段数据为空: " + s->get_name();
+            return img;
+        }
+        std::memcpy(img.data.data() + (size_t) off, seg_data, n);
     }
 
     // riscv-tests 的通过/失败靠写 tohost 判定，顺手把符号地址找出来

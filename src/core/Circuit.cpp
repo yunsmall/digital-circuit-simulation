@@ -613,6 +613,8 @@ CircuitError Circuit::expandComposites() {
                 // 位宽按当前连接重算：disconnectAll 现在会顺带重算，但不能把正确性
                 // 押在它的副作用上（将来改成只清指针就会静默留下过宽的线网）
                 recomputeNetWidths();
+                // 展开失败的定义不算"用过"：导出时不该把它的蓝图带出去
+                _used_definitions.erase(comp->definitionName());
                 _compiled = false;
                 return {ErrorCode::PREPARE_FAILED, -1, {}, exp.error};
             }

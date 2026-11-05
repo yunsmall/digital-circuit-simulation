@@ -221,11 +221,17 @@ std::string genDone(const DeviceSpec &s) {
         // 每个请求在进 desc 链之前清零 written：desc 处理里“dlen 不足直接完成”的
         // 分支不会再写它，used.len 必须报 0，不能带上一个请求的字节数
         c += "                _qv->written = 0; _qv->pkt = 0; _qv->step = 0;\n";
+        // head 来自 guest 的 avail.ring：越界索引不能拿去算 desc + idx*16（uint32
+        // 乘法会回绕，读到描述符表之外），按"零字节完成"把这个请求回收掉
+        c += "                if (_qv->head >= _qv->qnum) { _qv->phase = 7; break; }\n";
         c += "                _qv->phase = 3;\n";
         c += "                break;\n";
         c += "            }\n";
         c += "            case 3: { // descriptor\n";
         c += std::format("                uint64_t _addr = 0; dcs_memcpy(&_addr, _vio_mp_buf_{0}, 8);\n", s.id);
+        // 描述符里的 addr 是 64 位，主端口只有 32 位：超出范围时不能静默截断
+        // （会读到完全无关的地址），按零字节完成让驱动拿回缓冲区
+        c += "                if (_addr > 0xFFFFFFFFull) { _qv->phase = 7; break; }\n";
         c += "                _qv->daddr = (uint32_t)_addr;\n";
         c += std::format("                _qv->dlen = (uint32_t)_vio_mp_buf_{0}[8] | ((uint32_t)_vio_mp_buf_{0}[9] << 8) |\n", s.id);
         c += std::format("                            ((uint32_t)_vio_mp_buf_{0}[10] << 16) | ((uint32_t)_vio_mp_buf_{0}[11] << 24);\n", s.id);
