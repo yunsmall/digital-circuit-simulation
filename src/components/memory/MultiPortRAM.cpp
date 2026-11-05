@@ -189,7 +189,9 @@ std::string MultiPortRAM::genFuncDef_seq() const {
     if (_rd_stages > 0) {
         for (int i = 0; i < _num_read; i++)
             code += std::format("    _mpram_rd_addr_{0}[0][{1}] = _ra{1};\n", sid, i);
-        code += std::format("    _mpram_tick_{0}++;\n", sid);
+        // 饱和递增：rd_valid 只关心"是否已经过了 read_latency 拍"，到点后不再递增。
+        // 无条件 ++ 会在约 2^31 拍后让 int 回绕成负数，rd_valid 永久变 0（长仿真确定性故障）
+        code += std::format("    if (_mpram_tick_{0} < {1}) _mpram_tick_{0}++;\n", sid, _read_latency);
     }
 
     code += std::format("    _mpram_clk_{} = _clk;\n", sid);
