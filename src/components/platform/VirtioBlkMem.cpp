@@ -3,6 +3,7 @@
 #include "dcs/ComponentFactory.h"
 
 #include <charconv>
+#include <cstdint>
 #include <format>
 #include <stdexcept>
 
@@ -18,6 +19,12 @@ void noopReset(void *) {}
 
 VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
     SequentialComponent(name, "virtio_blk_mem"), _size_bytes(size_bytes & ~511ull) {
+    // 32 位宿主装不下 4 GiB 介质：size_t 截断后设备会报 0 容量，用户看到的是空盘。
+    // 64 位宿主上这个比较恒假，用条件编译避免 -Wtautological
+#if SIZE_MAX < UINT64_MAX
+    if (_size_bytes > (uint64_t) SIZE_MAX)
+        throw std::invalid_argument("size_bytes 超出 32 位宿主的可分配范围");
+#endif
     // 导出对齐后的精确字节数：size_kb 向下取整，1536 字节会导成 1 KB，
     // 回读后容量缩水；size_bytes 是唯一能精确往返的口径
     setParam("size_bytes", std::to_string(_size_bytes));
