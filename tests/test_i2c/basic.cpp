@@ -185,3 +185,30 @@ TEST(I2cTest, ZeroClkdivStillReturnsToIdle) {
         f.cycle();
     EXPECT_EQ(f.read(0x08) & 1u, 0u) << "clkdiv=0 不应让状态机卡在忙状态";
 }
+
+// STOP 条件：SCL 先抬高并保持高，SDA 才能由低变高；不能在 SCL 上升沿同拍释放
+TEST(I2cTest, StopReleasesSdaAfterSclIsHigh) {
+    Fixture f(4);
+    f.compile();
+    f.write(0x10, 0x50);
+    f.write(0x00, 0xA5);
+    f.write(0x0C, 1);
+
+    int scl_rise_cycle = -1000;
+    int last_release_gap = -1;
+    uint8_t prev_scl = f.bit(f.scl);
+    uint8_t prev_oe = f.bit(f.sda_oe);
+    for (int i = 0; i < 200; ++i) {
+        f.cycle();
+        const uint8_t scl = f.bit(f.scl);
+        const uint8_t oe = f.bit(f.sda_oe);
+        if (scl && !prev_scl)
+            scl_rise_cycle = i;
+        // SDA 从"驱动低"变成"释放"的那一拍：SCL 必须已经高了一段时间
+        if (prev_oe && !oe && scl)
+            last_release_gap = i - scl_rise_cycle;
+        prev_scl = scl;
+        prev_oe = oe;
+    }
+    EXPECT_GE(last_release_gap, 1) << "STOP 的 SDA 释放必须在 SCL 高电平期间、且不在上升沿同拍";
+}

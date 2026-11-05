@@ -5,7 +5,7 @@
 //
 // 寄存器（8 位地址）：
 //   0x00 CTRL     bit0=使能
-//   0x04 TIMEOUT  超时 tick 数
+//   0x04 TIMEOUT  超时 tick 数（0 表示禁用：计数器不推进、永不超时）
 //   0x08 FEED     写任意值喂狗（计数清零、中断撤下）
 //   0x0C STATUS   只读：bit0=已超时
 //

@@ -99,16 +99,21 @@ std::string I2C::genFuncDef_seq() const {
             "    if (_i2c_phase_{0} != 0 && _i2c_phase_{0} != 7) {{\n"
             "        if (++_i2c_div_{0} >= _i2c_clkdiv_{0}) {{\n"
             "            _i2c_div_{0} = 0;\n"
-            "            _i2c_scl_{0} = !_i2c_scl_{0};\n"
-            "            if (_i2c_scl_{0}) {{\n"
-            // 停止条件要求 SCL 高电平期间 SDA 由低变高，只能在这里释放
-            "                if (_i2c_phase_{0} == 6) {{\n"
-            "                    _i2c_sda_low_{0} = 0;\n"
-            "                    _i2c_phase_{0} = 7; _i2c_done_{0} = 1;\n"
-            "                }} else if (_i2c_phase_{0} == 3 || _i2c_phase_{0} == 5) {{\n"
-            "                    _i2c_sda_low_{0} = 0;\n" // 主机释放 SDA，从机此时才能拉低表示 ACK
-            "                    _i2c_ack_sampled_{0} = 0;\n"
-            "                }}\n"
+            // STOP 的第二步：SCL 已经高了一个半周期，此时才释放 SDA。
+            // 规范要求 SDA 在 SCL 为高期间由低变高，和 SCL 同一拍变化的话
+            // 从机在 SCL 上升沿看到的是跳变，建立时间不成立
+            "            if (_i2c_phase_{0} == 8) {{\n"
+            "                _i2c_sda_low_{0} = 0;\n"
+            "                _i2c_phase_{0} = 7; _i2c_done_{0} = 1;\n"
+            "            }} else {{\n"
+            "                _i2c_scl_{0} = !_i2c_scl_{0};\n"
+            "                if (_i2c_scl_{0}) {{\n"
+            "                    if (_i2c_phase_{0} == 6) {{\n"
+            "                        _i2c_phase_{0} = 8;\n" // 先抬 SCL，SDA 仍保持低
+            "                    }} else if (_i2c_phase_{0} == 3 || _i2c_phase_{0} == 5) {{\n"
+            "                        _i2c_sda_low_{0} = 0;\n" // 主机释放 SDA，从机此时才能拉低表示 ACK
+            "                        _i2c_ack_sampled_{0} = 0;\n"
+            "                    }}\n"
             "            }} else {{\n"
             // SCL 下降沿推进一位
             "                if (_i2c_phase_{0} == 1) {{\n"
@@ -144,6 +149,7 @@ std::string I2C::genFuncDef_seq() const {
             "                    _i2c_sda_low_{0} = 1;\n"
             "                    _i2c_phase_{0} = 6;\n"
             "                }}\n"
+            "            }}\n"
             "            }}\n"
             "        }}\n"
             "    }}\n"
