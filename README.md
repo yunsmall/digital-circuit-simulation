@@ -139,7 +139,7 @@ module parameters keep their source defaults.
 cmake --install build --prefix <prefix>
 ```
 
-Installs `bin/dcs`, `lib/` with dcs_lib, `include/dcs/` headers,
+Installs `bin/dcs` and `bin/dcs_soc` (full-SoC entry), `lib/` with dcs_lib, `include/dcs/` headers,
 `share/dcs/examples/`, and `share/dcs/tools/` (`verilog2dcs.py`,
 `verilog2dll.py`, `verilog_common.py`). Windows TCC builds additionally install
 `libtcc.dll` and `bin/shim/tccdefs.h` (TCC reads that file at runtime); the dcs

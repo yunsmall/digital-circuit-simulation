@@ -404,7 +404,8 @@ install(DIRECTORY examples/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/dcs/examples
 )
 if(DCS_BUILD_EXECUTABLE)
-    install(TARGETS dcs DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # dcs_soc 是整机入口（ELF/自定义 CPU 的镜像装载），安装版同样需要
+    install(TARGETS dcs dcs_soc DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(WIN32 AND DCS_BUILD_NET)
         # vcpkg 的 applocal deploy 已经把 libslirp 及其 glib/iconv 依赖放在
         # 可执行文件旁边，安装时原样带上，否则装完的 dcs.exe 启动缺 DLL。

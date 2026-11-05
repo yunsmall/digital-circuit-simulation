@@ -141,7 +141,7 @@ cmake --build verilog_dll/my_top/build
 cmake --install build --prefix <prefix>
 ```
 
-安装内容：`bin/` 下的 `dcs`，`lib/` 下的 dcs_lib，`include/dcs/` 头文件，
+安装内容：`bin/` 下的 `dcs` 和 `dcs_soc`（整机入口），`lib/` 下的 dcs_lib，`include/dcs/` 头文件，
 `share/dcs/examples/`，`share/dcs/tools/`（`verilog2dcs.py`、`verilog2dll.py`、
 `verilog_common.py`）。Windows 的 TCC 构建还会安装 `libtcc.dll` 和
 `bin/shim/tccdefs.h`（TCC 运行时必须能读到这个文件）；dcs 自己的 shim 头已经编进
