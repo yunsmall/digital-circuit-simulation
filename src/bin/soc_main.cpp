@@ -550,6 +550,12 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     // 都是实打实的开销；块内没有需要逐拍观察的东西（--delay 逐拍观察时才退回单拍）。
     // 喂数据的边界要精确落在 feed_after 上，所以块不跨过那个点
     constexpr uint64_t kBatch = 65536;
+    // --feed-after 0 表示"第一拍之前就入队"。循环里的注入点在 tick 之后，
+    // 短仿真（ticks 小于一批 65536）会等预算耗尽才入队，脚本完全发不出去
+    if (!forever && feed_after == 0 && !feed_data.empty()) {
+        while (feed_pos < feed_data.size() && uart_feed->push((uint8_t) feed_data[feed_pos]))
+            feed_pos++;
+    }
     for (uint64_t t = 0; t < ticks;) {
         uint64_t chunk = ticks - t;
         if (delay_ms > 0) {

@@ -446,6 +446,11 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         std::cerr << "错误: --forever 不处理 --vcd/--monitor/--delay，这些选项只在有限 tick 循环里生效\n";
         return 1;
     }
+    // 负数延迟没有意义，dcs_soc 同样拒绝；静默当成 0 会让用户以为限速生效了
+    if (delay_ms < 0) {
+        std::cerr << "错误: --delay 不能为负\n";
+        return 1;
+    }
     auto circuit = dcs_cli::loadCircuit(path, ctx);
     if (!circuit)
         return 1;
@@ -480,6 +485,17 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     }
     std::cout << "JIT 编译成功\n\n";
     circuit->init();
+
+    // 只要 --dump-mem 已经解析成功，正常结束和运行错误都导出同一份现场：
+    // 总线冲突/振荡时正是最需要看存储器的时候，dcs_soc 也是这么做的
+    auto finish = [&](int code) {
+        if (dump_target) {
+            const size_t cap = dump_target->memSize();
+            dsc::dumpMemoryHex(std::cout, dump_target->writableMemPtr(), cap, dump_addr, dump_len);
+        }
+        circuit->deinit();
+        return code;
+    };
 
     // 可选：把线网变化导出成 VCD，便于用 GTKWave 观察时序
     std::ofstream vcd;
@@ -516,8 +532,7 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         // 不检查的话会继续走下面的有限循环，最后以 0 退出，错误被静默
         if (circuit->hasError()) {
             std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-            circuit->deinit();
-            return 1;
+            return finish(1);
         }
     }
 
@@ -532,16 +547,14 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             // 批量入口在停止标志置位后提前返回，t 仍按 chunk 前进，所以这里必须查错误
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-                circuit->deinit();
-                return 1;
+                return finish(1);
             }
             continue;
         }
         circuit->tick();
         if (circuit->hasError()) {
             std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
-            circuit->deinit();
-            return 1;
+            return finish(1);
         }
         // 采样点在 tick() 全部相位之后：时序三态输出已在阶段 3/4 更新，
         // 而读这些总线的组合元件要到下一拍才重算。VCD/逐拍打印记录的
@@ -582,13 +595,7 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
 
     // 调试用：把存储器里的一段原样导出来。跑内核实测时，串口还没初始化
     // 之前内核的日志只在 printk 环形缓冲区里，只能靠它看到内核到底走到哪了
-    if (dump_target) {
-        const size_t cap = dump_target->memSize();
-        dsc::dumpMemoryHex(std::cout, dump_target->writableMemPtr(), cap, dump_addr, dump_len);
-    }
-
-    circuit->deinit();
-    return 0;
+    return finish(0);
 }
 
 // ---- 校验（--check）----
