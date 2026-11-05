@@ -20,6 +20,7 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -112,6 +113,19 @@ struct PollFill {
 
 // ---- 唤醒通道 ----
 
+// 唤醒报文丢了没关系（poll 最多 1 秒自己醒来），所以发送端必须非阻塞：
+// 阻塞 send 在缓冲区满时会把 JIT 线程或销毁路径卡死
+void setSendNonBlocking(slirp_os_socket s) {
+#ifdef _WIN32
+    u_long mode = 1;
+    ioctlsocket(s, FIONBIO, &mode);
+#else
+    const int flags = fcntl(s, F_GETFL, 0);
+    if (flags >= 0)
+        fcntl(s, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
 // Windows 没有 socketpair，用一对连到彼此的 UDP 回环 socket 代替
 bool makeWakePair(slirp_os_socket &rd, slirp_os_socket &wr) {
 #ifdef _WIN32
@@ -140,6 +154,7 @@ bool makeWakePair(slirp_os_socket &rd, slirp_os_socket &wr) {
     }
     wr = a;
     rd = b;
+    setSendNonBlocking(wr);
     return true;
 #else
     int fds[2];
@@ -147,6 +162,7 @@ bool makeWakePair(slirp_os_socket &rd, slirp_os_socket &wr) {
         return false;
     wr = fds[0];
     rd = fds[1];
+    setSendNonBlocking(wr);
     return true;
 #endif
 }
@@ -179,6 +195,9 @@ void wakeBackend(SlirpBackend *be) {
     if (be->kick_wr == SLIRP_INVALID_SOCKET)
         return;
     const char one = 1;
+    // 发送端非阻塞：缓冲区满或对端已停时失败都无所谓，run() 的 poll 有
+    // 1 秒上限会自己醒来。kick 与 destroy 的并发由 VirtioNet 保证不存在
+    // （deinit 之后不会再有 tick）
     send(be->kick_wr, &one, 1, 0);
 }
 

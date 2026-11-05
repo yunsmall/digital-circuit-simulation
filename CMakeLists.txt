@@ -311,6 +311,12 @@ if(DCS_BUILD_EXECUTABLE)
         # libslirp 在 vcpkg 里只提供 pkg-config 模块（vcpkg print-usage libslirp）
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(SLIRP REQUIRED IMPORTED_TARGET slirp)
+        # Windows 安装规则会把 slirp/glib 的 DLL 带进 bin/；类 Unix 依赖
+        # 系统的动态库搜索路径，装到别的机器前要自己确认
+        if(NOT WIN32)
+            message(WARNING "网络后端依赖 libslirp（及其 glib 等依赖）：安装到别的"
+                            "机器时要保证它们在该系统的动态库搜索路径里")
+        endif()
         # 两个可执行文件都要能加载带 virtio_net 的电路（--json-to-c / 纯电路仿真
         # 也要能认出 backend=slirp），后端只编进可执行文件，不污染 dcs_lib
         target_sources(dcs PRIVATE src/net/SlirpBackend.cpp)
