@@ -91,6 +91,10 @@ void VirtioInput::setBackend(const BackendOps &ops) {
 }
 
 void VirtioInput::simInit() {
+    // 重新 init 是冷启动：上一轮残留的输入事件/状态回传不能投递给新 guest。
+    // 旧后端的线程在 simDeinit 里已经停掉，这里没有并发访问
+    _state->evt_head = _state->evt_tail = 0;
+    _state->status_head = _state->status_tail = 0;
     if (_state->ops.init)
         _state->ops.init(_state->ops.ctx);
 }

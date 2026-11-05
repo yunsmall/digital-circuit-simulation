@@ -436,9 +436,13 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "            _qv->chunk = _c;\n"
             "            _a = _qv->daddr + _qv->off; _l = _c;\n"
             "            if (_vio_type_{1} == 0) {{\n"
-            // sector 字段是 64 位：偏移必须按 64 位算，否则 4GiB 以上的镜像会回绕到盘头
+            // sector 字段是 64 位：偏移必须按 64 位算，否则 4GiB 以上的镜像会回绕到盘头。
+            // guest 给的 sector 可以任意大，先查乘加溢出，溢出按 IOERR 拒绝
+            "                if (_vio_sec_{1} > (~0ull - _qv->written) / 512ull) _vio_status_byte_{1} = 1;\n"
+            "                else {{\n"
             "                uint64_t _io_off = _vio_sec_{1} * 512ull + _qv->written;\n"
             "{2}"
+            "                }}\n"
             "                _wr = 1;\n"
             "            }} else _wr = 0;\n"
             "            break;\n"
@@ -463,8 +467,12 @@ DeviceSpec makeBlkSpec(const BlkParams &p) {
             "                uint32_t _c = _qv->chunk;\n"
             "                if (_vio_type_{1} == 0) _qv->written += _c;\n"
             "                else if (_vio_type_{1} == 1) {{\n"
+            // 同 q.start：guest 的 sector 可以先查溢出，避免回绕后写到介质开头
+            "                    if (_vio_sec_{1} > (~0ull - _qv->written) / 512ull) _vio_status_byte_{1} = 1;\n"
+            "                    else {{\n"
             "                    uint64_t _io_off = _vio_sec_{1} * 512ull + _qv->written;\n"
             "{2}"
+            "                    }}\n"
             "                    _qv->written += _c;\n"
             "                }} else if (_vio_type_{1} != 4) _vio_status_byte_{1} = 2;\n"
             "                _qv->off += _c;\n"

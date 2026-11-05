@@ -121,6 +121,10 @@ void VirtioNet::simInit() {
         _ops.destroy(_state->backend_ctx);
         _state->backend_ctx = nullptr;
     }
+    // 重新 init 等于冷启动：上轮残留的 RX/TX 包不能投递给重启后的 guest。
+    // 旧后端线程已经停掉，这里没有并发访问
+    _state->rx_head = _state->rx_tail = 0;
+    _state->tx_head = _state->tx_tail = 0;
     // create 拿到设备本身，后端可以在自己的线程里直接 pushRxPacket/popTxPacket
     _state->backend_ctx = _ops.create ? _ops.create(this) : nullptr;
     _state->reset_fn = _ops.reset;

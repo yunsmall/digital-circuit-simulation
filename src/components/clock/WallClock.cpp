@@ -60,6 +60,8 @@ std::string WallClock::genStateDecl() const {
 std::string WallClock::genInitCode() const {
     auto st = stateVarName();
     std::string base;
+    // 注意 genResetCode 默认复用本函数：空 base_epoch（用宿主时间）时 reset()
+    // 会重新取一次宿主当前时间，模拟的是"设备重新上电"而不是回到 init 的基准
     if (_base_epoch.empty())
         base = std::format("    {}.base = dcs_wallclock_base();\n", st);
     else

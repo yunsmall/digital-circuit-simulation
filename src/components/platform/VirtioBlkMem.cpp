@@ -81,7 +81,7 @@ virtio_gen::DeviceSpec VirtioBlkMem::makeSpec() const {
     p.init_code = std::format(
             "    _vio_mem_{0} = (uint8_t *)0x{1:X}ULL;\n"
             "    _vio_mem_size_{0} = {2}ull;\n"
-            "    _vio_status_byte_{0} = 0;\n",
+            "    _vio_status_byte_{0} = 0; _vio_type_{0} = 0; _vio_sec_{0} = 0;\n",
             p.id, (unsigned long long) reinterpret_cast<uintptr_t>(_mem.empty() ? nullptr : _mem.data()), _mem.size());
     p.read_stmt = std::format(
             "                if (_io_off <= _vio_mem_size_{0} && _c <= _vio_mem_size_{0} - _io_off)\n"

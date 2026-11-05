@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <dcs/Circuit.h>
+#include <dcs/ComponentFactory.h>
 #include <dcs/components/io/RTC.h>
 
 using namespace dsc;
@@ -150,4 +151,13 @@ TEST(RtcTest, CloneKeepsBaseNs) {
     auto *rtc2 = static_cast<RTC *>(copy.get());
     ASSERT_NE(rtc2, nullptr);
     EXPECT_EQ(rtc2->baseNs(), 1700000000000000000ull) << "时间基准是配置，clone 必须带上";
+}
+
+// 负的 ns_per_tick 强转 uint32 会变成 40 多亿，RTC 看起来正常却跳出天文数字
+TEST(RtcTest, NegativeNsPerTickRejected) {
+    auto &f = dsc::ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("rtc", "r", {{"ns_per_tick", "-1"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("ns_per_tick"), std::string::npos) << err;
 }

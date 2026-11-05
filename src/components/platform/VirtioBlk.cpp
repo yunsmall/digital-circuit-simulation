@@ -204,7 +204,8 @@ virtio_gen::DeviceSpec VirtioBlk::makeSpec() const {
             "static uint8_t _vio_status_byte_{0};\n"
             "extern uint32_t dcs_virtio_io(void *, uint32_t, uint32_t, uint8_t *, uint32_t, uint32_t);\n",
             p.id, _state->read_only ? 1u : 0u);
-    p.init_code = std::format("    _vio_status_byte_{0} = 0;\n", p.id);
+    p.init_code = std::format(
+            "    _vio_status_byte_{0} = 0; _vio_type_{0} = 0; _vio_sec_{0} = 0;\n", p.id);
     p.read_stmt = std::format(
             "                uint32_t _ok = dcs_virtio_io(_vio_state_{0}, (uint32_t)_io_off,\n"
             "                                             (uint32_t)(_io_off >> 32), _vio_mp_buf_{0}, _c, 0);\n"

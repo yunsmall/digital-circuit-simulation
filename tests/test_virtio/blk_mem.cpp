@@ -85,3 +85,18 @@ TEST(VirtioBlkMem, InvalidSizeRejected) {
         EXPECT_NE(err.find("size_kb"), std::string::npos) << bad << ": " << err;
     }
 }
+
+// sector 是 guest 给的 64 位字段：接近 UINT64_MAX 时乘 512 会回绕成小值，
+// 回绕后能通过越界检查，必须按乘加溢出直接返回 IOERR
+TEST(VirtioBlkMem, SectorOverflowReturnsIoError) {
+    VirtioFixture<VirtioBlkMem> f;
+    const uint32_t desc = 0x100, avail = 0x180, used = 0x1C0;
+    const uint32_t hdr = 0x200, data = 0x240, status = 0x280;
+    f.setupBlkQueue(desc, avail, used, 0, hdr, data, status, 16, 0 /*IN*/, ~0ull, true);
+    f.configureQueue(desc, avail, used);
+    f.write(0x050, 0);
+    for (int i = 0; i < 3000; i++) f.tick();
+
+    EXPECT_EQ(f.mem()[status], 1) << "sector*512 溢出应返回 IOERR";
+    EXPECT_EQ(f.get16(used + 2), 1) << "请求仍要正常完成";
+}

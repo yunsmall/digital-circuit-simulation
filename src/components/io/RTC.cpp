@@ -2,6 +2,7 @@
 #include "dcs/components/io/RTC.h"
 
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -109,6 +110,11 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"rtc", {{"ns_per_tick", "100"}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::RTC>(n, (uint32_t) dsc::paramInt(p, "ns_per_tick", 100));
+            const int npt = dsc::paramInt(p, "ns_per_tick", 100);
+            // 负值强转 uint32 会变成 40 多亿 ns/tick，RTC 看起来正常却能跳出天文数字；
+            // 和 WallClock 用同一上限
+            if (npt < 0 || npt > 1000000000)
+                throw std::invalid_argument("ns_per_tick 必须在0-1000000000之间");
+            return std::make_unique<dsc::RTC>(n, (uint32_t) npt);
         });
 } // namespace
