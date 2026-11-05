@@ -7,7 +7,8 @@ include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 23)
 
 option(DCS_BUILD_EXECUTABLE "构建主程序 dcs" ON)
-option(DCS_BUILD_TESTS "构建测试" ON)
+# 作为子目录集成时默认不编测试：父项目没装 GTest 不该让整个配置失败
+option(DCS_BUILD_TESTS "构建测试" ${PROJECT_IS_TOP_LEVEL})
 option(DCS_BUILD_VERILOG "构建 Verilator 集成测试 DLL" ON)
 option(DCS_BUILD_BENCHMARK "构建性能基准 dcs_bench" ON)
 
@@ -322,6 +323,20 @@ if(DCS_BUILD_EXECUTABLE)
             target_link_libraries(dcs_soc PRIVATE ws2_32)
         endif()
     endif()
+
+    # 共享库安装到 lib/，可执行文件在 bin/：安装后的 dcs 没有 RPATH 就找不到
+    # libdcs_lib.so（Windows 的 DLL 和 exe 都在 bin/，不需要）
+    if(DCS_SHARED_LIB AND UNIX)
+        foreach(_t dcs dcs_soc)
+            if(APPLE)
+                set_target_properties(${_t} PROPERTIES
+                    INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+            else()
+                set_target_properties(${_t} PROPERTIES
+                    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # ---- 性能基准（不注册进 ctest，手动运行）----
@@ -484,13 +499,13 @@ if(DCS_BUILD_EXECUTABLE)
         )
     endif()
 endif()
-# Windows TCC：运行时 DLL 也需安装到 bin/；tccdefs.h 必须放在 exe 同目录的
-# shim/ 下（Circuit 的 shim 路径探测），否则 TCC 编译生成代码时报找不到 tccdefs.h。
-# dcs 自己的 shim 头已经内嵌进 dcs_lib，不需要安装
+# TCC：tccdefs.h 必须放在可执行文件同目录的 shim/ 下（Circuit 的 shim 路径探测），
+# 否则 TCC 编译生成代码时报找不到 tccdefs.h。所有平台都要装；
+# Windows 另外需要运行时的 libtcc.dll
 if(DCS_USE_TCC AND WIN32 AND DCS_TCC_DLL)
     install(FILES "${DCS_TCC_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
-if(DCS_USE_TCC AND WIN32 AND DCS_TCC_DEFS)
+if(DCS_USE_TCC AND DCS_TCC_DEFS)
     install(FILES "${DCS_TCC_DEFS}" DESTINATION ${CMAKE_INSTALL_BINDIR}/shim)
 endif()
 
