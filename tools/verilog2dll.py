@@ -137,6 +137,11 @@ target_include_directories(@NAME@ PRIVATE
     "${VERILATOR_INCLUDE}/vltstd"
 )
 
+# verilated_threads.cpp 在 Linux 上引用 pthread_create 等符号；Windows 走
+# Win32 线程。链 Threads::Threads 两边都安全
+find_package(Threads REQUIRED)
+target_link_libraries(@NAME@ PRIVATE Threads::Threads)
+
 # 多配置生成器（VS）会给每个配置加子目录，这里全部固定到 dist/，
 # JSON 里的相对路径才不用管 Debug/Release
 set_target_properties(@NAME@ PROPERTIES
@@ -156,6 +161,8 @@ endforeach()
 
 
 def gen_wrapper(top: str, type_name: str, ports, sequential: bool) -> str:
+    # tristate 标记只告诉运行时"这根输出可能是三态"，DLL 接口没有逐拍使能
+    # 通道，包装层每拍都按数据驱动（inout 按常驱动处理，见 README 的限制说明）
     ins = [p for p in ports if p["dir"] == "input"]
     outs = [p for p in ports if p["dir"] == "output"]
 

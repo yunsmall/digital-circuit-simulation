@@ -36,6 +36,9 @@ struct Timer {
     void (*cb)(void *) = nullptr;
     void *opaque = nullptr;
     bool fired = false;
+    // 每个定时器一个唯一代次：到期列表里存指针 + 代次，回调里释放并重新
+    // 分配后即使地址复用，也不会把新定时器当成旧的提前触发
+    uint64_t gen = 0;
 };
 
 struct SlirpBackend {
@@ -49,6 +52,8 @@ struct SlirpBackend {
     slirp_os_socket kick_wr = SLIRP_INVALID_SOCKET;
     // WSAStartup 会做进程级引用计数，成功一次就要配对一次 WSACleanup
     bool wsa_started = false;
+    // 定时器代次发号器，见 Timer::gen
+    uint64_t next_gen = 1;
 
     void run();
 };
@@ -95,6 +100,14 @@ struct PollEntry {
     slirp_os_socket fd;
     short events;
     short revents;
+};
+
+// slirp_pollfds_fill_socket 的 add_poll 回调上下文。回调返回的索引会被
+// libslirp 原样存下来、稍后交给 get_revents，返回 -1 就是越界索引；
+// 分配失败只能标记后放弃本轮
+struct PollFill {
+    std::vector<PollEntry> *entries = nullptr;
+    bool failed = false;
 };
 
 // ---- 唤醒通道 ----
@@ -219,6 +232,7 @@ void *cbTimerNew(SlirpTimerCb cb, void *cb_opaque, void *opaque) {
     t->cb = cb;
     t->opaque = cb_opaque;
     t->expire_ms = INT64_MAX;
+    t->gen = be->next_gen++;
     try {
         be->timers.push_back(t);
     } catch (...) {
@@ -263,15 +277,20 @@ void SlirpBackend::run() {
             // 回调里可能新建或释放定时器（slirp 的 TCP 定时器会这么做），
             // 直接遍历 vector 会在回调中失效，先收集到期项再逐个调用
             std::vector<Timer *> due;
+            std::vector<uint64_t> due_gen;
             for (auto *t: timers) {
                 if (!t->fired && t->expire_ms <= now) {
                     t->fired = true;
                     due.push_back(t);
+                    due_gen.push_back(t->gen);
                 }
             }
-            for (auto *t: due) {
-                // 前面的回调可能已经把后面的定时器释放掉
-                if (std::find(timers.begin(), timers.end(), t) == timers.end())
+            for (size_t i = 0; i < due.size(); i++) {
+                Timer *t = due[i];
+                // 前面的回调可能已经把后面的定时器释放掉；地址还可能被
+                // 新分配的 Timer 复用，所以指针和代次都要对得上
+                auto it = std::find(timers.begin(), timers.end(), t);
+                if (it == timers.end() || (*it)->gen != due_gen[i])
                     continue;
                 auto cb = t->cb;
                 void *opaque = t->opaque;
@@ -285,21 +304,29 @@ void SlirpBackend::run() {
 
             std::vector<PollEntry> entries;
             uint32_t timeout = UINT32_MAX;
+            PollFill fill{&entries};
             slirp_pollfds_fill_socket(
                     slirp, &timeout,
                     [](slirp_os_socket fd, int events, void *opaque) -> int {
-                        // 这是传给 libslirp 的 C 回调，异常穿过 C 栈帧是未定义行为：
-                        // 分配失败时返回 -1，让 slirp 跳过这个 fd
-                        auto *v = static_cast<std::vector<PollEntry> *>(opaque);
+                        // 这是传给 libslirp 的 C 回调，异常穿过 C 栈帧是未定义行为。
+                        // 分配失败时不能返回 -1（会被当成索引），标记后返回 0
+                        auto *f = static_cast<PollFill *>(opaque);
                         try {
-                            const int idx = (int) v->size();
-                            v->push_back({fd, toPollEvents(events), 0});
+                            const int idx = (int) f->entries->size();
+                            f->entries->push_back({fd, toPollEvents(events), 0});
                             return idx;
                         } catch (...) {
-                            return -1;
+                            f->failed = true;
+                            return 0;
                         }
                     },
-                    &entries);
+                    &fill);
+            if (fill.failed) {
+                // fd 集合不完整，pollfds_poll 的索引对不上：本轮只等唤醒
+                // 通道，下一轮重新收集。OOM 是极端情况，退化成网络暂停
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
             // 唤醒通道排在最后；它的 revents 不参与 slirp 的 get_revents
             const int kick_idx = (int) entries.size();
             entries.push_back({kick_rd, toPollEvents(SLIRP_POLL_IN), 0});

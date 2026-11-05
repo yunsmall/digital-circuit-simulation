@@ -465,13 +465,15 @@ if(DCS_BUILD_EXECUTABLE)
         # vcpkg 的 applocal deploy 已经把 libslirp 及其 glib/iconv 依赖放在
         # 可执行文件旁边，安装时原样带上，否则装完的 dcs.exe 启动缺 DLL。
         # 用显式文件列表而不是 install(DIRECTORY)：后者会把构建目录里的
-        # CMakeFiles/generated 等子目录也一起建出来
+        # 测试 DLL（gtest/dll_test_and）也装进去。pcre2 的 Release/Debug
+        # DLL 名字不同（pcre2-8.dll / pcre2-8d.dll），两个都列上
         install(FILES
             "$<TARGET_FILE_DIR:dcs>/slirp-0.dll"
             "$<TARGET_FILE_DIR:dcs>/glib-2.0-0.dll"
             "$<TARGET_FILE_DIR:dcs>/intl-8.dll"
             "$<TARGET_FILE_DIR:dcs>/iconv-2.dll"
             "$<TARGET_FILE_DIR:dcs>/pcre2-8d.dll"
+            "$<TARGET_FILE_DIR:dcs>/pcre2-8.dll"
             DESTINATION ${CMAKE_INSTALL_BINDIR}
             OPTIONAL
         )
@@ -547,6 +549,9 @@ if(DCS_BUILD_VERILOG)
         add_library(dcs_verilog_models OBJECT
             ${_dcs_vgen_comps}
             "${CMAKE_CURRENT_SOURCE_DIR}/src/verilog_gen/verilated_stub.cpp")
+        # OBJECT 库默认不按 PIC 编译；共享库构建时这些对象要直接链进 .so，
+        # 非 PIC 重定位在 ELF 上会链接失败
+        set_target_properties(dcs_verilog_models PROPERTIES POSITION_INDEPENDENT_CODE ON)
         target_include_directories(dcs_verilog_models PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_BINARY_DIR}/generated")
