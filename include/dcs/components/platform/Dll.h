@@ -75,6 +75,8 @@ private:
 
     // 生成一个阶段的 tick 函数体（comb 或 seq 公用）
     std::string genTickFunc(const char *phase_suffix) const;
+    // 清空从 DLL 取到的全部函数指针（卸载或加载失败后共用）
+    void resetDllPointers();
 };
 
 // 校验 DLL 导出的描述符本身能不能用：描述符来自外部二进制，被损坏或恶意构造时

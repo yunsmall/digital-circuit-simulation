@@ -5,6 +5,10 @@
 //
 // 元件类型注册表（ComponentFactory）不在这里：类型登记是进程级的，自注册在静态
 // 初始化阶段完成，和"这次加载了哪些蓝图"无关。
+//
+// Context 本身不是线程安全的：多线程并行加载请各自建 Context；同一个 Context
+// 上只允许一个线程写（导入蓝图、切 sourceDir）。已经加载完的多个电路并发
+// compile 只读库和 JIT 头文件目录，是安全的。
 #pragma once
 #include <filesystem>
 #include <string>

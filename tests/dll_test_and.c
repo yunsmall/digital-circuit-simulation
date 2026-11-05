@@ -22,9 +22,22 @@ static dcs_dll_pin_desc_t s_outputs[] = {{"y", 8, 0, 0}};
 DCS_DLL_EXPORT dcs_dll_descriptor_t dcs_dll_desc = {"and_gate", 2, 1, s_inputs, s_outputs};
 
 // ---- 生命周期 ----
+// 全局 init/deinit 的调用次数：dcs_dll_init 按契约是"整个 DLL 一次"，
+// 多个元件实例共享同一个 DLL 时不能各调一遍
+static int g_init_calls = 0;
+static int g_deinit_calls = 0;
+DCS_DLL_EXPORT int dcs_dll_test_init_calls(void) {
+    return g_init_calls;
+}
+DCS_DLL_EXPORT int dcs_dll_test_deinit_calls(void) {
+    return g_deinit_calls;
+}
+
 DCS_DLL_EXPORT void dcs_dll_init(void) {
+    ++g_init_calls;
 }
 DCS_DLL_EXPORT void dcs_dll_deinit(void) {
+    ++g_deinit_calls;
 }
 
 DCS_DLL_EXPORT void *dcs_dll_create(void) {

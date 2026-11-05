@@ -12,23 +12,35 @@
 
 #include <cstring>
 #include <format>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace dsc {
 
-// DLL 句柄引用计数管理（同一 DLL 被多个元件共享时不会重复加载/卸载）
+// DLL 句柄引用计数管理（同一 DLL 被多个元件共享时不会重复加载/卸载）。
+// 句柄表和其中的计数会被多个线程访问（测试夹具里会并行编译电路），统一加锁
 namespace {
     struct DllHandle {
         void *handle = nullptr;
         int refcount = 0;
+        // dcs_dll_init/deinit 按 dll_interface.h 是"整个 DLL 一次"的：同一条路径
+        // 可能被多个元件实例共享，这里记正在仿真的实例数，第一个 init、最后一个 deinit
+        int sim_refs = 0;
+        dcs_dll_init_t init_fn = nullptr;
+        dcs_dll_deinit_t deinit_fn = nullptr;
     };
+    static std::mutex &dll_mutex() {
+        static std::mutex m;
+        return m;
+    }
     static std::unordered_map<std::string, DllHandle> &dll_cache() {
         static std::unordered_map<std::string, DllHandle> cache;
         return cache;
     }
 
     static void *dll_load(const std::string &path, std::string &error) {
+        std::lock_guard<std::mutex> lock(dll_mutex());
         auto &cache = dll_cache();
         auto it = cache.find(path);
         if (it != cache.end()) {
@@ -44,23 +56,67 @@ namespace {
             error = std::format("无法加载 DLL: {}", path);
             return nullptr;
         }
-        cache[path] = {h, 1};
+        DllHandle entry;
+        entry.handle = h;
+        entry.refcount = 1;
+        cache.emplace(path, entry);
         return h;
     }
 
     static void dll_unload(const std::string &path) {
+        void *h = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(dll_mutex());
+            auto &cache = dll_cache();
+            auto it = cache.find(path);
+            if (it == cache.end())
+                return;
+            if (--it->second.refcount > 0)
+                return;
+            h = it->second.handle;
+            cache.erase(it);
+        }
+        // 卸载放到锁外：FreeLibrary 会执行 DLL 的 DllMain，不能在持锁时调外部代码
+#ifdef _WIN32
+        FreeLibrary((HMODULE) h);
+#else
+        dlclose(h);
+#endif
+    }
+
+    // loadSymbols 成功后登记全局回调，按路径共享
+    static void dll_set_callbacks(const std::string &path, dcs_dll_init_t init_fn, dcs_dll_deinit_t deinit_fn) {
+        std::lock_guard<std::mutex> lock(dll_mutex());
         auto &cache = dll_cache();
         auto it = cache.find(path);
         if (it == cache.end())
             return;
-        if (--it->second.refcount > 0)
-            return;
-#ifdef _WIN32
-        FreeLibrary((HMODULE) it->second.handle);
-#else
-        dlclose(it->second.handle);
-#endif
-        cache.erase(it);
+        it->second.init_fn = init_fn;
+        it->second.deinit_fn = deinit_fn;
+    }
+
+    // 进入仿真：返回需要调用的全局 init（第一个实例），其余实例返回 nullptr
+    static dcs_dll_init_t dll_sim_acquire(const std::string &path) {
+        std::lock_guard<std::mutex> lock(dll_mutex());
+        auto &cache = dll_cache();
+        auto it = cache.find(path);
+        if (it == cache.end())
+            return nullptr;
+        if (it->second.sim_refs++ > 0)
+            return nullptr;
+        return it->second.init_fn;
+    }
+
+    // 退出仿真：最后一个实例返回全局 deinit，其余返回 nullptr
+    static dcs_dll_deinit_t dll_sim_release(const std::string &path) {
+        std::lock_guard<std::mutex> lock(dll_mutex());
+        auto &cache = dll_cache();
+        auto it = cache.find(path);
+        if (it == cache.end() || it->second.sim_refs == 0)
+            return nullptr;
+        if (--it->second.sim_refs > 0)
+            return nullptr;
+        return it->second.deinit_fn;
     }
 } // namespace
 
@@ -177,6 +233,8 @@ bool DllComponent::loadSymbols(std::string &error) {
         error = "DLL 必须至少导出 dcs_dll_tick_comb 或 dcs_dll_tick_seq";
         return false;
     }
+    // 全局 init/deinit 按路径共享：这里登记回调，simInit 只在第一个实例上调用
+    dll_set_callbacks(_dll_path, _init_fn, _deinit_fn);
     _loaded = true;
     return true;
 }
@@ -192,39 +250,46 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
     if (!_dll_handle)
         return false;
 
-    std::string sym_err;
-    if (!loadSymbols(sym_err)) {
-        // 失败必须归还引用计数：否则这个 DLL 的 refcount 只增不减，
-        // 同一 DLL 的其他实例 deinit 时也降不到 0，句柄永久泄漏
-        dll_unload(_dll_path);
-        _dll_handle = nullptr;
-        error = sym_err;
-        return false;
-    }
-
-    // 引脚描述来自 DLL（外部输入）：负数量、空数组、空名字、位宽非法都不能
-    // 直接拿去建引脚。Release 下 addInput 的 assert 不生效，std::string(nullptr)
-    // 更是 UB。先整体校验，再建引脚
-    auto fail = [&](std::string msg) {
+    // 从这里到成功返回之间的所有出口都必须归还引用计数（包括异常出口：
+    // loadSymbols/校验里的 std::format 在 OOM 下会抛）。失败时还要清掉已取到的
+    // 函数指针和描述符——它们指向的是即将卸载的 DLL 内部
+    auto fail_load = [&](std::string msg) {
         dll_unload(_dll_path);
         _dll_handle = nullptr;
         _loaded = false;
-        // _desc 里的 inputs/outputs 指针指向 DLL 内部，卸载后必须清掉，
-        // 和 loadSymbols 的失败路径保持一致
         _desc = {};
+        resetDllPointers();
         error = std::move(msg);
         return false;
     };
-    std::string desc_err;
-    if (!validateDllDescriptor(_desc, desc_err))
-        return fail(std::move(desc_err));
 
-    for (int i = 0; i < _desc.num_inputs; i++)
-        addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width);
-    for (int i = 0; i < _desc.num_outputs; i++) {
-        auto &od = _desc.outputs[i];
-        addOutput(od.name, od.bit_width, od.is_tri_state != 0);
-        _outputs.back()->setSequential(od.is_sequential != 0);
+    std::string sym_err;
+    try {
+        if (!loadSymbols(sym_err))
+            return fail_load(std::move(sym_err));
+
+        // 引脚描述来自 DLL（外部输入）：负数量、空数组、空名字、位宽非法都不能
+        // 直接拿去建引脚。Release 下 addInput 的 assert 不生效，std::string(nullptr)
+        // 更是 UB。先整体校验，再建引脚
+        std::string desc_err;
+        if (!validateDllDescriptor(_desc, desc_err))
+            return fail_load(std::move(desc_err));
+
+        for (int i = 0; i < _desc.num_inputs; i++)
+            addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width);
+        for (int i = 0; i < _desc.num_outputs; i++) {
+            auto &od = _desc.outputs[i];
+            addOutput(od.name, od.bit_width, od.is_tri_state != 0);
+            _outputs.back()->setSequential(od.is_sequential != 0);
+        }
+    } catch (...) {
+        // 异常不能带着 DLL 引用计数和悬空指针离开
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        _loaded = false;
+        _desc = {};
+        resetDllPointers();
+        throw;
     }
     return true;
 }
@@ -237,18 +302,26 @@ bool DllComponent::prepareForCompile(Context &, std::string &error) {
     _dll_handle = dll_load(_dll_path, error);
     if (!_dll_handle)
         return false;
-    if (!loadSymbols(error)) {
+    // 失败/异常都要归还引用计数并清空指向已卸载 DLL 的函数指针
+    auto fail_load = [&](std::string msg) {
         dll_unload(_dll_path);
         _dll_handle = nullptr;
-        // 部分符号可能已经取到地址，卸载后全部失效；编译失败也不能留下悬空指针
-        _init_fn = nullptr;
-        _deinit_fn = nullptr;
-        _create_fn = nullptr;
-        _destroy_fn = nullptr;
-        _reset_fn = nullptr;
-        _tick_comb_fn = nullptr;
-        _tick_seq_fn = nullptr;
+        _loaded = false;
+        _desc = {};
+        resetDllPointers();
+        error = std::move(msg);
         return false;
+    };
+    try {
+        if (!loadSymbols(error))
+            return fail_load(std::move(error));
+    } catch (...) {
+        dll_unload(_dll_path);
+        _dll_handle = nullptr;
+        _loaded = false;
+        _desc = {};
+        resetDllPointers();
+        throw;
     }
     return true;
 }
@@ -256,6 +329,18 @@ bool DllComponent::prepareForCompile(Context &, std::string &error) {
 // ============================================================
 // 生命周期
 // ============================================================
+
+void DllComponent::resetDllPointers() {
+    // 卸载 DLL 后这些指针都指向已释放的代码页，必须立刻清空。所有失败/卸载
+    // 路径共用这一份，避免只清一半
+    _init_fn = nullptr;
+    _deinit_fn = nullptr;
+    _create_fn = nullptr;
+    _destroy_fn = nullptr;
+    _reset_fn = nullptr;
+    _tick_comb_fn = nullptr;
+    _tick_seq_fn = nullptr;
+}
 
 void DllComponent::simInit() {
     // deinit 之后又 init：重新加载 DLL 和函数指针。引脚在 prepare() 时已经建好，
@@ -265,9 +350,21 @@ void DllComponent::simInit() {
         _dll_handle = dll_load(_dll_path, err);
         if (!_dll_handle)
             return;
-        if (!loadSymbols(err)) {
+        bool ok = false;
+        try {
+            ok = loadSymbols(err);
+        } catch (...) {
             dll_unload(_dll_path);
             _dll_handle = nullptr;
+            _desc = {};
+            resetDllPointers();
+            throw;
+        }
+        if (!ok) {
+            dll_unload(_dll_path);
+            _dll_handle = nullptr;
+            _desc = {};
+            resetDllPointers();
             return;
         }
     }
@@ -275,17 +372,20 @@ void DllComponent::simInit() {
     // deinit 会把 _init_called 清掉，下一次 init 才会重新执行
     if (_init_called)
         return;
-    if (_init_fn) {
-        _init_fn();
-        _init_called = true;
-    }
+    // dcs_dll_init 是"整个 DLL 一次"的：多个元件实例共享句柄时，只有第一个
+    // 实例的 simInit 会真的执行 init（由 dll_sim_acquire 按路径判定）
+    if (dcs_dll_init_t fn = dll_sim_acquire(_dll_path))
+        fn();
+    _init_called = true;
 }
 
 void DllComponent::simDeinit() {
     // validate()/--check 路径只 prepare，从未 simInit；这时不能调 deinit，
-    // 否则 DLL 会在 init 之前收到 deinit
-    if (_deinit_fn && _init_called)
-        _deinit_fn();
+    // 否则 DLL 会在 init 之前收到 deinit。最后一个实例退出时才执行全局 deinit
+    if (_init_called) {
+        if (dcs_dll_deinit_t fn = dll_sim_release(_dll_path))
+            fn();
+    }
     _init_called = false;
     if (_loaded) {
         dll_unload(_dll_path);
@@ -294,13 +394,7 @@ void DllComponent::simDeinit() {
     }
     // 卸载后这些指针指向已释放的代码页。不清空的话，重复 init/deinit
     // （测试、交互式仿真器里很常见）会在下一次 simInit 时调用悬空地址
-    _init_fn = nullptr;
-    _deinit_fn = nullptr;
-    _create_fn = nullptr;
-    _destroy_fn = nullptr;
-    _reset_fn = nullptr;
-    _tick_comb_fn = nullptr;
-    _tick_seq_fn = nullptr;
+    resetDllPointers();
 }
 
 // ============================================================

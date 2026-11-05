@@ -99,6 +99,8 @@ void Circuit::clear() {
     _nets.clear();
     _components.clear();
     _bus_nets.clear();
+    // 展开记录属于这一份电路：清空后重建不能再带着旧定义导出
+    _used_definitions.clear();
 }
 
 void Circuit::reset() {

@@ -15,6 +15,10 @@ CircuitLibrary &CircuitLibrary::instance() {
 }
 
 void CircuitLibrary::add(CircuitDefinition def) {
+    // 同名定义直接覆盖：改了蓝图文件后重新导入是合法操作。
+    // 但复合元件是延迟展开的（compile/validate 时才查库），共享同一个 Context 时，
+    // 别在一个电路"已加载、还没编译"期间用同名定义覆盖它的蓝图，否则它展开出来的
+    // 是新内容。需要这种隔离就给每个电路建独立 Context。
     def.import_serial = ++_import_counter;
     _defs[def.name] = std::move(def);
 }
