@@ -114,8 +114,11 @@ public:
     // 不执行过期的 JIT 代码
     void tick(); // 调用 circuit_tick()，执行一个周期
     // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
+    // clk_net_id 必须是外部驱动的时钟线（由 setWire/tickCycle 自己写）。如果这根线
+    // 同时接着 clkgen 的输出，clkgen 会在每个 tick 的阶段 3 把它覆盖掉，tickCycle
+    // 写的电平只能在本拍的组合阶段被看到，时序元件看到的仍是 clkgen 的波形
     void tickCycle(int clk_net_id);
-    // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）
+    // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）；约束同 tickCycle
     void tickCycles(int clk_net_id, uint64_t n);
     // 只跑 n 拍、不碰时钟线网：时钟由电路里的 clkgen 自己产生时用这个
     void tickBatch(uint64_t n);

@@ -11,6 +11,7 @@
 //   0x10 CLKDIV  每半个位周期的 tick 数
 //
 // cs 低有效，sclk 由 clkdiv 分频产生；发送在 sclk 下降沿移出，接收在上升沿采样。
+// clk 输入引脚保留未用：sclk 按 tick 分频，状态机不检测 clk 边沿
 #pragma once
 #include <cstdint>
 #include <string>

@@ -14,6 +14,7 @@
 //   0x14 CLKDIV   每半个 SCL 周期的 tick 数
 //
 // sda_out/sda_oe 组成开漏输出：oe=0 时释放总线（外部上拉为高），sda_in 读回线电平。
+// clk 输入引脚保留未用：SCL 由 clkdiv 按 tick 分频产生，状态机不检测 clk 边沿
 #pragma once
 #include <cstdint>
 #include <string>

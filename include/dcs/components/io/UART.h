@@ -12,6 +12,7 @@
 //
 // tx/rx 是串行线，按 baud_div 个 tick 一位输出/采样，与真实 UART 的时序关系一致，
 // 只是这里的"时间单位"是仿真 tick。DLL/DLM 只保存不影响分频（分频由构造参数固定）。
+// clk 输入引脚保留未用：收发状态机按 tick 推进，不检测 clk 边沿；接不接都不影响行为
 #pragma once
 #include <cstdint>
 #include <string>

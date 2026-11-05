@@ -215,6 +215,8 @@ private:
 //
 // 输出 clk 周期方波：高电平持续 high_ticks 周期，低电平持续 low_ticks 周期。
 // 无输入，仅输出 clk（1 位）
+// 上电/复位后第一拍输出就是高电平，走完 high_ticks + low_ticks 拍才出现下一个
+// 上升沿；复位逻辑如果假设"第一拍 clk=0"，会差一拍
 // ============================================================
 class ClockGen : public SequentialComponent {
 public:

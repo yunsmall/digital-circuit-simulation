@@ -369,6 +369,9 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
     // 电路里没有三态元件时集合为空，阶段2b 就是零开销
     std::set<Component *> tri_affected = computeTriAffected(sorted, components);
 
+    // 组合阶段读到的时钟线网是上一拍末的值：clkgen 是时序元件，输出要到阶段 3
+    // 才写回 _w。组合元件不应该自己读时钟做边沿检测（那是时序元件的职责），
+    // 真需要当前拍的时钟值只能用时序元件
     oss << "    // 阶段1: 组合逻辑\n";
     emitCombStage(oss, sorted, nullptr, bus_nets, false);
     if (!tri_affected.empty()) oss << "    int _bus_changed = 0;\n";
