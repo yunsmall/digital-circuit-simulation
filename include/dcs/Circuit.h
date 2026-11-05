@@ -137,7 +137,10 @@ public:
         if (net)
             setWire(net->id(), value);
     }
-    std::vector<uint8_t> getWire(int id); // 读取线网值
+    // 读取线网值。返回的是 tick 结束时的状态（全部相位跑完之后），
+    // 不是组合逻辑的不动点：时序三态输出在阶段 3/4 才更新，读这些总线的
+    // 组合元件要到下一拍重算，所以两者在同一个 tick 末尾可能不一致
+    std::vector<uint8_t> getWire(int id);
 
     // --- 运行时错误 ---
     bool hasError() const {

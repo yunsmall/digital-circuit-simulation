@@ -500,6 +500,9 @@ CircuitError Circuit::check(std::vector<std::string> *warnings) {
 
     int N = (int) _nets.size();
     std::vector<std::vector<int>> adj(N);
+    // 三态输出在这里故意不建边（getCombinationalDeps 返回空）：使能是运行期量，
+    // 静态拒绝会误杀"平时断开、只在某个使能下才成环"的合法接法。这些环由
+    // 阶段 2b 迭代到不动点兜底，不收敛就报 BUS_OSCILLATION
     for (auto &comp: _components) {
         for (int oi = 0; oi < (int) comp->outputs().size(); oi++) {
             Pin *out_pin = comp->outputs()[oi].get();

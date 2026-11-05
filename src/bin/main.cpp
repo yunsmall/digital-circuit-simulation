@@ -482,6 +482,9 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             circuit->deinit();
             return 1;
         }
+        // 采样点在 tick() 全部相位之后：时序三态输出已在阶段 3/4 更新，
+        // 而读这些总线的组合元件要到下一拍才重算。VCD/逐拍打印记录的
+        // 是"拍结束时的状态"，不是该拍的组合不动点
         if (vcd.is_open()) {
             vcd << "#" << t << "\n";
             for (int i = 0; i < circuit->netCount(); i++) {

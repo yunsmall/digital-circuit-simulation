@@ -74,8 +74,8 @@ std::vector<int> Component::getCombinationalDeps(int out_idx) const {
     if (out_idx >= 0 && out_idx < (int) _outputs.size()) {
         const Pin *p = _outputs[out_idx].get();
         // 时序输出天然断开组合路径；三态输出在 oe=0 时也是断开的，静态分析
-        // 判断不了使能，一律按"可断开"处理——经过三态总线的环靠阶段 2b 的
-        // 迭代上限兜底，这是框架既有的约定。
+        // 判断不了使能，一律按"可断开"处理。代价是这类环不能编译期拒绝，
+        // 由阶段 2b 迭代到不动点兜底（单驱动三态线网也算，见 computeTriAffected）。
         // 只用于环路检测：三态门仍然要按输入算本拍输出，拓扑排序不能用这个
         // 函数来省略三态/时序元件的先后顺序（见 CodeGen 的 topologicalSort）
         if (p->isSequential() || p->isTriState())

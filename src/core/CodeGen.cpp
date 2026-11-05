@@ -69,22 +69,30 @@ std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
 
 namespace {
 
-// 输入直接或间接挂在总线网上的组合元件：阶段 2b 要重跑它们。
+// 输入直接或间接挂在三态驱动线网上的组合元件：阶段 2b 要重跑它们。
+// 必须按"任何三态驱动"来找，而不是只看 _bus_nets：后者只登记多驱动共线的线网，
+// 单驱动三态线网由 emitCombStage 直接传播，一个常使能的三态门照样能把组合环
+// 悄悄接回来（check() 不为三态输出建边），只认 _bus_nets 就没人兜底。
 // 只收组合元件是阶段 2b 能安全重复执行的前提：组合元件对输入是纯函数，
 // 跑几次结果都一样；带状态的元件（设备、有副作用的读）绝不能进这个集合。
 // BFS 也只沿组合元件建边：时序输出在阶段 2b 期间不会变（阶段 3 才算），
-// 所以"总线 → 时序元件 → 下游组合元件"这条路径不需要重跑下游。
+// 所以"三态线网 → 时序元件 → 下游组合元件"这条路径不需要重跑下游。
 // 将来如果引入阶段 2b 内就会变的时序输出，这里的边要重新审视。
-std::set<Component *> computeBusAffected(const std::vector<Component *> &sorted,
-                                         const std::map<int, std::vector<BusDriver>> &bus_nets) {
-    std::set<Component *> bus_affected;
+std::set<Component *> computeTriAffected(const std::vector<Component *> &sorted,
+                                         const std::vector<std::unique_ptr<Component>> &components) {
+    std::set<int> tri_nets;
+    for (auto &c: components)
+        for (auto &p: c->outputs())
+            if (p->isTriState() && p->net())
+                tri_nets.insert(p->net()->id());
+    std::set<Component *> tri_affected;
     std::vector<Component *> queue;
     for (auto *c: sorted) {
         if (!c->hasCombinational())
             continue;
         for (auto &pin: c->inputs())
-            if (pin->net() && bus_nets.count(pin->net()->id())) {
-                if (bus_affected.insert(c).second)
+            if (pin->net() && tri_nets.count(pin->net()->id())) {
+                if (tri_affected.insert(c).second)
                     queue.push_back(c);
                 break;
             }
@@ -94,24 +102,25 @@ std::set<Component *> computeBusAffected(const std::vector<Component *> &sorted,
             if (!op->net())
                 continue;
             for (auto *down: sorted) {
-                if (!down->hasCombinational() || bus_affected.count(down))
+                if (!down->hasCombinational() || tri_affected.count(down))
                     continue;
                 for (auto &pin: down->inputs())
                     if (pin->net() == op->net()) {
-                        bus_affected.insert(down);
+                        tri_affected.insert(down);
                         queue.push_back(down);
                         break;
                     }
             }
         }
     }
-    return bus_affected;
+    return tri_affected;
 }
 
-// 组合阶段：执行组合元件，并把非总线三态输出立即传播到 _w
+// 组合阶段：执行组合元件，并把非总线三态输出立即传播到 _w。
+// track_change 为真时顺带记录三态线网有没有变化（阶段 2b 的收敛判据）
 void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
                    const std::set<Component *> *only,
-                   const std::map<int, std::vector<BusDriver>> &bus_nets) {
+                   const std::map<int, std::vector<BusDriver>> &bus_nets, bool track_change) {
     for (auto *c: sorted) {
         if (only && !only->count(c))
             continue;
@@ -129,6 +138,11 @@ void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
             // 这里再整块拷一遍是纯冗余，每拍每个输出能省一次 16 字节写
             if (!c->outputs()[oi]->isTriState())
                 continue;
+            // 单驱动三态线网的传播就发生在这一句里，阶段 2b 判断"这轮补跑有没有
+            // 改变线网"只能在这里取旧值；emitPropagation 的比对只覆盖 _bus_nets
+            if (track_change)
+                oss << std::format("    uint8_t _old_{}_{}[16]; dcs_memcpy(_old_{}_{}, {}, 16);\n", c->id(), oi,
+                                   c->id(), oi, cgen::wire(nid));
             oss << std::format("    if ({}) {{\n", cgen::cOe(c->id(), oi));
             // _c_out 的高位由 genOutputWrite 清零，整块 16 字节一次拷过去即可：
             // 比"拷 nb 字节再清剩余"少一次调用，定长拷贝也更容易被编译器展开
@@ -138,6 +152,10 @@ void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
             oss << "    } else {\n";
             oss << std::format("        dcs_memset({}, 0, 16);\n", cgen::wire(nid));
             oss << "    }\n";
+            if (track_change)
+                oss << std::format(
+                        "    for (int _i=0;_i<16;_i++) if (_old_{}_{}[_i] != {}[_i]) {{ _bus_changed=1; break; }}\n",
+                        c->id(), oi, cgen::wire(nid));
         }
     }
 }
@@ -346,29 +364,38 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
 
     // === circuit_tick ===
     oss << std::format("void {}(void) {{\n", cgen::kTickFn);
-    // 先算出哪些组合元件要重跑：输入直接或间接挂在总线网上的那些。
-    // 没有总线网的电路集合为空，阶段2b 就是零开销
-    std::set<Component *> bus_affected = computeBusAffected(sorted, bus_nets);
+    // 先算出哪些组合元件要重跑：输入直接或间接挂在三态驱动线网上的那些
+    // （包括单驱动三态线网，见 computeTriAffected 的说明）。
+    // 电路里没有三态元件时集合为空，阶段2b 就是零开销
+    std::set<Component *> tri_affected = computeTriAffected(sorted, components);
 
     oss << "    // 阶段1: 组合逻辑\n";
-    emitCombStage(oss, sorted, nullptr, bus_nets);
-    if (!bus_affected.empty()) oss << "    int _bus_changed = 0;\n";
+    emitCombStage(oss, sorted, nullptr, bus_nets, false);
+    if (!tri_affected.empty()) oss << "    int _bus_changed = 0;\n";
     oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
     emitPropagation(oss, components, bus_nets, false);
+    // 冲突在阶段 2 就已经确定，继续跑阶段 3 会让时序状态基于冲突后的线网推进，
+    // 出错后 dump 出来像是有一堆无关的错乱。只有存在三态总线的电路才可能冲突，
+    // 其它电路不加这次 volatile 读，热路径没有额外开销
+    if (!bus_nets.empty())
+        oss << "    if (*_dcs_stop_flag) return;\n";
     // 读总线的组合元件在阶段1 看到的是决议前的值，必须补跑。补跑会改动总线，
     // 又可能影响下一级读总线的元件，所以不能只补一轮——一直迭代到总线不再变化。
     // 上限取元件数，防止电路里出现自激振荡时死循环。
-    if (!bus_affected.empty()) {
-        oss << "    // 阶段2b: 反复重跑受总线影响的组合元件，直到总线稳定\n";
+    if (!tri_affected.empty()) {
+        oss << "    // 阶段2b: 反复重跑受三态线网影响的组合元件，直到线网稳定\n";
         oss << "    bool _bus_settled = false;\n";
         oss << std::format("    for (int _bus_round = 0; _bus_round < {}; _bus_round++) {{\n",
                            (int) components.size() + 1);
         oss << "        _bus_changed = 0;\n";
-        emitCombStage(oss, sorted, &bus_affected, bus_nets);
+        emitCombStage(oss, sorted, &tri_affected, bus_nets, true);
         emitPropagation(oss, components, bus_nets, true);
         oss << "        if (!_bus_changed) { _bus_settled = true; break; }\n";
         oss << "    }\n";
         oss << "    if (!_bus_settled) dcs_bus_conflict(_circuit_ptr, -1);\n";
+        // 振荡信号在这一段里产生。没有多驱动总线的电路也会因为单驱动三态环
+        // 走到这里，所以这句不能跟上面的检查合并成一次
+        oss << "    if (*_dcs_stop_flag) return;\n";
     }
 
     oss << "    // 阶段3: 时序逻辑\n";
