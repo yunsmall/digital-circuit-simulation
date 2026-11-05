@@ -383,18 +383,26 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
     _w[clk_id][0] = 1;
     circuit_tick();
 }
+// 批量入口必须检查停止标志：onBusConflict 置位后继续跑，会在已经出错的状态下
+// 再推进几万拍，时序状态和输出都被污染。每 256 拍查一次而不是每拍查——
+// volatile 读会打断循环优化，整机仿真里每个 tick 都加一次读不划算，
+// 出错的代价只是多跑最多 255 拍
 void circuit_tick_cycles(int clk_id, uint64_t n) {
     for (uint64_t _i = 0; _i < n; _i++) {
         _w[clk_id][0] = 0;
         circuit_tick();
         _w[clk_id][0] = 1;
         circuit_tick();
+        if ((_i & 15u) == 15u && *_dcs_stop_flag) return;
     }
 }
 // 只跑拍、不碰时钟线网：时钟由电路里的 clkgen 自己产生的场合用这个。
 // 循环留在 JIT 里，长时间仿真时省掉每拍一次跨模块调用
 void circuit_tick_batch(uint64_t n) {
-    for (uint64_t _i = 0; _i < n; _i++) circuit_tick();
+    for (uint64_t _i = 0; _i < n; _i++) {
+        circuit_tick();
+        if ((_i & 255u) == 255u && *_dcs_stop_flag) return;
+    }
 }
 // 死循环放在 JIT 里：C++ 不再每拍跨模块调用，--forever 模式一直跑，Ctrl+C 退出。
 // 运行期出现总线冲突/振荡时 onBusConflict 置停止标志，这里必须返回，

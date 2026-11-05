@@ -91,6 +91,10 @@ std::unique_ptr<Component> LogicGate::clone(const std::string &n) const {
 UnaryGate::UnaryGate(const std::string &name, int bit_width, bool invert) :
     CombinationalComponent(name, invert ? "not" : "buf"), _bit_width(bit_width), _invert(invert) {
     setParam("bit_width", std::to_string(bit_width));
+    // 线网槽是 16 字节，位宽上限 128：Release 下 addInput 的断言不生效，
+    // 超过 128 会让 genOutputWrite 生成大于 16 字节的拷贝，踩坏相邻线网槽
+    if (bit_width < 1 || bit_width > 128)
+        throw std::invalid_argument("位宽必须在1-128之间");
     addInput("in", bit_width);
     addOutput("out", bit_width);
 }
@@ -119,6 +123,9 @@ std::unique_ptr<Component> UnaryGate::clone(const std::string &n) const {
 GateTSBUF::GateTSBUF(const std::string &name, int bit_width) :
     CombinationalComponent(name, "tsbuf"), _bit_width(bit_width) {
     setParam("bit_width", std::to_string(bit_width));
+    // 同 UnaryGate：线网槽 16 字节，1..128 之外的位宽会在生成代码时越界写
+    if (bit_width < 1 || bit_width > 128)
+        throw std::invalid_argument("位宽必须在1-128之间");
     addInput("in", bit_width);
     addInput("oe", 1);
     addOutput("out", bit_width, true);

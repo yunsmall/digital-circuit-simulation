@@ -268,6 +268,11 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         if (watch_file.empty()) {
             std::cout << "无限仿真中（Ctrl+C 停止）\n" << std::flush;
             circuit->tickForever();
+            // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
+            if (circuit->hasError()) {
+                std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+                return 1;
+            }
         }
         // --watch：仿真不退出，外部往文件里追加内容就是往串口发命令。
         // 每批 tick 结束后检查文件增量，这样改硬件模型后跑一次就能反复验证，
@@ -290,6 +295,11 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         int trace_reports = 0;
         for (;;) {
             circuit->tickBatch(200000);
+            // 总线冲突时批量入口会提前返回，不查就在这里无限空转
+            if (circuit->hasError()) {
+                std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+                return 1;
+            }
             if (trace_cpu) {
                 const uint64_t pc = cpu64 ? (uint64_t) cpu64->pc() : (cpu32 ? (uint64_t) cpu32->pc() : 0);
                 const bool halted = cpu64 ? cpu64->halted() : (cpu32 ? cpu32->halted() : false);
@@ -351,6 +361,10 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             if (feed_pos < feed_data.size() && t < feed_after && t + chunk > feed_after)
                 chunk = feed_after - t;
             circuit->tickBatch(chunk);
+        }
+        if (circuit->hasError()) {
+            std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+            return 1;
         }
         t += chunk;
         if (feed_pos < feed_data.size() && t >= feed_after) {

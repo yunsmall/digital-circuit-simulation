@@ -86,6 +86,9 @@ DllComponent::~DllComponent() {
 // 只加载描述符和函数指针，不创建引脚。ensurePins() 首次建引脚时调用；
 // simDeinit 之后再 simInit 也走这里（引脚已存在，不能重复创建）
 bool DllComponent::loadSymbols(std::string &error) {
+    // 重新加载可能换了 DLL 内容，能力位以这次加载为准
+    _has_comb = false;
+    _has_seq = false;
 #ifdef _WIN32
     auto loadSym = [&](const char *name, auto &fn_ptr) -> bool {
         FARPROC fp = GetProcAddress((HMODULE) _dll_handle, name);
@@ -135,6 +138,8 @@ bool DllComponent::loadSymbols(std::string &error) {
     // tick_comb 和 tick_seq 至少加载一个
     loadSym(DCS_DLL_TICK_COMB, _tick_comb_fn);
     loadSym(DCS_DLL_TICK_SEQ, _tick_seq_fn);
+    _has_comb = _tick_comb_fn != nullptr;
+    _has_seq = _tick_seq_fn != nullptr;
     if (!_tick_comb_fn && !_tick_seq_fn) {
         _desc = {};
         error = "DLL 必须至少导出 dcs_dll_tick_comb 或 dcs_dll_tick_seq";

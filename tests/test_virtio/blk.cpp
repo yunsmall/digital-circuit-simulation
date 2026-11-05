@@ -1,6 +1,7 @@
 // virtio-blk：寄存器、队列握手、镜像读写
 #include "common.h"
 
+#include <dcs/Context.h>
 #include <dcs/components/platform/VirtioBlk.h>
 
 using namespace dsc;
@@ -290,4 +291,15 @@ TEST(VirtioTest, ZeroLengthDataSegmentDoesNotHang) {
 
     EXPECT_EQ(f.get16(used + 2), 1u) << "零长度数据段不能把请求卡死";
     EXPECT_EQ(f.mem()[status], 0) << "状态字节应为 OK";
+}
+
+// 外部注入的后端优先：不能因为漏填 read 就被注册表里的同名后端静默覆盖，
+// 这种不完整的后端要在 prepare 时明确报错
+TEST(VirtioTest, ExternalBackendMissingReadIsRejected) {
+    VirtioBlk dev("vd0");
+    VirtioBlk::BackendOps empty;   // read/write 都没填
+    dev.setBackend(empty);
+    std::string err;
+    EXPECT_FALSE(dev.prepare(Context::global(), err));
+    EXPECT_NE(err.find("read"), std::string::npos) << err;
 }

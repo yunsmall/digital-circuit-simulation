@@ -26,3 +26,12 @@ TEST(GatesTest, BUF) {
     c.tick();
     EXPECT_EQ(c.getWire(out->id())[0], 0xAB);
 }
+
+// 位宽必须在 1..128：Release 下 addInput 的断言不生效，200 位会让
+// genOutputWrite 生成 25 字节拷贝，写穿 16 字节的线网槽
+TEST(GatesTest, UnaryGateRejectsOutOfRangeWidth) {
+    EXPECT_NO_THROW(dsc::UnaryGate("g", 128, false));
+    EXPECT_THROW(dsc::UnaryGate("g", 0, false), std::invalid_argument);
+    EXPECT_THROW(dsc::UnaryGate("g", 129, true), std::invalid_argument);
+    EXPECT_THROW(dsc::UnaryGate("g", 200, false), std::invalid_argument);
+}

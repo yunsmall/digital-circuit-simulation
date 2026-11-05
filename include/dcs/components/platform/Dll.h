@@ -24,11 +24,14 @@ public:
     ~DllComponent() override;
 
     // --- Component 接口 ---
+    // 逻辑类型在加载 DLL 时确定并记住：simDeinit() 会清空函数指针，
+    // 但 validate() 可能在 deinit 之后调用，只按指针判断会把 DLL 当成无逻辑元件，
+    // 漏掉组合环检测
     bool hasCombinational() const override {
-        return _tick_comb_fn != nullptr;
+        return _has_comb;
     }
     bool hasSequential() const override {
-        return _tick_seq_fn != nullptr;
+        return _has_seq;
     }
     // 引脚和函数指针都来自 DLL，只能加载后才知道；ensurePins 幂等
     bool ensurePins(Context &ctx, std::string &error) override;
@@ -53,6 +56,9 @@ private:
     std::string _dll_path;
     void *_dll_handle = nullptr;
     bool _loaded = false;
+    // 加载后记录的能力位；函数指针在 simDeinit 后会清空，这两个标志保留
+    bool _has_comb = false;
+    bool _has_seq = false;
     // 只有真正执行过 dcs_dll_init 才能执行 dcs_dll_deinit。
     // validate()/--check 只 prepare 不 simInit，销毁时不能调用 deinit
     bool _init_called = false;

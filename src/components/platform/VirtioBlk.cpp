@@ -132,8 +132,14 @@ bool VirtioBlk::setImagePath(Context &ctx, const std::string &path, std::string 
 
 bool VirtioBlk::prepareImpl(Context &ctx, std::string &error) {
     // 外部后端（setBackend / 测试注入）已经声明了容量和读写语义时优先用它；
-    // 否则按 backend 名字走注册表。文件/ROM 的打开逻辑都在各自后端里
-    if (!_ops.read && _backend != "none") {
+    // 否则按 backend 名字走注册表。文件/ROM 的打开逻辑都在各自后端里。
+    // 不能只按 _ops.read 是否为空判断：外部后端漏填 read 时会被注册表后端静默覆盖
+    if (_external_backend) {
+        if (!_ops.read) {
+            error = "外部注入的 virtio_blk 后端缺少 read 回调";
+            return false;
+        }
+    } else if (!_ops.read && _backend != "none") {
         if (!installBackend(_backend, _backend_opts, ctx, error))
             return false;
     }
@@ -237,7 +243,7 @@ DCS_REGISTER_COMPONENT(
      {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "m_dat_i", "m_ack_i"},
      {"wb_dat_o", "wb_ack_o", "irq", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Bus,
-     "virtio-blk：从端口接 CPU，主端口经总线访问 virtqueue；介质由 backend 提供（file 后端用 backend_opts.path）"},
+     "virtio-blk：从端口接 CPU，主端口经总线访问 virtqueue；介质由 backend 提供（file 后端用 backend_opts.path）", true},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
         return std::make_unique<dsc::VirtioBlk>(n, dsc::paramStr(p, "backend", "mem"), dsc::takeBackendOpts(p));
     });

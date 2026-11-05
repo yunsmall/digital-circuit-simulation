@@ -403,6 +403,13 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
     if (forever) {
         std::cout << "无限仿真中（Ctrl+C 停止）\n" << std::flush;
         circuit->tickForever();
+        // tickForever 只在运行期错误（总线冲突/级联不收敛）时返回；
+        // 不检查的话会继续走下面的有限循环，最后以 0 退出，错误被静默
+        if (circuit->hasError()) {
+            std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+            circuit->deinit();
+            return 1;
+        }
     }
 
     // tick 计数用 64 位：跑一次完整内核启动动辄几十亿拍，32 位会在中途溢出变成负数。
@@ -413,9 +420,20 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             const uint64_t chunk = (ticks - t > 65536) ? 65536 : (ticks - t);
             circuit->tickBatch(chunk);
             t += chunk;
+            // 批量入口在停止标志置位后提前返回，t 仍按 chunk 前进，所以这里必须查错误
+            if (circuit->hasError()) {
+                std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+                circuit->deinit();
+                return 1;
+            }
             continue;
         }
         circuit->tick();
+        if (circuit->hasError()) {
+            std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
+            circuit->deinit();
+            return 1;
+        }
         if (vcd.is_open()) {
             vcd << "#" << t << "\n";
             for (int i = 0; i < circuit->netCount(); i++) {

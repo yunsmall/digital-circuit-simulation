@@ -189,6 +189,40 @@ TEST(JsonRoundTrip, NonNumericIntParamIsRejected) {
     EXPECT_NE(err.find("整数"), std::string::npos) << err;
 }
 
+// validateParams 允许 int64，但 paramInt 只解析 int：超出 int 的值会被静默回退成默认值
+TEST(JsonRoundTrip, OutOfIntRangeParamIsRejected) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("and", "g", {{"inputs", "2"}, {"bit_width", "999999999999"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("int 范围"), std::string::npos) << err;
+}
+
+// constant.value 按 uint64 解析，属于 wide_int，不能按 int 范围拒绝
+TEST(JsonRoundTrip, WideIntParamAllowsLargeValue) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("constant", "k", {{"bit_width", "32"}, {"value", "4294967295"}}, err);
+    EXPECT_NE(c, nullptr) << err;
+}
+
+// virtual 设备的 backend_opts.<key> 是动态键，不能当成未知参数拒绝
+TEST(JsonRoundTrip, BackendOptsAreNotUnknownParams) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("virtio_blk", "d", {{"backend", "none"}, {"backend_opts.hostfwd", "x"}}, err);
+    EXPECT_NE(c, nullptr) << err;
+}
+
+// 参数名拼错时必须报错：以前会静默按默认值构建
+TEST(JsonRoundTrip, UnknownParamIsRejected) {
+    auto &f = ComponentFactory::instance();
+    std::string err;
+    auto c = f.create("and", "g", {{"inputs", "2"}, {"bit_wdith", "8"}}, err);
+    EXPECT_EQ(c, nullptr);
+    EXPECT_NE(err.find("未知参数"), std::string::npos) << err;
+}
+
 // typeName 必须是工厂注册键：有符号乘/除原来导出成 smul/sdiv，回读直接找不到类型
 TEST(JsonRoundTrip, SignedMulDivRoundTrip) {
     auto &f = ComponentFactory::instance();

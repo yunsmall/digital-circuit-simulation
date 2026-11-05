@@ -105,3 +105,11 @@ TEST(GatesTest, TSBUF_Bus_Conflict) {
     EXPECT_FALSE(c.hasError());
     EXPECT_EQ(c.getWire(bus->id())[0], 0x55);
 }
+
+// 同 UnaryGate：超宽位宽必须构造期拒绝，不能拖到生成代码时越界写
+TEST(GatesTest, TSBUFRejectsOutOfRangeWidth) {
+    EXPECT_NO_THROW(dsc::GateTSBUF("g", 128));
+    EXPECT_THROW(dsc::GateTSBUF("g", 0), std::invalid_argument);
+    EXPECT_THROW(dsc::GateTSBUF("g", 129), std::invalid_argument);
+    EXPECT_THROW(dsc::GateTSBUF("g", 200), std::invalid_argument);
+}

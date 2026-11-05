@@ -117,6 +117,38 @@ TEST(BusCascade, SequentialTriStateVisibleInSameTick) {
     EXPECT_EQ(c.getWire(out->id())[0], 0x5A) << "下游组合元件下一拍必须看到新总线值";
 }
 
+// 批量 tick 也必须把运行期错误暴露给调用方：tickBatch 出错后 hasError 为真，
+// 后续调用立刻返回（CLI 靠它报错并以非零码退出，不能静默跑完剩余拍）
+TEST(BusCascade, TickBatchReportsRuntimeBusConflict) {
+    Circuit c;
+    auto *bus = c.createNet("bus");
+    auto *d1 = c.createNet("d1"), *d2 = c.createNet("d2");
+    auto *oe1 = c.createNet("oe1"), *oe2 = c.createNet("oe2");
+    auto *g1 = c.addComponent(std::make_unique<GateTSBUF>("g1", 8));
+    auto *g2 = c.addComponent(std::make_unique<GateTSBUF>("g2", 8));
+    c.connect(g1, "in", d1);
+    c.connect(g1, "oe", oe1);
+    c.connect(g1, "out", bus);
+    c.connect(g2, "in", d2);
+    c.connect(g2, "oe", oe2);
+    c.connect(g2, "out", bus);
+
+    auto e = c.compile();
+    ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
+    c.init();
+    c.setWire(d1->id(), {0x11, 0});
+    c.setWire(d2->id(), {0x22, 0});
+    c.setWire(oe1->id(), {1, 0});
+    c.setWire(oe2->id(), {1, 0});
+
+    c.tickBatch(1000000);
+    EXPECT_TRUE(c.hasError());
+    EXPECT_NE(c.tickError().message.find("总线冲突"), std::string::npos) << c.tickError().message;
+    // 已出错时再次调用必须立刻返回，不能重新进 JIT 再跑一批
+    c.tickBatch(1000000);
+    EXPECT_TRUE(c.hasError());
+}
+
 // 运行中发生总线冲突时，JIT 死循环必须返回，调用方才能观察到错误；
 // 旧实现 for(;;) 永不返回，错误被永久吞掉
 TEST(BusCascade, TickForeverReturnsOnRuntimeBusConflict) {

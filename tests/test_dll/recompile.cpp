@@ -27,6 +27,9 @@ TEST(DllTest, Recompile) {
     c.deinit();
     // deinit 后 JIT 里的 DLL 函数指针已经失效，不能再 tick；必须重新 compile
     EXPECT_FALSE(c.isCompiled());
+    // 能力位必须记住：validate() 可能在 deinit 之后调用，只按函数指针判断
+    // 会把 DLL 当成无逻辑元件，组合环检测就漏了
+    EXPECT_TRUE(dlp->hasCombinational()) << "卸载后仍应记得 DLL 有组合逻辑";
     c.init(); // 未重新编译时 init 必须是 no-op，不能碰旧 JIT
     EXPECT_FALSE(c.isCompiled());
 

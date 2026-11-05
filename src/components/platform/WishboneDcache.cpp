@@ -319,7 +319,7 @@ uint32_t paramU32(const std::unordered_map<std::string, std::string> &p, const s
     return (ec == std::errc{} && ptr == it->second.data() + it->second.size()) ? (uint32_t) v : d;
 }
 DCS_REGISTER_COMPONENT(
-    {"wb_dcache", {{"lines", "1024"}, {"base", "2147483648"}, {"size", "268435456"}},
+    {"wb_dcache", {{"lines", "1024"}, {"base", "2147483648", {}, true}, {"size", "268435456", {}, true}},
      {"s_adr_i", "s_dat_i", "s_we_i", "s_sel_i", "s_stb_i", "s_cyc_i", "m_dat_i", "m_ack_i", "sn_adr_i", "sn_we_i",
       "sn_stb_i", "sn_cyc_i"},
      {"s_dat_o", "s_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},

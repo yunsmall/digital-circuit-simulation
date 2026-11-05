@@ -755,8 +755,12 @@ void Circuit::tickForever() {
     // 已经处于总线冲突/振荡错误时不能再进 JIT 死循环，否则错误永远没机会返回
     if (_tick_error.code != ErrorCode::OK)
         return;
-    if (_jit.tick_forever)
+    if (_jit.tick_forever) {
+        // JIT 死循环只在停止标志置位（即运行期错误）时返回，回来就是出错，
+        // 不能再落进下面的回退循环
         _jit.tick_forever();
+        return;
+    }
     // 回退路径的 tick() 遇到错误会立即返回，不检查的话外层就变成忙循环
     for (;;) {
         tick();

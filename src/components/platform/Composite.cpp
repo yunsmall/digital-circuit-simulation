@@ -261,7 +261,7 @@ void CompositeComponent::expandTo(Circuit &parent, Expansion &out) const {
 namespace {
 DCS_REGISTER_COMPONENT(
     {"composite", {{"definition", ""}}, {}, {}, dsc::ComponentCategory::Misc,
-     "复合元件，由 JSON 蓝图定义嵌套子电路；蓝图参数按 ${name} 字符串替换"},
+     "复合元件，由 JSON 蓝图定义嵌套子电路；蓝图参数按 ${name} 字符串替换", true},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             std::map<std::string, std::string> params;
             for (auto &[k, v]: p)

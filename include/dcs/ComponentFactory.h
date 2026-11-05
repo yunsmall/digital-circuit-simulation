@@ -7,6 +7,7 @@
 // 生命周期: Meyer's Singleton，首次调用 instance() 时构造，程序结束时析构。
 #pragma once
 #include <charconv>
+#include <climits>
 #include <format>
 #include <functional>
 #include <memory>
@@ -93,6 +94,9 @@ public:
         std::string name; // 参数名
         std::string default_val; // 默认值字符串（空 = 必填）
         std::vector<std::string> valid_values; // 可选约束：非空时参数只能取列表中的值
+        // 元件按比 int 更宽的类型解析（如 constant.value 的 uint64、wb_dcache 的 u32 地址）。
+        // 这类参数不能用 paramInt 读取，校验时也不要求落在 int 范围内
+        bool wide_int = false;
     };
 
     // 元件类型描述
@@ -105,17 +109,25 @@ public:
         // 再用 registerCategory() 登记显示名，不需要改本库的枚举
         std::string category = "misc";
         std::string description; // 元件功能简介（空 = 未填写）
+        // 允许 JSON 里出现 params 未声明的键：composite 的蓝图变量、virtio 的
+        // backend_opts.<key> 都是运行期才知道的键。其余元件拒绝未知键，
+        // 参数名拼错时不再静默按默认值构建
+        bool allow_extra_params = false;
 
         Meta() = default;
         Meta(std::string t, std::vector<ParamMeta> ps, std::vector<std::string> in,
-             std::vector<std::string> out, ComponentCategory c, std::string desc) :
+             std::vector<std::string> out, ComponentCategory c, std::string desc,
+             bool extra = false) :
             type_name(std::move(t)), params(std::move(ps)), input_pins(std::move(in)),
-            output_pins(std::move(out)), category(categoryKey(c)), description(std::move(desc)) {
+            output_pins(std::move(out)), category(categoryKey(c)), description(std::move(desc)),
+            allow_extra_params(extra) {
         }
         Meta(std::string t, std::vector<ParamMeta> ps, std::vector<std::string> in,
-             std::vector<std::string> out, std::string c, std::string desc) :
+             std::vector<std::string> out, std::string c, std::string desc,
+             bool extra = false) :
             type_name(std::move(t)), params(std::move(ps)), input_pins(std::move(in)),
-            output_pins(std::move(out)), category(std::move(c)), description(std::move(desc)) {
+            output_pins(std::move(out)), category(std::move(c)), description(std::move(desc)),
+            allow_extra_params(extra) {
         }
     };
 
@@ -144,9 +156,9 @@ public:
     static std::string validateParams(const Meta &meta, const std::unordered_map<std::string, std::string> &params) {
         // 默认值是整数的参数，用户给的值也必须是整数：paramInt 解析失败
         // 会静默回退默认值，不拦住的话 "bit_width": "abc" 会按默认位宽跑。
-        // 解析规则要和 Creator 一致：Constant 的 value 支持 0x/0b 前缀，
-        // 用 64 位整数是因为 wb_dcache 的 base 默认值 2^31 超出 int32
-        auto is_int = [](const std::string &s) {
+        // 解析规则要和 Creator 一致：Constant 的 value 支持 0x/0b 前缀。
+        // 用 int64 解析是为了先判断值是否合法，再决定它能不能被 paramInt 消费
+        auto parse_int = [](const std::string &s, int64_t &out) {
             std::string_view v(s);
             int base = 10;
             if (v.size() > 2 && v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) {
@@ -156,7 +168,6 @@ public:
                 v.remove_prefix(2);
                 base = 2;
             }
-            int64_t out = 0;
             auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), out, base);
             return !v.empty() && ec == std::errc{} && ptr == v.data() + v.size();
         };
@@ -171,8 +182,31 @@ public:
                         valid += (i ? ", " : "") + pm.valid_values[i];
                     return std::format("参数 {} 的值 \"{}\" 无效，允许: {}", pm.name, it->second, valid);
                 }
-            } else if (is_int(pm.default_val) && !is_int(it->second)) {
+                continue;
+            }
+            int64_t def = 0;
+            if (!parse_int(pm.default_val, def))
+                continue; // 默认值本身不是整数，这个参数按字符串处理
+            int64_t val = 0;
+            if (!parse_int(it->second, val))
                 return std::format("参数 {} 必须是整数，给定 \"{}\"", pm.name, it->second);
+            // paramInt 用 int 解析，超出 int 的值会被静默退回默认值；
+            // 只有标记了 wide_int 的参数（Creator 自己按 uint32/uint64 解析）允许超范围
+            if (!pm.wide_int && (val < INT_MIN || val > INT_MAX))
+                return std::format("参数 {} 超出 int 范围: \"{}\"", pm.name, it->second);
+        }
+        // 拼错的参数名如果放过，元件会按默认值构建，用户看到的是"写了却不起作用"。
+        // composite 的蓝图变量和 virtio 的 backend_opts.<key> 是动态键，单独放行
+        if (!meta.allow_extra_params) {
+            for (auto &[k, v]: params) {
+                bool known = false;
+                for (auto &pm: meta.params)
+                    if (pm.name == k) {
+                        known = true;
+                        break;
+                    }
+                if (!known)
+                    return std::format("未知参数 '{}'（{} 没有这个参数）", k, meta.type_name);
             }
         }
         return "";

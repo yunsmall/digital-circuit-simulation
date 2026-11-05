@@ -375,7 +375,7 @@ DCS_REGISTER_COMPONENT(
      {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "m_dat_i", "m_ack_i"},
      {"wb_dat_o", "wb_ack_o", "irq", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Bus,
-     "virtio-net：队列 0 收包、队列 1 发包；宿主用 pushRxPacket/popTxPacket 或 BackendOps 对接"},
+     "virtio-net：队列 0 收包、队列 1 发包；宿主用 pushRxPacket/popTxPacket 或 BackendOps 对接", true},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
         return std::make_unique<dsc::VirtioNet>(n, dsc::paramStr(p, "backend", "none"), dsc::takeBackendOpts(p));
     });

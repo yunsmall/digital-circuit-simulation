@@ -158,7 +158,7 @@ std::unique_ptr<Component> Split::clone(const std::string &n) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"constant", {{"bit_width", "8"}, {"value", "0"}}, {}, {"out"}, dsc::ComponentCategory::DataPath, "常量，输出固定值"},
+    {"constant", {{"bit_width", "8"}, {"value", "0", {}, true}}, {}, {"out"}, dsc::ComponentCategory::DataPath, "常量，输出固定值"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
                            uint64_t v = 0;
                            auto it = p.find("value");
