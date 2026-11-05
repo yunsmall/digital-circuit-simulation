@@ -27,6 +27,8 @@ public:
     // data_width: 数据位宽（1~64）
     // read_latency: 读延迟（0=组合逻辑直出）
     // write_latency: 写延迟（0=上升沿直写）
+    // 同一拍对同一地址读写时，输出的是写之前的旧值（读优先），和
+    // MultiPortRAM / RegFile 的语义一致
     Memory(const std::string &name, int addr_width, int data_width, int read_latency = 0, int write_latency = 0);
 
     // 存储分配放在 prepare：--pins 这类工具只构造看引脚，不能顺手分配 2^addr_width 字节

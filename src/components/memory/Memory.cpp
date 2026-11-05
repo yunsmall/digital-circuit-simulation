@@ -119,6 +119,22 @@ std::string Memory::genFuncDef_seq() const {
     if (_rd_stages > 0)
         code += std::format("    _rd_addr_{0}[0] = _addr;\n", id);
 
+    // 读输出放在写之前：同一拍对同一地址读写时返回写之前的旧值，和
+    // MultiPortRAM / RegFile（读优先）保持一致。否则换一种存储器实现，
+    // 同拍读写的语义会静默翻转
+    if (q_nid >= 0) {
+        int rlast = _rd_stages - 1;
+        std::string d_type = c_int_type(_data_width);
+        std::string ra = _rd_stages > 0
+            ? std::format("_rd_addr_{}[{}]", id, rlast)
+            : "_addr";
+        code += std::format("    {} _dout = 0;\n", d_type);
+        code += "    if ((uint64_t)" + ra + " + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
+        code += std::format("        dcs_memcpy(&_dout, _dcs_mem_p_{} + {}, {});\n", id, ra, d_bytes);
+        code += "    }\n";
+        code += "    " + genOutputWrite(0, "_dout", _data_width) + "\n";
+    }
+
     // 写流水线
     if (_wr_stages > 1) {
         code += "    // 写流水线移位+提交\n";
@@ -159,20 +175,6 @@ std::string Memory::genFuncDef_seq() const {
     }
 
     code += std::format("    _dcs_mem_clk_{0} = _clk;\n", id);
-
-    // 读输出：从读流水线末尾取值（字节寻址 + 边界检查）
-    if (q_nid >= 0) {
-        int rlast = _rd_stages - 1;
-        std::string d_type = c_int_type(_data_width);
-        std::string ra = _rd_stages > 0
-            ? std::format("_rd_addr_{}[{}]", id, rlast)
-            : "_addr";
-        code += std::format("    {} _dout = 0;\n", d_type);
-        code += "    if ((uint64_t)" + ra + " + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
-        code += std::format("        dcs_memcpy(&_dout, _dcs_mem_p_{} + {}, {});\n", id, ra, d_bytes);
-        code += "    }\n";
-        code += "    " + genOutputWrite(0, "_dout", _data_width) + "\n";
-    }
 
     // busy 输出
     if (busy_nid >= 0) {
