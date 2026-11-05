@@ -136,3 +136,27 @@ TEST(DividerTest, SignedNegative) {
     EXPECT_EQ(rv(), 1u) << "7%-2 余应为 1";
 }
 
+// 位宽不是 8 的倍数时，负结果的高位补码必须按位宽截断：genOutputWrite 按整字节
+// 写出，不截断就会把 bit7 一起写进 7 位线网，下游同宽引脚读到的是错误值
+TEST(DividerTest, SignedNegativeMaskedToWidth) {
+    dsc::Circuit c;
+    auto *a = c.createNet("a");
+    auto *b = c.createNet("b");
+    auto *q = c.createNet("q");
+    auto *r = c.createNet("r");
+    auto *div = c.addComponent(std::make_unique<dsc::Divider>("div", 7, true));
+    c.connect(div, "a", a);
+    c.connect(div, "b", b);
+    c.connect(div, "quot", q);
+    c.connect(div, "rem", r);
+    c.compile();
+    c.init();
+
+    // (-3) / 2 = -1 余 -1；7 位补码都是 0x7F
+    c.setWire(a->id(), {0x7D, 0});
+    c.setWire(b->id(), {2, 0});
+    c.tick();
+    EXPECT_EQ(c.getWire(q->id())[0], 0x7F) << "7 位 -1 应写成 0x7F，不能带出 bit7";
+    EXPECT_EQ(c.getWire(r->id())[0], 0x7F) << "7 位余数 -1 应写成 0x7F";
+}
+

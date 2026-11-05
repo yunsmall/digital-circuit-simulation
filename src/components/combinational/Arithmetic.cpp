@@ -597,6 +597,12 @@ std::string Divider::genFuncDef_comb() const {
                                              "    if (_ub & (1ULL << {})) _ub |= ~{};\n",
                                              _bit_width - 1, gen_mask(_bit_width), _bit_width - 1, gen_mask(_bit_width))
                                : std::string("    uint64_t _ua = _a, _ub = _b;\n");
+    // 负数结果是补码，高位全是 1。引脚位宽不是 8 的倍数时 genOutputWrite 按整字节
+    // 写出，不把这些位清掉就会跑进线网，下游同宽引脚又不会做掩码（net_w == pin_w）
+    std::string mask_fix;
+    if (_signed && _bit_width < 64)
+        mask_fix = std::format("    _quot &= (int64_t){};\n    _rem &= (int64_t){};",
+                               gen_mask(_bit_width), gen_mask(_bit_width));
     // 全部用编号占位符，避免 std::format 混用限制
     return std::format(R"(static void {0}() {{
     {1}
@@ -612,12 +618,13 @@ std::string Divider::genFuncDef_comb() const {
         _quot = (_neg != _neb) ? ({3})(-_q) : ({3})_q;
         _rem  = _neg ? ({3})(-_r) : ({3})_r;
     }}
+{7}
     {4}
     {5}
 }})",
                        funcName_comb(), gen_read_wire(a_nid, _bit_width, a_nw, "_a"),
                        gen_read_wire(b_nid, _bit_width, b_nw, "_b"), cast, genOutputWrite(0, "_quot", _bit_width),
-                       genOutputWrite(1, "_rem", _bit_width), prep);
+                       genOutputWrite(1, "_rem", _bit_width), prep, mask_fix);
 }
 
 std::unique_ptr<Component> Divider::clone(const std::string &n) const {
