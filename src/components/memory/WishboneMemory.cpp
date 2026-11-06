@@ -96,6 +96,9 @@ std::string WishboneMemory::genFuncDef_seq() const {
     std::string code;
     code += std::format("// WishboneMemory: {}\n", cgen::commentText(name()));
     code += std::format("static void {}() {{\n", funcName_seq());
+    // STB/CYC 只在 clk 上升沿采样（Wishbone B4 RULE 5.00）。标准模式要求主设备
+    // 把事务之间的低相位保持到跨过一个采样沿（RiscVCPU 的相位机就是这么做的），
+    // 从设备不需要为"半个周期内撤了又拉"的违规波形加 pending 容错
     code += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
     code += "    if (!_clk_pos) return;\n";
     code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
