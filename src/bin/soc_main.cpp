@@ -133,7 +133,9 @@ BOOL WINAPI restoreConsoleModeOnExit(DWORD type) {
 #else
 namespace {
 termios g_raw_saved{};
+termios g_raw_mode{};
 volatile std::sig_atomic_t g_raw_active = 0;
+volatile std::sig_atomic_t g_raw_wanted = 0;
 // SIGHUP/SIGTERM 等不会展开栈，析构不会执行；这里先把终端恢复再按默认处理
 void restoreTerminalAndReraise(int sig) {
     if (g_raw_active) {
@@ -142,6 +144,22 @@ void restoreTerminalAndReraise(int sig) {
     }
     std::signal(sig, SIG_DFL);
     std::raise(sig);
+}
+// 外部 kill -TSTP 会把进程停住但不走析构：先还给 shell 一个正常终端，
+// SIGCONT 回来（fg）时再切回 raw
+void suspendTerminalAndStop(int sig) {
+    if (g_raw_active) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_raw_saved);
+        g_raw_active = 0;
+    }
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+void resumeTerminalAfterContinue(int) {
+    if (g_raw_wanted) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_raw_mode);
+        g_raw_active = 1;
+    }
 }
 } // namespace
 #endif
@@ -178,9 +196,13 @@ public:
         _active = tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0;
         if (_active) {
             g_raw_saved = _saved;
+            g_raw_mode = raw;
+            g_raw_wanted = 1;
             g_raw_active = 1;
             for (int sig: {SIGHUP, SIGTERM, SIGQUIT, SIGINT})
                 std::signal(sig, restoreTerminalAndReraise);
+            std::signal(SIGTSTP, suspendTerminalAndStop);
+            std::signal(SIGCONT, resumeTerminalAfterContinue);
         }
 #endif
     }
@@ -190,6 +212,7 @@ public:
         g_raw_con = INVALID_HANDLE_VALUE;
 #else
         if (_active) tcsetattr(STDIN_FILENO, TCSANOW, &_saved);
+        g_raw_wanted = 0;
         g_raw_active = 0;
 #endif
     }
@@ -799,6 +822,9 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
 
 int main(int argc, char *argv[]) {
     cxxopts::Options opts("dcs_soc", "整机仿真 CLI：把 RISC-V ELF 灌进电路里的存储器并运行");
+    // cxxopts 的自动折行按字节数数，中文会被从 UTF-8 序列中间切开（--help 乱码）；
+    // 宽度设得足够大关掉它，长行交给终端按显示宽度自己折
+    opts.set_width(4096);
 
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
             "elf", "要加载的 RISC-V ELF（镜像、入口地址、tohost 都从它读）", cxxopts::value<std::string>())(
@@ -831,7 +857,7 @@ int main(int argc, char *argv[]) {
     try {
         result = opts.parse(argc, argv);
     } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), opts.help());
+        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), dcs_cli::formatHelp(opts.help()));
         return 1;
     }
 
@@ -840,7 +866,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     if (result.count("help") || argc == 1) {
-        std::cout << opts.help() << "\n";
+        std::cout << dcs_cli::formatHelp(opts.help()) << "\n";
 #ifdef DCS_USE_TCC
         std::cout << "JIT 后端: TinyCC\n\n";
 #else
@@ -871,7 +897,7 @@ int main(int argc, char *argv[]) {
     dcs_cli::configureLibrary(ctx, lib_paths);
 
     if (!result.count("circuit")) {
-        std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
+        std::cerr << "错误: 请指定 JSON 电路文件\n\n" << dcs_cli::formatHelp(opts.help()) << "\n";
         return 1;
     }
     auto optList = [&](const char *key) {

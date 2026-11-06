@@ -712,6 +712,9 @@ int dumpSchema() {
 
 int main(int argc, char *argv[]) {
     cxxopts::Options opts("dcs", "数字电路仿真 CLI");
+    // cxxopts 的自动折行按字节数数，中文会被从 UTF-8 序列中间切开（--help 乱码）；
+    // 宽度设得足够大关掉它，长行交给终端按显示宽度自己折
+    opts.set_width(4096);
 
     // 仿真选项
     opts.add_options("仿真")("circuit", "JSON 电路描述文件（位置参数）", cxxopts::value<std::string>())(
@@ -750,7 +753,7 @@ int main(int argc, char *argv[]) {
     try {
         result = opts.parse(argc, argv);
     } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), opts.help());
+        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), dcs_cli::formatHelp(opts.help()));
         return 1;
     }
 
@@ -759,7 +762,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     if (result.count("help") || argc == 1) {
-        std::cout << opts.help() << "\n";
+        std::cout << dcs_cli::formatHelp(opts.help()) << "\n";
 #ifdef DCS_USE_TCC
         std::cout << "JIT 后端: TinyCC\n\n";
 #else
@@ -834,6 +837,6 @@ int main(int argc, char *argv[]) {
                         result.count("dump-mem") ? result["dump-mem"].as<std::string>() : std::string{}, ctx);
     }
 
-    std::cerr << "错误: 请指定 JSON 电路文件\n\n" << opts.help() << "\n";
+    std::cerr << "错误: 请指定 JSON 电路文件\n\n" << dcs_cli::formatHelp(opts.help()) << "\n";
     return 1;
 }
