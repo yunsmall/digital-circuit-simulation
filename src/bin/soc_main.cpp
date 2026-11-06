@@ -445,15 +445,14 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         std::cerr << "错误: --feed 需要电路里有 uart_feed 元件\n";
         return 1;
     }
-    // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
-    // detach 的线程再去 push 就是访问已释放对象
+    // 只在纯交互（--forever 且没有 --watch）时起读线程：--watch 用文件喂
+    // 命令，stdin 不参与；有限 tick 模式下会返回、circuit 被析构，detach 的
+    // 线程再去 push 就是访问已释放对象
     std::atomic<bool> *reader_stop = nullptr;
-    // 只有纯交互（--forever 且没有 --watch）才改终端模式；--watch 用文件喂
-    // 命令，stdin 不参与，Ctrl-C 保持宿主的默认行为
     std::unique_ptr<TerminalRawMode> raw_mode;
     if (forever && watch_file.empty() && uart_feed)
         raw_mode = std::make_unique<TerminalRawMode>();
-    if (forever && uart_feed) {
+    if (forever && watch_file.empty() && uart_feed) {
         // 停止标志放堆上：读线程持有它，runSoc 返回后也不能让栈帧先消失
         reader_stop = new std::atomic<bool>(false);
         dsc::Circuit *circ_ptr = circuit.get();
@@ -475,6 +474,9 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                 if (reader_stop->load(std::memory_order_acquire))
                     return;
                 if (ch < 0) {
+                    // Windows 上 -1 也可能是"被丢弃的扩展键"：Ctrl-A 前缀不能
+                    // 挂到下一个普通字符上；EOF 时清掉也无害
+                    ctrl_a = false;
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
