@@ -7,6 +7,7 @@
 #include "dcs/util/ExePath.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -20,6 +21,17 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+
+namespace {
+// _stop_flag 会被别的宿主线程写、被 JIT 用 dcs_load_acq 读；宿主侧统一走
+// atomic_ref，保证跨线程可见。存储仍然是普通 int，布局交给 JIT 直接用
+void storeStopFlag(int &flag, int value) {
+    std::atomic_ref<int>(flag).store(value, std::memory_order_release);
+}
+int loadStopFlag(int &flag) {
+    return std::atomic_ref<int>(flag).load(std::memory_order_acquire);
+}
+} // namespace
 
 // JIT 头文件搜索路径的旧接口：等价于操作默认上下文的设置，保留给老调用方
 void dsc::Circuit::setJitIncludeDir(const std::string &dir) {
@@ -126,7 +138,7 @@ void Circuit::reset() {
     if (!_compiled)
         return;
     _tick_error = {};
-    _stop_flag = 0;
+    storeStopFlag(_stop_flag, 0);
     if (_jit.reset)
         _jit.reset();
 }
@@ -718,7 +730,7 @@ CircuitError Circuit::expandComposites() {
 // ============================================================
 
 std::string Circuit::generateC() const {
-    return generateCircuitC(const_cast<Circuit *>(this), const_cast<volatile int *>(&_stop_flag), _nets,
+    return generateCircuitC(const_cast<Circuit *>(this), &_stop_flag, _nets,
                             _components, _bus_nets);
 }
 
@@ -755,7 +767,7 @@ CircuitError Circuit::compile(std::vector<std::string> *warnings) {
     jitCleanup();
     // 上一个电路留下的总线冲突/振荡错误不能让新编译的电路一 tick 就静默停摆
     _tick_error = {};
-    _stop_flag = 0;
+    storeStopFlag(_stop_flag, 0);
 
     if (auto err = prepareComponents(); err.code != ErrorCode::OK)
         return err;
@@ -851,7 +863,7 @@ void Circuit::init() {
         return;
     // 初始化等于一次冷启动，上一个电路残留的运行期错误不能带进新状态
     _tick_error = {};
-    _stop_flag = 0;
+    storeStopFlag(_stop_flag, 0);
     // 先全局初始化，再 JIT 初始化（JIT 中会调 create/reset）。
     // 后端可能在这个阶段分配线程/大块内存并抛异常，不能让它穿到 main 触发 terminate
     try {
@@ -942,8 +954,8 @@ void Circuit::tickBatch(uint64_t n) {
 }
 
 void Circuit::interruptTickForever() {
-    // JIT 的死循环每拍检查这个标志（和总线冲突用的是同一个）
-    _stop_flag = 1;
+    // JIT 的死循环每拍用 dcs_load_acq 检查这个标志（和总线冲突用的是同一个）
+    storeStopFlag(_stop_flag, 1);
 }
 
 void Circuit::tickForever() {
@@ -961,7 +973,7 @@ void Circuit::tickForever() {
     // 回退路径的 tick() 遇到错误会立即返回；interruptTickForever() 只置停止
     // 标志不置错误，所以这里也要查，否则用户按 Ctrl-A x 后永远退不出去
     for (;;) {
-        if (_stop_flag)
+        if (loadStopFlag(_stop_flag))
             return;
         tick();
         if (_tick_error.code != ErrorCode::OK)
@@ -971,7 +983,7 @@ void Circuit::tickForever() {
 
 void Circuit::onBusConflict(int net_id) {
     // 死循环入口每拍检查它；先置位，保证 circuit_tick_forever 能返回
-    _stop_flag = 1;
+    storeStopFlag(_stop_flag, 1);
     if (_tick_error.code != ErrorCode::OK)
         return;
     // net_id < 0 是阶段 2b 迭代到上限仍未收敛的信号：三态总线绕成的组合环查不出来，

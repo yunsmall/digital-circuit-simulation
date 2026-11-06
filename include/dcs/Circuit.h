@@ -243,8 +243,10 @@ private:
     // 总线追踪：net_id → [(comp, out_idx), ...]（三态输出允许多驱动）
     std::map<int, std::vector<BusDriver>> _bus_nets;
     // JIT 死循环的停止标志：地址通过 JIT 符号表注入，总线冲突/振荡时由
-    // onBusConflict 置 1，circuit_tick_forever 每拍检查后返回
-    volatile int _stop_flag = 0;
+    // onBusConflict 置 1，interruptTickForever() 也可以从别的线程置 1。
+    // 存储故意保持普通 int（JIT 用 dcs_load_acq 读），宿主侧一律走
+    // std::atomic_ref 存取，别直接赋/读
+    int _stop_flag = 0;
 
     bool _compiled = false;
     // init() 成功执行过、还没 deinit()：此时 JIT 的静态状态里有 DLL 实例对象，

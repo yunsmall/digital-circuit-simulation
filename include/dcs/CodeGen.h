@@ -18,10 +18,11 @@ class Component;
 struct BusDriver;
 
 // stop_flag_ptr: tickForever 的死循环每拍检查这个标志（总线冲突/振荡时置位）。
+// 存储是普通 int，生成代码用 dcs_load_acq 原子读取，宿主侧用 atomic_ref 写。
 // 地址直接编进生成代码，和元件状态指针一样不依赖符号表——TCC 的 PE 数据符号
 // 需要 dllimport 语义，走符号注入会重定位失败
 std::string generateCircuitC(void *circuit_ptr,
-                             volatile int *stop_flag_ptr,
+                             const void *stop_flag_ptr,
                              const std::vector<std::unique_ptr<Net>> &nets,
                              const std::vector<std::unique_ptr<Component>> &components,
                              const std::map<int, std::vector<BusDriver>> &bus_nets);

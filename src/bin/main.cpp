@@ -400,8 +400,7 @@ int truthTable(const std::string &path, const std::string &inputs_csv, const std
     }
     std::cout << dsc::formatTruthTable(tt);
     std::cout << "\n" << dsc::formatKarnaugh(tt);
-    circuit->deinit();
-    return 0;
+    return dcs_cli::deinitIgnoringErrors(*circuit) == 0 ? 0 : 1;
 }
 
 // ---- simulate ----
@@ -492,8 +491,8 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
             const size_t cap = dump_target->memSize();
             dsc::dumpMemoryHex(std::cout, dump_target->writableMemPtr(), cap, dump_addr, dump_len);
         }
-        circuit->deinit();
-        return code;
+        const int dret = dcs_cli::deinitIgnoringErrors(*circuit);
+        return code == 0 ? dret : code;
     };
 
     circuit->init();

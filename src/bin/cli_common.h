@@ -2,6 +2,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -175,6 +176,21 @@ inline bool parseWireSet(const std::string &spec, std::string &net, std::vector<
             bytes[i / 2] |= (uint8_t) (d << 4);
     }
     return true;
+}
+
+// Circuit::deinit() 把 simDeinit/DLL 销毁时的异常留给显式调用方；CLI 的
+// 结束路径不能让异常穿出 main（会 std::terminate），统一在这里报告。
+// 返回 0 表示清理成功，非 0 表示有清理错误
+inline int deinitIgnoringErrors(dsc::Circuit &circuit) {
+    try {
+        circuit.deinit();
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << std::format("清理错误: {}\n", e.what());
+    } catch (...) {
+        std::cerr << "清理错误: 未知异常\n";
+    }
+    return 1;
 }
 
 } // namespace dcs_cli

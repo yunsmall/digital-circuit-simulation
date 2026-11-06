@@ -277,7 +277,7 @@ void emitSeqTriPropagation(std::ostream &oss, const std::vector<std::unique_ptr<
 
 } // namespace
 
-std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
+std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr,
                              const std::vector<std::unique_ptr<Net>> &nets,
                              const std::vector<std::unique_ptr<Component>> &components,
                              const std::map<int, std::vector<BusDriver>> &bus_nets) {
@@ -302,7 +302,7 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
     oss << std::format("static void* _circuit_ptr = (void*)0x{:X};\n", reinterpret_cast<uintptr_t>(circuit_ptr));
     oss << "extern void dcs_bus_conflict(void*, int);\n";
     // tickForever 的停止标志：地址直接编进代码，元件状态指针也是这个做法
-    oss << std::format("static volatile int *_dcs_stop_flag = (volatile int*)0x{:X};\n\n",
+    oss << std::format("static const void *_dcs_stop_flag = (const void*)0x{:X};\n\n",
                        reinterpret_cast<uintptr_t>(stop_flag_ptr));
 
     // 每个元件的每个输出：_c_out_<comp_id>_<out_idx>[16] + _c_oe_<comp_id>_<out_idx>
@@ -381,7 +381,7 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
     // 出错后 dump 出来像是有一堆无关的错乱。只有存在三态总线的电路才可能冲突，
     // 其它电路不加这次 volatile 读，热路径没有额外开销
     if (!bus_nets.empty())
-        oss << "    if (*_dcs_stop_flag) return;\n";
+        oss << "    if (dcs_load_acq(_dcs_stop_flag)) return;\n";
     // 读总线的组合元件在阶段1 看到的是决议前的值，必须补跑。补跑会改动总线，
     // 又可能影响下一级读总线的元件，所以不能只补一轮——一直迭代到总线不再变化。
     // 上限取元件数，防止电路里出现自激振荡时死循环。
@@ -398,7 +398,7 @@ std::string generateCircuitC(void *circuit_ptr, volatile int *stop_flag_ptr,
         oss << "    if (!_bus_settled) dcs_bus_conflict(_circuit_ptr, -1);\n";
         // 振荡信号在这一段里产生。没有多驱动总线的电路也会因为单驱动三态环
         // 走到这里，所以这句不能跟上面的检查合并成一次
-        oss << "    if (*_dcs_stop_flag) return;\n";
+        oss << "    if (dcs_load_acq(_dcs_stop_flag)) return;\n";
     }
 
     oss << "    // 阶段3: 时序逻辑\n";
@@ -429,7 +429,7 @@ void circuit_tick_cycles(int clk_id, uint64_t n) {
         circuit_tick();
         _w[clk_id][0] = 1;
         circuit_tick();
-        if ((_i & 15u) == 15u && *_dcs_stop_flag) return;
+        if ((_i & 15u) == 15u && dcs_load_acq(_dcs_stop_flag)) return;
     }
 }
 // 只跑拍、不碰时钟线网：时钟由电路里的 clkgen 自己产生的场合用这个。
@@ -437,14 +437,19 @@ void circuit_tick_cycles(int clk_id, uint64_t n) {
 void circuit_tick_batch(uint64_t n) {
     for (uint64_t _i = 0; _i < n; _i++) {
         circuit_tick();
-        if ((_i & 255u) == 255u && *_dcs_stop_flag) return;
+        if ((_i & 255u) == 255u && dcs_load_acq(_dcs_stop_flag)) return;
     }
 }
 // 死循环放在 JIT 里：C++ 不再每拍跨模块调用，--forever 模式一直跑，Ctrl+C 退出。
 // 运行期出现总线冲突/振荡时 onBusConflict 置停止标志，这里必须返回，
-// 否则调用方永远无法观察到错误
+// 否则调用方永远无法观察到错误。
+// 停止标志每 16 拍查一次：LLVM 后端把 acquire 读编成普通 mov，但 TCC 后端
+// dcs_load_acq 是一次函数调用，每拍都查会拖慢小电路；多等 15 拍没人感知
 void circuit_tick_forever(void) {
-    for (;;) { circuit_tick(); if (*_dcs_stop_flag) return; }
+    for (uint32_t _i = 0;; _i++) {
+        circuit_tick();
+        if ((_i & 15u) == 15u && dcs_load_acq(_dcs_stop_flag)) return;
+    }
 }
 
 void circuit_init(void) {

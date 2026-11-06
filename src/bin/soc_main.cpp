@@ -282,7 +282,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     // 仿真里写数据，而且 tick 之后立刻返回，用户只看到"跑完了"
     if (circuit->hasError()) {
         std::cerr << std::format("初始化错误: {}\n", circuit->tickError().message);
-        circuit->deinit();
+        (void) dcs_cli::deinitIgnoringErrors(*circuit);
         return 1;
     }
 
@@ -424,8 +424,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     auto finish = [&](int code) {
         if (!dump_mem.empty())
             dsc::dumpMemoryHex(std::cout, mem->writableMemPtr(), cap, dump_addr, dump_len);
-        circuit->deinit();
-        return code;
+        const int dret = dcs_cli::deinitIgnoringErrors(*circuit);
+        return code == 0 ? dret : code;
     };
 
     // UartFeed 只提供队列；读 stdin 的活在这里单独开线程，仿真热路径上没有任何系统调用
@@ -447,7 +447,6 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     }
     // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
     // detach 的线程再去 push 就是访问已释放对象
-    std::atomic<bool> quit_requested{false};
     std::atomic<bool> *reader_stop = nullptr;
     // 只有纯交互（--forever 且没有 --watch）才改终端模式；--watch 用文件喂
     // 命令，stdin 不参与，Ctrl-C 保持宿主的默认行为
@@ -458,7 +457,7 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         // 停止标志放堆上：读线程持有它，runSoc 返回后也不能让栈帧先消失
         reader_stop = new std::atomic<bool>(false);
         dsc::Circuit *circ_ptr = circuit.get();
-        std::thread([uart_feed, reader_stop, &quit_requested, circ_ptr] {
+        auto reader_body = [uart_feed, reader_stop, circ_ptr] {
             bool ctrl_a = false;
             auto inject = [&](uint8_t b) {
                 while (!uart_feed->push(b)) {
@@ -494,7 +493,6 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                 if (ctrl_a) {
                     ctrl_a = false;
                     if (ch == 'x' || ch == 'X') {
-                        quit_requested.store(true, std::memory_order_release);
                         circ_ptr->interruptTickForever();
                         return;
                     }
@@ -504,7 +502,25 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                 if (!inject((uint8_t) ch))
                     return;
             }
-        }).detach();
+        };
+        // 线程对象不能直接 .detach()：detach 抛异常时临时对象仍 joinable，
+        // 析构会 std::terminate
+        std::thread *reader = nullptr;
+        try {
+            reader = new std::thread(reader_body);
+        } catch (const std::exception &e) {
+            std::cerr << std::format("错误: 无法创建串口输入线程: {}\n", e.what());
+            delete reader_stop; // 线程没起来，没人持有它
+            reader_stop = nullptr;
+            return 1;
+        }
+        try {
+            reader->detach();
+            delete reader;
+        } catch (...) {
+            // detach 失败时对象仍 joinable，析构会 terminate：故意泄漏，
+            // 线程继续跑，进程退出时由系统回收
+        }
     }
     // 守卫覆盖本函数之后的所有返回路径（含 --feed 打开失败这类错误退出）
     ForeverReaderGuard reader_guard{reader_stop, circuit};
@@ -541,14 +557,13 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                 std::cout << "无限仿真中（Ctrl+C 停止）\n";
             std::cout << std::flush;
             circuit->tickForever();
-            // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
+            // 无错误返回只可能是被 interruptTickForever() 打断（用户按了
+            // Ctrl-A x）：直接结束，不能落进下面的 --watch 分支
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
                 return 1;
             }
-            // interruptTickForever() 是正常打断，不置错误
-            if (quit_requested.load(std::memory_order_acquire))
-                return finish(0);
+            return finish(0);
         }
         // --watch：仿真不退出，外部往文件里追加内容就是往串口发命令。
         // 每批 tick 结束后检查文件增量，这样改硬件模型后跑一次就能反复验证，
