@@ -134,6 +134,84 @@ struct Fixture {
 };
 } // namespace
 
+// AW 已被接收、W 还没到时来一个读请求：读写通道之间没有顺序保证，
+// 桥可以先完成读并保留已锁存的 AW，等 W 到达后再完成写
+TEST(AxiBridgeTest, ReadInterleavesWithPendingWrite) {
+    Fixture f;
+    f.compile();
+    f.put(0x30, 0);
+    f.put(0x80, 0x55667788u);
+
+    // 只送 AW，W 通道先不送。多保持几拍确保握手发生
+    f.circuit->setWire(f.awaddr->id(), {0x30, 0, 0, 0});
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 1);
+    for (int i = 0; i < 5; ++i)
+        f.cycle();
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 0);
+
+    // 写还没凑齐，此时发读；读应该正常完成
+    f.circuit->setWire(f.araddr->id(), {0x80, 0, 0, 0});
+    f.circuit->setWire(f.arvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.rready->id(), (uint8_t) 1);
+    uint32_t got = 0;
+    bool seen = false;
+    for (int i = 0; i < 20; ++i) {
+        f.cycle();
+        if (f.bit(f.rvalid)) {
+            got = f.word(f.rdata);
+            seen = true;
+            f.circuit->setWire(f.arvalid->id(), (uint8_t) 0);
+        }
+    }
+    EXPECT_TRUE(seen) << "AW 未完成时读请求也应该得到响应";
+    EXPECT_EQ(got, 0x55667788u);
+    EXPECT_EQ(f.peek(0x30), 0u) << "W 还没到，写不能提前落到存储器";
+
+    // W 到达后，之前锁存的 AW 应继续完成写
+    f.circuit->setWire(f.wdata->id(), {0xBE, 0xBA, 0xFE, 0xCA});
+    f.circuit->setWire(f.wstrb->id(), (uint8_t) 0x0F);
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.bready->id(), (uint8_t) 1);
+    for (int i = 0; i < 20; ++i) {
+        f.cycle();
+        if (f.bit(f.wready))
+            f.circuit->setWire(f.wvalid->id(), (uint8_t) 0);
+    }
+    EXPECT_EQ(f.peek(0x30), 0xCAFEBABEu);
+}
+
+// WSTRB 全零：不写任何字节，但事务仍然要完成并返回写响应，
+// 不能因为没有字节被选中就卡在等待 Wishbone ack
+TEST(AxiBridgeTest, ZeroWstrbWriteStillResponds) {
+    Fixture f;
+    f.compile();
+    f.put(0x40, 0x11223344u);
+    f.circuit->setWire(f.awaddr->id(), {0x40, 0, 0, 0});
+    f.circuit->setWire(f.wdata->id(), {0xDD, 0xCC, 0xBB, 0xAA});
+    f.circuit->setWire(f.wstrb->id(), (uint8_t) 0x00);
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.bready->id(), (uint8_t) 0);
+
+    bool seen_bvalid = false;
+    for (int i = 0; i < 20; ++i) {
+        f.cycle();
+        if (f.bit(f.awready) && f.bit(f.wready)) {
+            f.circuit->setWire(f.awvalid->id(), (uint8_t) 0);
+            f.circuit->setWire(f.wvalid->id(), (uint8_t) 0);
+        }
+        if (f.bit(f.bvalid))
+            seen_bvalid = true;
+    }
+    EXPECT_TRUE(seen_bvalid) << "全零 WSTRB 也必须返回写响应";
+    EXPECT_EQ(f.peek(0x40), 0x11223344u) << "没有选中的字节不能被改写";
+
+    f.circuit->setWire(f.bready->id(), (uint8_t) 1);
+    for (int i = 0; i < 5; ++i)
+        f.cycle();
+    EXPECT_FALSE(f.bit(f.bvalid)) << "bready 握手后 bvalid 应撤销";
+}
+
 TEST(AxiBridgeTest, WriteReachesMemory) {
     Fixture f;
     f.compile();
