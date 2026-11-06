@@ -258,6 +258,11 @@ public:
     //   3. 回调写的字节数不超过引脚宽度——槽位高位靠 init/reset 的清零保持 0
     [[nodiscard]] std::string genOutputWirePtrArray(std::string_view arr) const;
 
+    // 读取输入引脚的边沿/变化标志，返回可直接嵌进生成 C 的布尔表达式。
+    // 引脚必须在构造函数里声明过对应的 PinEdge；Rising/Falling 只适用于 1 位。
+    // 声明不符或引脚未连接时抛 std::logic_error（compile 会转成错误返回）
+    [[nodiscard]] std::string genGetWireEdge(int in_idx, PinEdge edge) const;
+
 protected:
     // 需要 Context 或重活的一次性准备：相对路径解析、大块存储分配、读镜像。
     // 只由 prepare() 在 ensurePins() 之后调用，子类覆盖实现
@@ -269,7 +274,7 @@ protected:
         _params[key] = value;
     }
     // 子类用：创建输入/输出引脚
-    Pin *addInput(const std::string &pin_name, int bit_width);
+    Pin *addInput(const std::string &pin_name, int bit_width, PinEdge edge = PinEdge::None);
     Pin *addOutput(const std::string &pin_name, int bit_width, bool is_tri_state = false, bool is_sequential = false);
 
     std::string _name;

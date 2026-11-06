@@ -1,4 +1,5 @@
 {
+  "$meta": { "kind": "circuit", "format": 1, "timescale": { "tick_ns": 1 } },
   "nets": [
     "clk",
     "rst",
@@ -149,7 +150,8 @@
       "type": "uart_feed",
       "name": "uart_in",
       "params": {
-        "baud_div": "8"
+        "ns_per_period": "${ns_per_tick*2}",
+        "baud": "125000000"
       },
       "connections": {
         "clk": "clk",
@@ -302,7 +304,8 @@
         "m4_stb_i": "m4_stb",
         "m4_cyc_i": "m4_cyc",
         "m4_dat_o": "m4_dat_i",
-        "m4_ack_o": "m4_ack"
+        "m4_ack_o": "m4_ack",
+        "clk": "clk"
       }
     },
     {
@@ -366,7 +369,8 @@
       "type": "uart",
       "name": "uart",
       "params": {
-        "baud_div": "8"
+        "ns_per_period": "${ns_per_tick*2}",
+        "baud": "125000000"
       },
       "connections": {
         "clk": "clk",
@@ -387,7 +391,8 @@
       "type": "uart_term",
       "name": "term",
       "params": {
-        "baud_div": "8"
+        "ns_per_period": "${ns_per_tick*2}",
+        "baud": "125000000"
       },
       "connections": {
         "clk": "clk",

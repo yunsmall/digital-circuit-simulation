@@ -42,7 +42,7 @@ WishboneROMAdapter::WishboneROMAdapter(const std::string &name, int addr_width, 
     addInput("wb_sel_i", _d_bytes);
     addInput("wb_stb_i", 1);
     addInput("wb_cyc_i", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("rom_data", data_width);
     addOutput("rom_addr", addr_width);
     addOutput("wb_dat_o", data_width, false, true);
@@ -87,6 +87,8 @@ std::string WishboneROMAdapter::genFuncDef_seq() const {
     std::string code;
     code += std::format("// WishboneROMAdapter id={}\n", id);
     code += std::format("static void {}() {{\n", funcName_seq());
+    code += "    const bool _clk_pos = " + genGetWireEdge(6, PinEdge::Rising) + ";\n";
+    code += "    if (!_clk_pos) return;\n";
 
     // 读 adr / stb
     if (adr_in >= 0) {

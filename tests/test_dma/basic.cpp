@@ -36,6 +36,7 @@ struct Fixture {
         m_sel = circuit->createNet("m_sel"); m_stb = circuit->createNet("m_stb");
         m_cyc = circuit->createNet("m_cyc"); m_ack = circuit->createNet("m_ack");
 
+        circuit->connect(dma, "clk", clk);
         circuit->connect(dma, "cfg_adr_i", c_adr);
         circuit->connect(dma, "cfg_dat_i", c_dat_o);
         circuit->connect(dma, "cfg_we_i", c_we);

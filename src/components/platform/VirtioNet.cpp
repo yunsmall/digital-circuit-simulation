@@ -68,7 +68,7 @@ VirtioNet::VirtioNet(const std::string &name, const std::string &backend,
     // 嵌套写法只是加载时的一种便利（见 dcs/net/BackendOpts.h）
     for (auto &[k, v]: _backend_opts)
         setParam(std::string(kBackendOptsPrefix) + k, v);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);

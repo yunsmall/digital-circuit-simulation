@@ -730,7 +730,7 @@ CircuitError Circuit::expandComposites() {
 // ============================================================
 
 std::string Circuit::generateC() const {
-    return generateCircuitC(const_cast<Circuit *>(this), &_stop_flag, _nets,
+    return generateCircuitC(const_cast<Circuit *>(this), &_stop_flag, context().tickNs(), _nets,
                             _components, _bus_nets);
 }
 

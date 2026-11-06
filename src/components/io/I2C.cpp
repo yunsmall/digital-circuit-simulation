@@ -3,6 +3,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/I2C.h"
 
+#include <cmath>
 #include <format>
 
 namespace dsc {
@@ -22,12 +23,15 @@ constexpr uint32_t REG_CLKDIV = 0x14;
 enum Ph { PH_IDLE = 0, PH_START = 1, PH_ADDR = 2, PH_ADDR_ACK = 3, PH_DATA = 4, PH_DATA_ACK = 5, PH_STOP = 6, PH_DONE = 7 };
 } // namespace
 
-I2C::I2C(const std::string &name, int clkdiv) : SequentialComponent(name, "i2c"), _clkdiv(clkdiv) {
-    // 0 及以下钳到 1：这是有意的容错（测试 ZeroClkdiv 覆盖），setParam 记录生效值
+I2C::I2C(const std::string &name, int ns_per_period, int scl_period_ns) :
+    SequentialComponent(name, "i2c"), _ns_per_period(ns_per_period < 1 ? 1 : ns_per_period),
+    _scl_period_ns(scl_period_ns < 1 ? 1 : scl_period_ns) {
+    _clkdiv = (int) std::llround((double) _scl_period_ns / _ns_per_period);
     if (_clkdiv < 1)
         _clkdiv = 1;
-    setParam("clkdiv", std::to_string(_clkdiv));
-    addInput("clk", 1);
+    setParam("ns_per_period", std::to_string(_ns_per_period));
+    setParam("scl_period_ns", std::to_string(_scl_period_ns));
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);
@@ -78,6 +82,8 @@ std::string I2C::genFuncDef_seq() const {
     std::string c;
     c += std::format("// I2C {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_DAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
@@ -212,7 +218,7 @@ std::string I2C::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> I2C::clone(const std::string &new_name) const {
-    return std::make_unique<I2C>(new_name, _clkdiv);
+    return std::make_unique<I2C>(new_name, _ns_per_period, _scl_period_ns);
 }
 
 } // namespace dsc
@@ -220,8 +226,9 @@ std::unique_ptr<Component> I2C::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"i2c", {{"clkdiv", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务"},
+    {"i2c", {{"ns_per_period", "20"}, {"scl_period_ns", "160"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务；按 ns_per_period/scl_period_ns 分频"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::I2C>(n, dsc::paramInt(p, "clkdiv", 8));
+            return std::make_unique<dsc::I2C>(n, dsc::paramInt(p, "ns_per_period", 20),
+                                              dsc::paramInt(p, "scl_period_ns", 160));
         });
 } // namespace

@@ -1,4 +1,5 @@
 #include "dcs/CircuitSerializer.h"
+#include "dcs/util/TemplateExpr.h"
 
 #include <algorithm>
 #include <exception>
@@ -264,6 +265,22 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
             error = std::format("未知的 $meta.kind: '{}'（应为 circuit 或 blueprint）", kind);
             return nullptr;
         }
+        // 电路级 timescale：一个 tick 多少 ns。参数表达式里的 ns_per_tick 由它提供
+        if (auto m = root.find("$meta"); m != root.end()) {
+            if (auto ts = m->find("timescale"); ts != m->end()) {
+                if (!ts->is_object()) {
+                    error = "$meta.timescale 必须是对象";
+                    return nullptr;
+                }
+                if (auto tn = ts->find("tick_ns"); tn != ts->end()) {
+                    if (!tn->is_number_unsigned() || tn->get<std::uint64_t>() < 1) {
+                        error = "$meta.timescale.tick_ns 必须是 ≥1 的整数（单位 ns）";
+                        return nullptr;
+                    }
+                    ctx.setTickNs(tn->get<std::uint64_t>());
+                }
+            }
+        }
 
         auto circuit = std::make_unique<Circuit>();
         if (context)
@@ -359,6 +376,20 @@ std::unique_ptr<Circuit> loadCircuitFromJson(const std::string &json_str, std::s
                     return nullptr;
                 }
                 flattenParams(jc["params"], "", params);
+            }
+            // 参数表达式复用蓝图那套 ${...}；ns_per_tick 是内置变量，来自 timescale
+            {
+                TemplateExpr::Params vars;
+                vars["ns_per_tick"] = std::to_string(ctx.tickNs());
+                for (auto &[k, v]: params) {
+                    std::string resolved;
+                    TemplateExpr expr(v, vars);
+                    if (!expr.resolve(resolved)) {
+                        error = std::format("components[{}].params.{} 表达式求值失败: {}", ci, k, expr.error());
+                        return nullptr;
+                    }
+                    v = std::move(resolved);
+                }
             }
             // 元件参数里的相对路径不在这里改写：谁需要文件谁在 prepare(ctx) 里
             // 用 Context::resolvePath 解析（当前目录由加载器设成 JSON 所在目录）

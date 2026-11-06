@@ -34,33 +34,41 @@ struct PwmFixture {
         c->init();
     }
 
-    void ticks(int n) {
-        for (int i = 0; i < n; i++) c->tick();
+    void cycles(int n) {
+        for (int i = 0; i < n; i++) {
+            c->setWire(clk->id(), 0);
+            c->tick();
+            c->setWire(clk->id(), 1);
+            c->tick();
+        }
     }
     void write(uint32_t a, uint32_t d) {
         c->setWire(addr->id(), (uint8_t) a);
         c->setWire(wdata->id(), {(uint8_t) d, (uint8_t) (d >> 8), (uint8_t) (d >> 16), (uint8_t) (d >> 24)});
         c->setWire(we->id(), 1);
         c->setWire(en->id(), 1);
-        ticks(2);
+        cycles(2);
         c->setWire(en->id(), 0);
-        ticks(1);
+        cycles(1);
     }
     uint32_t read(uint32_t a) {
         c->setWire(addr->id(), (uint8_t) a);
         c->setWire(we->id(), 0);
         c->setWire(en->id(), 1);
-        ticks(3);
+        cycles(3);
         auto v = c->getWire(rdata->id());
         c->setWire(en->id(), 0);
-        ticks(1);
+        cycles(1);
         return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
     }
     int level() const { return c->getWire(out->id())[0] & 1; }
-    // 采样 n 拍里高电平的比例
+    // 采样 n 个时钟周期里高电平的比例
     int countHigh(int n) {
         int hi = 0;
         for (int i = 0; i < n; i++) {
+            c->setWire(clk->id(), 0);
+            c->tick();
+            c->setWire(clk->id(), 1);
             c->tick();
             hi += level();
         }

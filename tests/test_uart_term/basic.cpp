@@ -17,10 +17,10 @@ struct Fixture {
     Net *tx = nullptr, *data = nullptr, *valid = nullptr;
 
     explicit Fixture(int baud = 2) {
-        auto u = std::make_unique<UART>("uart0", baud);
+        auto u = std::make_unique<UART>("uart0", 1, 1000000000LL / baud);
         uart = u.get();
         circuit->addComponent(std::move(u));
-        auto t = std::make_unique<UartTerm>("term0", baud);
+        auto t = std::make_unique<UartTerm>("term0", 1, 1000000000LL / baud);
         term = t.get();
         circuit->addComponent(std::move(t));
 
@@ -91,7 +91,7 @@ struct TermOnly {
     Net *clk = nullptr, *rx = nullptr, *data = nullptr, *valid = nullptr;
 
     explicit TermOnly(int baud = 2, bool connect_rx = true) {
-        auto t = std::make_unique<UartTerm>("term0", baud);
+        auto t = std::make_unique<UartTerm>("term0", 1, 1000000000LL / baud);
         term = t.get();
         circuit->addComponent(std::move(t));
         clk = circuit->createNet("clk");

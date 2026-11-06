@@ -3,6 +3,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartTerm.h"
 
+#include <cmath>
 #include <format>
 
 namespace dsc {
@@ -12,12 +13,15 @@ enum InIdx { I_CLK = 0, I_RX };
 enum OutIdx { O_DATA = 0, O_VALID };
 } // namespace
 
-UartTerm::UartTerm(const std::string &name, int baud_div) : SequentialComponent(name, "uart_term"), _baud_div(baud_div) {
-    // 半位周期 = baud_div / 2，小于 2 时采样点不成立，钳到 2
-    if (_baud_div < 2)
-        _baud_div = 2;
-    setParam("baud_div", std::to_string(_baud_div));
-    addInput("clk", 1);
+UartTerm::UartTerm(const std::string &name, int ns_per_period, std::uint64_t baud) :
+    SequentialComponent(name, "uart_term"), _ns_per_period(ns_per_period < 1 ? 1 : ns_per_period),
+    _baud(baud < 1 ? 1 : baud) {
+    _cycles_per_bit = (int) std::llround(1e9 / ((double) _baud * _ns_per_period));
+    if (_cycles_per_bit < 2)
+        _cycles_per_bit = 2;
+    setParam("ns_per_period", std::to_string(_ns_per_period));
+    setParam("baud", std::to_string(_baud));
+    addInput("clk", 1, PinEdge::Rising);
     addInput("rx", 1);
     addOutput("data", 8, false, true);
     addOutput("valid", 1, false, true);
@@ -48,10 +52,12 @@ std::string UartTerm::genInitCode() const {
 }
 
 std::string UartTerm::genFuncDef_seq() const {
-    const int half = _baud_div / 2;
+    const int half = _cycles_per_bit / 2;
     std::string c;
     c += std::format("// UartTerm {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     // 悬空输入读到 0，不能直接下标 -1。但串口空闲是高电平，0 会被当成起始位，
     // 所以 rx 未连接时按空闲高处理（真实线路靠上拉）
     const auto *rx_pin = inputs()[I_RX].get();
@@ -77,7 +83,7 @@ std::string UartTerm::genFuncDef_seq() const {
             "        }} else {{\n"
             "            _term_active_{0} = 0;\n"
             "            if (_rx) {{\n",
-            _id, half, _baud_div);
+            _id, half, _cycles_per_bit);
     // 停止位为高才算一帧完整数据
     c += std::format("                _lb = (uint8_t)(_term_shift_{0} & 0xFFu);\n"
                      "                (*_term_frames_{0})++;\n"
@@ -95,7 +101,7 @@ std::string UartTerm::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> UartTerm::clone(const std::string &new_name) const {
-    auto t = std::make_unique<UartTerm>(new_name, _baud_div);
+    auto t = std::make_unique<UartTerm>(new_name, _ns_per_period, _baud);
     t->_frames = _frames;
     t->_errors = _errors;
     t->_last_byte = _last_byte;
@@ -107,8 +113,9 @@ std::unique_ptr<Component> UartTerm::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart_term", {{"baud_div", "8"}}, {"clk", "rx"}, {"data", "valid"}, dsc::ComponentCategory::Misc, "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）；baud_div 默认与 uart 一致"},
+    {"uart_term", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk", "rx"}, {"data", "valid"}, dsc::ComponentCategory::Misc, "串口终端接收端：按 ns_per_period/baud 把 8N1 电平解成字节，data/valid 接给 print（ascii=1）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartTerm>(n, dsc::paramInt(p, "baud_div", 8));
+            return std::make_unique<dsc::UartTerm>(n, dsc::paramInt(p, "ns_per_period", 20),
+                                                   (std::uint64_t) dsc::paramInt(p, "baud", 115200));
         });
 } // namespace

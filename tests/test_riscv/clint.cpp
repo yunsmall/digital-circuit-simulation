@@ -184,6 +184,7 @@ TEST(ClintTest, TimerInterrupt) {
     circuit->connect(cpu, "halted", halt);
 
     // 互连主口 ↔ CPU (回传)
+    circuit->connect(ic, "clk", clk);
     circuit->connect(ic, "m0_adr_i", m_adr); circuit->connect(ic, "m0_dat_i", m_do);
     circuit->connect(ic, "m0_we_i", m_we); circuit->connect(ic, "m0_sel_i", m_sel);
     circuit->connect(ic, "m0_stb_i", m_stb); circuit->connect(ic, "m0_cyc_i", m_cyc);

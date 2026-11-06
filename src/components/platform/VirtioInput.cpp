@@ -64,7 +64,7 @@ void resetThunk(void *ctx) {
 
 VirtioInput::VirtioInput(const std::string &name) :
     SequentialComponent(name, "virtio_input"), _state(std::make_unique<State>()) {
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);

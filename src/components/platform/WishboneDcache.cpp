@@ -53,6 +53,7 @@ WishboneDcache::WishboneDcache(const std::string &name, int lines, uint32_t base
     addInput("sn_we_i", 1);
     addInput("sn_stb_i", 1);
     addInput("sn_cyc_i", 1);
+    addInput("clk", 1, PinEdge::Rising);
 
     addOutput("s_dat_o", 32);
     addOutput("s_ack_o", 1);
@@ -188,6 +189,8 @@ std::string WishboneDcache::genFuncDef_seq() const {
     std::string c;
     c += std::format("// WishboneDcache {} 的状态机\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(12, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     // 主端口本拍发出的请求（组合阶段刚写下的线网值）和从设备应答
     c += "    uint32_t _madr = 0; dcs_memcpy(&_madr, _w[" + oid(O_DADR) + "], 4);\n";
     c += "    uint32_t _mdat = 0; dcs_memcpy(&_mdat, _w[" + oid(O_DDAT) + "], 4);\n";
@@ -342,7 +345,7 @@ uint32_t paramU32(const std::unordered_map<std::string, std::string> &p, const s
 DCS_REGISTER_COMPONENT(
     {"wb_dcache", {{"lines", "1024"}, {"base", "2147483648", {}, true}, {"size", "268435456", {}, true}},
      {"s_adr_i", "s_dat_i", "s_we_i", "s_sel_i", "s_stb_i", "s_cyc_i", "m_dat_i", "m_ack_i", "sn_adr_i", "sn_we_i",
-      "sn_stb_i", "sn_cyc_i"},
+      "sn_stb_i", "sn_cyc_i", "clk"},
      {"s_dat_o", "s_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"},
      dsc::ComponentCategory::Memory, "写直通数据缓存：命中读当拍应答，监听总线失效其它主设备写入的行"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {

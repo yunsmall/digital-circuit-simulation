@@ -46,7 +46,7 @@ WishboneMemory::WishboneMemory(const std::string &name, int addr_width, int data
     addInput("wb_sel_i", 4);   // I_SEL = 3
     addInput("wb_stb_i", 1);   // I_STB = 4
     addInput("wb_cyc_i", 1);   // I_CYC = 5
-    addInput("clk", 1);        // I_CLK = 6
+    addInput("clk", 1, PinEdge::Rising);        // I_CLK = 6
 
     // Wishbone 从设备输出（按 O_* 顺序）
     addOutput("wb_dat_o", 32, false, true);
@@ -96,6 +96,8 @@ std::string WishboneMemory::genFuncDef_seq() const {
     std::string code;
     code += std::format("// WishboneMemory: {}\n", cgen::commentText(name()));
     code += std::format("static void {}() {{\n", funcName_seq());
+    code += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    code += "    if (!_clk_pos) return;\n";
     code += "    " + gen_read_wire(inputs()[I_STB]->netId(), 1, 1, "_stb") + "\n";
     code += "    " + gen_read_wire(inputs()[I_CYC]->netId(), 1, 1, "_cyc") + "\n";
     code += std::format(R"(

@@ -624,13 +624,18 @@ std::unique_ptr<Component> ShiftRegister::clone(const std::string &n) const {
 // ClockGen — 时钟发生器
 // ============================================================
 
-ClockGen::ClockGen(const std::string &name, int high_ticks, int low_ticks) :
-    SequentialComponent(name, "clkgen"), _high(high_ticks), _low(low_ticks), _period(high_ticks + low_ticks) {
+ClockGen::ClockGen(const std::string &name, int high_ticks, int low_ticks, PinEdge tick_edge) :
+    SequentialComponent(name, "clkgen"), _high(high_ticks), _low(low_ticks), _period(high_ticks + low_ticks),
+    _tick_edge(tick_edge) {
     if (high_ticks < 1 || low_ticks < 1 || _period < 2)
         throw std::invalid_argument("高低电平 tick 数必须 ≥1");
+    if (tick_edge != PinEdge::None && tick_edge != PinEdge::Rising && tick_edge != PinEdge::Falling)
+        throw std::invalid_argument("clkgen 的 tick_edge 只能是 none/rising/falling");
     setParam("high_ticks", std::to_string(high_ticks));
     setParam("low_ticks", std::to_string(low_ticks));
-    addOutput("clk", 1, false, true);
+    setParam("tick_edge", tick_edge == PinEdge::Rising ? "rising" : tick_edge == PinEdge::Falling ? "falling" : "none");
+    Pin *out = addOutput("clk", 1, false, true);
+    out->setDriveEdge(tick_edge);
 }
 
 std::string ClockGen::genStructDef() const {
@@ -661,6 +666,13 @@ std::string ClockGen::genFuncDef_seq() const {
         write_o = std::format("    {}\n", genOutputWrite(0, "_clk", 1));
     else
         write_o = "    // 输出悬空\n";
+    // 伪时钟线没有电平语义，固定输出 0；接到它的元件只用 genGetWireEdge
+    if (_tick_edge != PinEdge::None)
+        return std::format(R"(static void {}() {{
+    uint8_t _clk = 0;
+{}
+}})",
+                           funcName_seq(), write_o);
     // 周期 2：初值 0，每拍异或 1，第一拍就是高电平，和计数器的相位一致。
     // 热路径上省掉 ++/比较/回绕分支
     if (_high == 1 && _low == 1)
@@ -680,7 +692,7 @@ std::string ClockGen::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> ClockGen::clone(const std::string &n) const {
-    return std::make_unique<ClockGen>(n, _high, _low);
+    return std::make_unique<ClockGen>(n, _high, _low, _tick_edge);
 }
 
 // ============================================================
@@ -865,9 +877,13 @@ DCS_REGISTER_COMPONENT(
                        });
 
 DCS_REGISTER_COMPONENT(
-    {"clkgen", {{"high_ticks", "1"}, {"low_ticks", "1"}}, {}, {"clk"}, dsc::ComponentCategory::Sequential, "时钟发生器，可设高/低电平持续tick数"},
+    {"clkgen", {{"high_ticks", "1"}, {"low_ticks", "1"}, {"tick_edge", "none", {{"none"}, {"rising"}, {"falling"}}}}, {}, {"clk"}, dsc::ComponentCategory::Sequential, "时钟发生器，可设高/低电平持续tick数；tick_edge 非 none 时输出改为每 tick 都是该沿的伪时钟线（无电平语义）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-                           return std::make_unique<dsc::ClockGen>(n, dsc::paramInt(p, "high_ticks", 1), dsc::paramInt(p, "low_ticks", 1));
+                           const std::string e = dsc::paramStr(p, "tick_edge", "none");
+                           const dsc::PinEdge pe = e == "rising" ? dsc::PinEdge::Rising
+                                                   : e == "falling" ? dsc::PinEdge::Falling
+                                                                    : dsc::PinEdge::None;
+                           return std::make_unique<dsc::ClockGen>(n, dsc::paramInt(p, "high_ticks", 1), dsc::paramInt(p, "low_ticks", 1), pe);
                        });
 
 DCS_REGISTER_COMPONENT(

@@ -60,6 +60,11 @@ ctest --test-dir build_tcc --output-on-failure
 
 ### Verilator integration (optional)
 
+> Generated components (including DLLs from `verilog2dll.py`) call `eval()` every
+> tick. Their clock pins must be driven by a real `clkgen` waveform. The
+> `tick_edge` pseudo-clock wire has no level transitions, so a Verilator model
+> can never see an edge; connecting one is rejected at compile time.
+
 Requires **Verilator 5.026 or newer**. The generators read Verilator's JSON AST
 (`--json-only-output`, added in 5.022) and model top-level `inout` ports with
 `--pins-inout-enables` (added in 5.026). Older packages fail with

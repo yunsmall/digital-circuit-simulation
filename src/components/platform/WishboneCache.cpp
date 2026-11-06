@@ -35,6 +35,7 @@ WishboneCache::WishboneCache(const std::string &name, int lines)
     addInput("wb_cyc_i", 1);
     addInput("wb_dat_o_i", 32); // 来自存储器的读数据
     addInput("wb_ack_o_i", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("wb_dat_o", 32, false, true);
     addOutput("wb_ack_o", 1, false, true);
     addOutput("wb_adr_o", 32, false, true);
@@ -88,6 +89,8 @@ std::string WishboneCache::genFuncDef_seq() const {
     std::string c;
     c += std::format("// WishboneCache {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(8, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(U_ADR) + "], 4);\n";
     c += "    uint32_t _dat = 0; dcs_memcpy(&_dat, _w[" + nid(U_DAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(U_WE) + "][0] & 1;\n";
@@ -221,7 +224,7 @@ std::unique_ptr<Component> WishboneCache::clone(const std::string &new_name) con
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"wb_cache", {{"lines", "16"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "wb_dat_o_i", "wb_ack_o_i"}, {"wb_dat_o", "wb_ack_o", "wb_adr_o", "wb_dat_i_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Memory, "直接映射数据缓存，串在 CPU 与存储器之间"},
+    {"wb_cache", {{"lines", "16"}}, {"wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "wb_dat_o_i", "wb_ack_o_i", "clk"}, {"wb_dat_o", "wb_ack_o", "wb_adr_o", "wb_dat_i_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Memory, "直接映射数据缓存，串在 CPU 与存储器之间"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             return std::make_unique<dsc::WishboneCache>(n, dsc::paramInt(p, "lines", 16));
         });

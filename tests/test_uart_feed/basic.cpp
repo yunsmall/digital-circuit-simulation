@@ -17,7 +17,7 @@ struct FeedFixture {
 
     explicit FeedFixture(int baud_div = 8) : baud(baud_div) {
         circuit = std::make_unique<Circuit>();
-        auto p = std::make_unique<UartFeed>("f0", baud_div);
+        auto p = std::make_unique<UartFeed>("f0", 1, 1000000000LL / baud_div);
         feed = p.get();
         circuit->addComponent(std::move(p));
         clk = circuit->createNet("clk");
@@ -29,9 +29,13 @@ struct FeedFixture {
         circuit->init();
     }
 
-    void ticks(int n) {
-        for (int i = 0; i < n; i++)
+    void cycles(int n) {
+        for (int i = 0; i < n; i++) {
+            circuit->setWire(clk->id(), 0);
             circuit->tick();
+            circuit->setWire(clk->id(), 1);
+            circuit->tick();
+        }
     }
     int level() const { return circuit->getWire(rx->id())[0] & 1; }
 };
@@ -40,7 +44,7 @@ struct FeedFixture {
 
 TEST(UartFeedTest, IdleIsHigh) {
     FeedFixture f;
-    f.ticks(200);
+    f.cycles(200);
     EXPECT_EQ(f.level(), 1);
 }
 
@@ -51,17 +55,17 @@ TEST(UartFeedTest, Sends8N1Frame) {
 
     int guard = 0;
     while (f.level() == 1 && guard++ < 50)
-        f.ticks(1);
+        f.cycles(1);
     ASSERT_LT(guard, 50) << "没有产生起始位下降沿";
 
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.level(), 0);
     int data = 0;
     for (int b = 0; b < 8; b++) {
-        f.ticks(f.baud);
+        f.cycles(f.baud);
         data |= f.level() << b;
     }
-    f.ticks(f.baud);
+    f.cycles(f.baud);
     EXPECT_EQ(data, 0x41);
     EXPECT_EQ(f.level(), 1);
     EXPECT_EQ(f.feed->pending(), 0u);
@@ -77,15 +81,15 @@ TEST(UartFeedTest, PushesMultipleBytesInOrder) {
     for (size_t n = 0; n < sizeof(msg); n++) {
         int guard = 0;
         while (f.level() == 1 && guard++ < 50)
-            f.ticks(1);
+            f.cycles(1);
         ASSERT_LT(guard, 50) << "第 " << n << " 个字节没有起始沿";
-        f.ticks(3);
+        f.cycles(3);
         int data = 0;
         for (int b = 0; b < 8; b++) {
-            f.ticks(f.baud);
+            f.cycles(f.baud);
             data |= f.level() << b;
         }
-        f.ticks(f.baud);
+        f.cycles(f.baud);
         got.push_back(data);
     }
     EXPECT_EQ(got, std::vector<int>({'h', 'i', '\r'}));

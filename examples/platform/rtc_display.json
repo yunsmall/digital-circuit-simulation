@@ -2,7 +2,8 @@
   "$meta": {
     "kind": "circuit",
     "format": 1,
-    "description": "RTC 走时：读 TIME_LO 寄存器，每拍虚拟时间增加 100ns"
+    "timescale": { "tick_ns": 1 },
+    "description": "RTC 走时：读 TIME_LO 寄存器，每个时钟周期增加 2ns"
   },
   "nets": ["clk", "addr", "wdata", "we0", "en1", "rdata", "ready", "irq"],
   "components": [
@@ -39,7 +40,7 @@
     {
       "type": "rtc",
       "name": "rtc0",
-      "params": { "ns_per_tick": "100" },
+      "params": { "ns_per_period": "${ns_per_tick*2}" },
       "connections": { "clk": "clk", "addr": "addr", "wdata": "wdata", "we": "we0", "en": "en1",
                        "rdata": "rdata", "ready": "ready", "irq": "irq" }
     },

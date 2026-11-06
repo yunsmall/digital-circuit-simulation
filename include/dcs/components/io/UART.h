@@ -22,7 +22,9 @@ namespace dsc {
 
 class UART : public SequentialComponent {
 public:
-    explicit UART(const std::string &name, int baud_div = 8);
+    // ns_per_period: 该元件 clk 引脚一个时钟周期多少 ns
+    // baud: 波特率（bit/s），内部换算成每比特时钟周期数
+    explicit UART(const std::string &name, int ns_per_period = 20, std::uint64_t baud = 115200);
     ~UART() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
@@ -36,8 +38,9 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
-    int _baud_div = 8;
-
+    int _ns_per_period = 20;
+    std::uint64_t _baud = 115200;
+    int _cycles_per_bit = 2;
 };
 
 } // namespace dsc

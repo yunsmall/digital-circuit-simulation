@@ -23,7 +23,7 @@ void resetThunk(void *ctx) {
 } // namespace
 
 VirtioRng::VirtioRng(const std::string &name) : SequentialComponent(name, "virtio_rng"), _state(std::make_unique<State>()) {
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);

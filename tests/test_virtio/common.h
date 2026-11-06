@@ -82,6 +82,7 @@ struct VirtioFixture {
                                {"m_sel_o", m_sel}, {"m_stb_o", m_stb}, {"m_cyc_o", m_cyc},
                                {"m_dat_i", m_dat_i}, {"m_ack_i", m_ack}})
             c->connect(dev, pin, net);
+        c->connect(ram, "clk", clk);
         c->connect(ram, "wb_adr_i", m_adr);
         c->connect(ram, "wb_dat_i", m_dat_o);
         c->connect(ram, "wb_we_i", m_we);

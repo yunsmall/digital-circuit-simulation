@@ -12,13 +12,13 @@ constexpr int I_CLK = 0, I_ADDR = 1, I_WDAT = 2, I_WE = 3, I_EN = 4;
 constexpr int O_RDAT = 0, O_READY = 1, O_IRQ = 2;
 } // namespace
 
-RTC::RTC(const std::string &name, uint32_t ns_per_tick) : SequentialComponent(name, "rtc"), _ns_per_tick(ns_per_tick) {
+RTC::RTC(const std::string &name, uint32_t ns_per_period) : SequentialComponent(name, "rtc"), _ns_per_period(ns_per_period) {
     // 0 表示时间永不推进，和 WallClock 一样直接拒绝，不再静默改成 100
-    if (_ns_per_tick == 0)
-        throw std::invalid_argument("ns_per_tick 必须大于 0");
-    setParam("ns_per_tick", std::to_string(_ns_per_tick));
+    if (_ns_per_period == 0)
+        throw std::invalid_argument("ns_per_period 必须大于 0");
+    setParam("ns_per_period", std::to_string(_ns_per_period));
     setParam("base_ns", "0");
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("addr", 8);
     addInput("wdata", 32);
     addInput("we", 1);
@@ -53,7 +53,7 @@ std::string RTC::genStateDecl() const {
             "static uint8_t _rtc_prev_en_{0};\n"
             "static const uint64_t _rtc_base_{0} = 0x{1:X}ULL;\n"
             "static const uint32_t _rtc_nspt_{0} = {2};\n",
-            _id, _base_ns, _ns_per_tick);
+            _id, _base_ns, _ns_per_period);
 }
 
 std::string RTC::genInitCode() const {
@@ -70,6 +70,8 @@ std::string RTC::genFuncDef_seq() const {
     std::string c;
     c += std::format("// RTC {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _addr = 0; dcs_memcpy(&_addr, _w[" + nid(I_ADDR) + "], 1);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_WDAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";
@@ -108,7 +110,7 @@ std::string RTC::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> RTC::clone(const std::string &new_name) const {
-    auto r = std::make_unique<RTC>(new_name, _ns_per_tick);
+    auto r = std::make_unique<RTC>(new_name, _ns_per_period);
     // 时间基准是配置而不是运行期状态，不复制会让 clone 出来的 RTC 从 epoch 开始
     r->setBaseNs(_base_ns);
     return r;
@@ -119,13 +121,13 @@ std::unique_ptr<Component> RTC::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"rtc", {{"ns_per_tick", "100"}, {"base_ns", "0", {}, true}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
+    {"rtc", {{"ns_per_period", "100"}, {"base_ns", "0", {}, true}}, {"clk", "addr", "wdata", "we", "en"}, {"rdata", "ready", "irq"}, dsc::ComponentCategory::Misc, "goldfish 风格实时时钟：时间寄存器单位纳秒，带闹钟中断"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            const int npt = dsc::paramInt(p, "ns_per_tick", 100);
+            const int npt = dsc::paramInt(p, "ns_per_period", 100);
             // 负值强转 uint32 会变成 40 多亿 ns/tick，RTC 看起来正常却能跳出天文数字；
             // 和 WallClock 用同一范围和同一语义（0 也拒绝）
             if (npt < 1 || npt > 1000000000)
-                throw std::invalid_argument("ns_per_tick 必须在1-1000000000之间");
+                throw std::invalid_argument("ns_per_period 必须在1-1000000000之间");
             auto rtc = std::make_unique<dsc::RTC>(n, (uint32_t) npt);
             auto it = p.find("base_ns");
             if (it != p.end()) {

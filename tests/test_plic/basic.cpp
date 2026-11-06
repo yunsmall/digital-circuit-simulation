@@ -295,7 +295,7 @@ TEST(PlicTest, ZeroPriorityNeverInterrupts) {
 // 只测 PLIC 自身的契约发现不了"外设到中断控制器"这一层的接线/语义问题。
 TEST(PlicTest, UartIrqReachesPlicAndClaimWorks) {
     Circuit c;
-    auto u = std::make_unique<UART>("uart0", 8);
+    auto u = std::make_unique<UART>("uart0", 1, 125000000);
     auto p = std::make_unique<PLIC>("plic0", 8);
     UART *uart = u.get();
     PLIC *plic = p.get();

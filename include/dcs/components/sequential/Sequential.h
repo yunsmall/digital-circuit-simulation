@@ -223,7 +223,10 @@ public:
     // high_ticks: 高电平持续的 tick 数（默认 1）
     // low_ticks:  低电平持续的 tick 数（默认 1）
     // 周期 = high_ticks + low_ticks
-    ClockGen(const std::string &name, int high_ticks = 1, int low_ticks = 1);
+    // tick_edge: 非 None 时把输出标记成"每 tick 都是该方向的沿"的伪时钟线，
+    //            输出恒为 0，只有 genGetWireEdge 有意义，不能读电平
+    ClockGen(const std::string &name, int high_ticks = 1, int low_ticks = 1,
+             PinEdge tick_edge = PinEdge::None);
     std::string genStructDef() const override;
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
@@ -232,6 +235,7 @@ public:
 
 private:
     int _high, _low, _period;
+    PinEdge _tick_edge = PinEdge::None;
 };
 
 // ============================================================

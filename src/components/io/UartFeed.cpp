@@ -5,14 +5,20 @@
 #include "dcs/components/io/UartFeed.h"
 
 #include <atomic>
+#include <cmath>
 #include <format>
 
 namespace dsc {
 
-UartFeed::UartFeed(const std::string &name, int baud_div) :
-    SequentialComponent(name, "uart_feed"), _baud_div(baud_div < 2 ? 2 : baud_div) {
-    setParam("baud_div", std::to_string(_baud_div));
-    addInput("clk", 1);
+UartFeed::UartFeed(const std::string &name, int ns_per_period, std::uint64_t baud) :
+    SequentialComponent(name, "uart_feed"), _ns_per_period(ns_per_period < 1 ? 1 : ns_per_period),
+    _baud(baud < 1 ? 1 : baud) {
+    _cycles_per_bit = (int) std::llround(1e9 / ((double) _baud * _ns_per_period));
+    if (_cycles_per_bit < 2)
+        _cycles_per_bit = 2;
+    setParam("ns_per_period", std::to_string(_ns_per_period));
+    setParam("baud", std::to_string(_baud));
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("rx", 1, false, true);
     // 构造期还没有并发访问者，普通赋值即可
     _state.head = 0;
@@ -45,6 +51,9 @@ std::string UartFeed::genFuncDef_seq() const {
     c += std::format("// UartFeed {}\n", cgen::commentText(name()));
     c += "extern int _dcs_feed_pop(void *);\n";
     c += std::format("static void {}() {{\n", funcName_seq());
+    // 位时间按 clk 上升沿计数；tick 只是仿真步长
+    c += "    const bool _clk_pos = " + genGetWireEdge(0, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     // 队列非空才回调；head/tail 是原子量，生产者 push 后一定能在这里看到，
     // 不存在"清标志"把新数据挡在外面
     c += std::format(
@@ -61,14 +70,14 @@ std::string UartFeed::genFuncDef_seq() const {
             "            if (++_feed_bit_{0} > 9) _feed_busy_{0} = 0;\n"
             "        }}\n"
             "    }}\n",
-            _id, reinterpret_cast<uintptr_t>(&_state), _baud_div);
+            _id, reinterpret_cast<uintptr_t>(&_state), _cycles_per_bit);
     c += "    " + genOutputWrite(0, "_level", 1) + "\n";
     c += "}\n";
     return c;
 }
 
 std::unique_ptr<Component> UartFeed::clone(const std::string &new_name) const {
-    return std::make_unique<UartFeed>(new_name, _baud_div);
+    return std::make_unique<UartFeed>(new_name, _ns_per_period, _baud);
 }
 
 bool UartFeed::push(uint8_t b) {
@@ -117,8 +126,9 @@ int UartFeed::feedPop(void *state_ptr) {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart_feed", {{"baud_div", "8"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx（baud_div 默认与 uart 一致）"},
+    {"uart_feed", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：按 ns_per_period/baud 算 8N1 位时间"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "baud_div", 8));
+            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "ns_per_period", 20),
+                                                    (std::uint64_t) dsc::paramInt(p, "baud", 115200));
         });
 } // namespace

@@ -24,6 +24,7 @@ inline void setU32(dsc::Circuit &c, dsc::Net *n, uint32_t v) {
 struct IcFixture {
     std::unique_ptr<dsc::Circuit> circuit = std::make_unique<dsc::Circuit>();
     dsc::WishboneInterconnect *ic = nullptr;
+    dsc::Net *clk = nullptr;
     int M = 1;
     int N = 1;
 
@@ -43,6 +44,8 @@ struct IcFixture {
         ic = p.get();
         circuit->addComponent(std::move(p));
         N = ic->numSlaves();
+        clk = circuit->createNet("clk");
+        circuit->connect(ic, "clk", clk);
 
         for (int i = 0; i < M; i++) {
             const std::string pre = "m" + std::to_string(i);
@@ -96,8 +99,12 @@ struct IcFixture {
     }
 
     void tick(int n = 1) {
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < n; i++) {
+            circuit->setWire(clk->id(), (uint8_t) 0);
             circuit->tick();
+            circuit->setWire(clk->id(), (uint8_t) 1);
+            circuit->tick();
+        }
     }
 
     // ---- 主设备侧：测试扮演主设备 ----

@@ -15,7 +15,7 @@ struct Fixture {
     Net *miso = nullptr, *ack = nullptr, *sclk = nullptr, *mosi = nullptr, *cs = nullptr;
 
     explicit Fixture(int clkdiv = 2) {
-        auto s = std::make_unique<SPI>("spi0", clkdiv);
+        auto s = std::make_unique<SPI>("spi0", 1, clkdiv);
         spi = s.get();
         circuit->addComponent(std::move(s));
         clk = circuit->createNet("clk");
@@ -100,14 +100,14 @@ TEST(SpiTest, IdleLinesAndCs) {
 }
 
 TEST(SpiTest, TransferProducesClockAndDone) {
-    Fixture f(16); // 每 16 tick 翻转一次，测试每 cycle 采样一次不会漏掉边沿
+    Fixture f(16); // 每 16 个时钟周期翻转一次 SCLK
     f.compile();
     f.write(0x00, 0xA5);
     f.write(0x0C, 1); // 启动
     EXPECT_FALSE(f.bit(f.cs)) << "传输期间片选拉低";
     int edges = 0;
     bool last = f.bit(f.sclk);
-    for (int i = 0; i < 220; ++i) {
+    for (int i = 0; i < 600; ++i) {
         f.cycle();
         bool cur = f.bit(f.sclk);
         if (cur != last)

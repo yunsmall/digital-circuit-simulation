@@ -21,7 +21,7 @@ namespace dsc {
 
 class SPI : public SequentialComponent {
 public:
-    explicit SPI(const std::string &name, int clkdiv = 4);
+    explicit SPI(const std::string &name, int ns_per_period = 20, int sclk_period_ns = 80);
     ~SPI() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
@@ -35,6 +35,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
+    int _ns_per_period = 20;
+    int _sclk_period_ns = 80;
     int _clkdiv = 4;
 };
 

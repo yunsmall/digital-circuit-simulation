@@ -21,7 +21,7 @@ struct SpiFx {
     SPI *s = nullptr;
     Net *clk, *adr, *dat_i, *dat_o, *we, *sel, *stb, *cyc, *miso, *ack, *sclk, *mosi, *cs;
     explicit SpiFx(int d = 8) {
-        auto p = std::make_unique<SPI>("spi", d);
+        auto p = std::make_unique<SPI>("spi", 1, d);
         s = p.get();
         c->addComponent(std::move(p));
         clk = c->createNet("clk"); adr = c->createNet("adr"); dat_i = c->createNet("dat_i");
@@ -109,6 +109,7 @@ struct DmaFx {
         m_adr = c->createNet("m_adr"); m_dat_o = c->createNet("m_dat_o"); m_dat_i = c->createNet("m_dat_i");
         m_we = c->createNet("m_we"); m_sel = c->createNet("m_sel"); m_stb = c->createNet("m_stb");
         m_cyc = c->createNet("m_cyc"); m_ack = c->createNet("m_ack");
+        c->connect(d, "clk", clk);
         c->connect(d, "cfg_adr_i", c_adr); c->connect(d, "cfg_dat_i", c_dat_o);
         c->connect(d, "cfg_we_i", c_we); c->connect(d, "cfg_sel_i", c_sel);
         c->connect(d, "cfg_stb_i", c_stb); c->connect(d, "cfg_cyc_i", c_cyc);
@@ -280,7 +281,7 @@ struct IcFx {
     WishboneMemory *m0 = nullptr, *m1 = nullptr;
     Net *a0, *d0o, *d0i, *w0, *s0, *st0, *cy0, *ak0;
     Net *a1, *d1o, *d1i, *w1, *s1, *st1, *cy1, *ak1;
-    Net *s0a, *s0d, *s0w, *s0s, *s0st, *s0cy, *s0ak, *s0do;
+    Net *s0a, *s0d, *s0w, *s0s, *s0st, *s0cy, *s0ak, *s0do, *clk;
     IcFx() {
         auto p = std::make_unique<WishboneInterconnect>("ic", "0:65536", 2);
         ic = p.get();
@@ -294,7 +295,8 @@ struct IcFx {
         w1 = c->createNet("w1"); s1 = c->createNet("s1"); st1 = c->createNet("st1"); cy1 = c->createNet("cy1"); ak1 = c->createNet("ak1");
         s0a = c->createNet("s0a"); s0d = c->createNet("s0d"); s0w = c->createNet("s0w");
         s0s = c->createNet("s0s"); s0st = c->createNet("s0st"); s0cy = c->createNet("s0cy");
-        s0ak = c->createNet("s0ak"); s0do = c->createNet("s0do");
+        s0ak = c->createNet("s0ak"); s0do = c->createNet("s0do"); clk = c->createNet("clk");
+        c->connect(ic, "clk", clk);
         c->connect(ic, "m0_adr_i", a0); c->connect(ic, "m0_dat_i", d0o); c->connect(ic, "m0_we_i", w0);
         c->connect(ic, "m0_sel_i", s0); c->connect(ic, "m0_stb_i", st0); c->connect(ic, "m0_cyc_i", cy0);
         c->connect(ic, "m0_dat_o", d0i); c->connect(ic, "m0_ack_o", ak0);
@@ -304,6 +306,7 @@ struct IcFx {
         c->connect(ic, "s0_adr_o", s0a); c->connect(ic, "s0_dat_o", s0d); c->connect(ic, "s0_we_o", s0w);
         c->connect(ic, "s0_sel_o", s0s); c->connect(ic, "s0_stb_o", s0st); c->connect(ic, "s0_cyc_o", s0cy);
         c->connect(ic, "s0_dat_i", s0do); c->connect(ic, "s0_ack_i", s0ak);
+        c->connect(m0, "clk", clk);
         c->connect(m0, "wb_adr_i", s0a); c->connect(m0, "wb_dat_i", s0d); c->connect(m0, "wb_we_i", s0w);
         c->connect(m0, "wb_sel_i", s0s); c->connect(m0, "wb_stb_i", s0st); c->connect(m0, "wb_cyc_i", s0cy);
         c->connect(m0, "wb_dat_o", s0do); c->connect(m0, "wb_ack_o", s0ak);
@@ -317,7 +320,10 @@ struct IcFx {
         c->setWire(s1->id(), (uint8_t) 0x0F);
         for (int k = 0; k < 2; ++k) tick();
     }
-    void tick() { c->tick(); }
+    void tick() {
+        c->setWire(clk->id(), (uint8_t) 0); c->tick();
+        c->setWire(clk->id(), (uint8_t) 1); c->tick();
+    }
     void put(uint32_t a, uint32_t v) { std::memcpy(m0->writableMemPtr() + a, &v, 4); }
     uint32_t word(Net *n) {
         auto v = c->getWire(n->id());
@@ -337,7 +343,7 @@ TEST(Coverage, InterconnectArbitratesBetweenMasters) {
     f.c->setWire(f.st0->id(), (uint8_t) 1); f.c->setWire(f.cy0->id(), (uint8_t) 1);
     f.c->setWire(f.st1->id(), (uint8_t) 1); f.c->setWire(f.cy1->id(), (uint8_t) 1);
     uint32_t got0 = 0, got1 = 0;
-    for (int k = 0; k < 60; ++k) {
+    for (int k = 0; k < 200; ++k) {
         f.tick();
         if (f.bit(f.ak0)) got0 = f.word(f.d0i);
         if (f.bit(f.ak1)) got1 = f.word(f.d1i);
@@ -383,6 +389,7 @@ struct CacheFx {
         m_adr = c->createNet("ma"); m_dat_o = c->createNet("mdo"); m_dat_i = c->createNet("mdi");
         m_we = c->createNet("mw"); m_sel = c->createNet("ms"); m_stb = c->createNet("mst");
         m_cyc = c->createNet("mcy"); m_ack = c->createNet("mak");
+        c->connect(cache, "clk", clk);
         c->connect(cache, "wb_adr_i", c_adr); c->connect(cache, "wb_dat_i", c_dat_o);
         c->connect(cache, "wb_we_i", c_we); c->connect(cache, "wb_sel_i", c_sel);
         c->connect(cache, "wb_stb_i", c_stb); c->connect(cache, "wb_cyc_i", c_cyc);

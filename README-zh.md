@@ -60,6 +60,10 @@ ctest --test-dir build_tcc --output-on-failure
 
 ### Verilator 集成（可选）
 
+> 生成的元件（含 `verilog2dll.py` 产出的 DLL）内部每拍都要 `eval()`，时钟脚必须接
+> 真实的 `clkgen` 波形。`clkgen` 的 `tick_edge` 伪时钟线没有电平变化，Verilator
+> 模型看不到边沿，接上去会在编译期报错。
+
 需 MSYS2/UCRT64 的 Verilator：
 
 ```bash

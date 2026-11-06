@@ -14,8 +14,8 @@ struct Fixture {
     Net *we = nullptr, *sel = nullptr, *stb = nullptr, *cyc = nullptr;
     Net *rx = nullptr, *ack = nullptr, *tx = nullptr, *irq = nullptr;
 
-    explicit Fixture(int baud = 2, bool loopback = false, bool connect_rx = true) {
-        auto u = std::make_unique<UART>("uart0", baud);
+    explicit Fixture(int cycles_per_bit = 2, bool loopback = false, bool connect_rx = true) {
+        auto u = std::make_unique<UART>("uart0", 1, 1000000000LL / cycles_per_bit);
         uart = u.get();
         circuit->addComponent(std::move(u));
         clk = circuit->createNet("clk");
@@ -97,7 +97,7 @@ TEST(UartTest, LoopbackByte) {
     Fixture f(2, true); // tx 接回 rx
     f.compile();
     f.write(0x00, 0x5A); // 0101 1010
-    for (int i = 0; i < 60; ++i) // 10 位 × 2 tick，留足余量
+    for (int i = 0; i < 60; ++i) // 10 位 × 2 个时钟周期，留足余量
         f.cycle();
     EXPECT_EQ(f.read(0x00), 0x5Au) << "回环收到的字节应与发送的一致";
 }
@@ -125,13 +125,13 @@ TEST(UartTest, StatusReflectsBusy) {
 }
 
 TEST(UartTest, ReceiveSamplesByte) {
-    Fixture f(8); // 每位 8 tick，采样点落在位中点
+    Fixture f(8); // 每位 8 个时钟周期，采样点落在位中点
     f.compile();
     // 线上送 0x5A：起始位 0，然后 LSB 先 0,1,0,1,1,0,1,0，停止位 1
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 1};
     for (int i = 0; i < 10; ++i) {
         f.circuit->setWire(f.rx->id(), (uint8_t) bits[i]);
-        for (int k = 0; k < 4; ++k) // 4 个 cycle = 8 tick
+        for (int k = 0; k < 8; ++k) // 每位 8 个时钟周期
             f.cycle();
     }
     f.circuit->setWire(f.rx->id(), 1);
@@ -185,7 +185,7 @@ TEST(UartTest, IirRdaTakesPriorityOverThri) {
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 1};
     for (int i = 0; i < 10; ++i) {
         f.circuit->setWire(f.rx->id(), (uint8_t) bits[i]);
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < 8; ++k)
             f.cycle();
     }
     f.circuit->setWire(f.rx->id(), 1);
@@ -213,7 +213,7 @@ TEST(UartTest, LsrFramingError) {
     const int bits[10] = {0, 0, 1, 0, 1, 1, 0, 1, 0, 0};
     for (int i = 0; i < 10; ++i) {
         f.circuit->setWire(f.rx->id(), (uint8_t) bits[i]);
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < 8; ++k)
             f.cycle();
     }
     f.circuit->setWire(f.rx->id(), 1);

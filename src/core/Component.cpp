@@ -2,6 +2,7 @@
 #include "dcs/CodeGenNames.h"
 #include <cassert>
 #include <format>
+#include <stdexcept>
 
 namespace dsc {
 
@@ -111,9 +112,9 @@ std::string Component::stateTypeName() const {
     return std::format("_S_{}", _id);
 }
 
-Pin *Component::addInput(const std::string &pin_name, int bit_width) {
+Pin *Component::addInput(const std::string &pin_name, int bit_width, PinEdge edge) {
     assert(bit_width >= 1 && bit_width <= 128);
-    auto p = std::make_unique<Pin>(pin_name, PinDir::INPUT, bit_width, this);
+    auto p = std::make_unique<Pin>(pin_name, PinDir::INPUT, bit_width, this, false, false, edge);
     Pin *ptr = p.get();
     _inputs.push_back(std::move(p));
     return ptr;
@@ -125,6 +126,40 @@ Pin *Component::addOutput(const std::string &pin_name, int bit_width, bool is_tr
     Pin *ptr = p.get();
     _outputs.push_back(std::move(p));
     return ptr;
+}
+
+std::string Component::genGetWireEdge(int in_idx, PinEdge edge) const {
+    if (in_idx < 0 || in_idx >= (int) _inputs.size())
+        throw std::logic_error(std::format("元件 {} 的 genGetWireEdge 引脚下标越界: {}", name(), in_idx));
+    const Pin *pin = _inputs[in_idx].get();
+    const PinEdge declared = pin->edge();
+    bool ok = false;
+    if (edge == PinEdge::Rising)
+        ok = declared == PinEdge::Rising || declared == PinEdge::Change;
+    else if (edge == PinEdge::Falling)
+        ok = declared == PinEdge::Falling || declared == PinEdge::Change;
+    else if (edge == PinEdge::Change)
+        ok = declared == PinEdge::Change;
+    if (!ok)
+        throw std::logic_error(
+                std::format("元件 {} 的引脚 {} 没有声明所需的边沿依赖（请求 {}，声明 {}）", name(), pin->name(),
+                            static_cast<int>(edge), static_cast<int>(declared)));
+    if (edge != PinEdge::Change && pin->bit_width() != 1)
+        throw std::logic_error(std::format("元件 {} 的引脚 {} 不是 1 位，不能取上升/下降沿", name(), pin->name()));
+    // 伪时钟线：clkgen 声明了每 tick 都是某个沿，直接返回真；反向查询是非法的
+    const PinEdge pseudo = pin->net() ? pin->net()->pseudoEdge() : PinEdge::None;
+    if (pseudo != PinEdge::None) {
+        if (pseudo != edge)
+            throw std::logic_error(std::format("元件 {} 的引脚 {} 接在每 tick {} 的伪时钟线上，不能取 {}",
+                                               name(), pin->name(), static_cast<int>(pseudo),
+                                               static_cast<int>(edge)));
+        return "(true)";
+    }
+    const int nid = pin->netId();
+    if (nid < 0)
+        return "(false)";
+    const int mask = edge == PinEdge::Rising ? 1 : (edge == PinEdge::Falling ? 2 : 4);
+    return std::format("((_dcs_edge_flags[{}] & {}) != 0)", nid, mask);
 }
 
 std::string Component::genInputPtrArray(std::string_view arr) const {

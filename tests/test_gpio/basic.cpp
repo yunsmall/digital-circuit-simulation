@@ -41,26 +41,31 @@ struct GpioFixture {
         c->init();
     }
 
-    void ticks(int n) {
-        for (int i = 0; i < n; i++) c->tick();
+    void cycles(int n) {
+        for (int i = 0; i < n; i++) {
+            c->setWire(clk->id(), 0);
+            c->tick();
+            c->setWire(clk->id(), 1);
+            c->tick();
+        }
     }
     void write(uint32_t a, uint32_t d) {
         c->setWire(addr->id(), (uint8_t) a);
         c->setWire(wdata->id(), {(uint8_t) d, (uint8_t) (d >> 8), (uint8_t) (d >> 16), (uint8_t) (d >> 24)});
         c->setWire(we->id(), 1);
         c->setWire(en->id(), 1);
-        ticks(2);
+        cycles(2);
         c->setWire(en->id(), 0);
-        ticks(1);
+        cycles(1);
     }
     uint32_t read(uint32_t a) {
         c->setWire(addr->id(), (uint8_t) a);
         c->setWire(we->id(), 0);
         c->setWire(en->id(), 1);
-        ticks(3);
+        cycles(3);
         auto v = c->getWire(rdata->id());
         c->setWire(en->id(), 0);
-        ticks(1);
+        cycles(1);
         return (uint32_t) v[0] | ((uint32_t) v[1] << 8) | ((uint32_t) v[2] << 16) | ((uint32_t) v[3] << 24);
     }
     uint32_t out() const {
@@ -75,14 +80,14 @@ TEST(GpioTest, DirectionMasksOutput) {
     GpioFixture f;
     f.write(0x04, 0xA5A5A5A5); // OUT
     f.write(0x00, 0x0000FFFF); // DIR：只有低 16 位是输出
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.out(), 0x0000A5A5u) << "非输出方向的位不应驱动到 gpio_out";
 }
 
 TEST(GpioTest, ReadsInputPins) {
     GpioFixture f;
     f.c->setWire(f.gin->id(), {0x11, 0x22, 0x33, 0x44});
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.read(0x08), 0x44332211u) << "IN 寄存器没有反映 gpio_in 引脚";
 }
 
@@ -115,21 +120,21 @@ TEST(GpioTest, EnStaysHighWritesOnce) {
     f.c->setWire(f.wdata->id(), {0x22, 0x22, 0x22, 0x22});
     f.c->setWire(f.we->id(), 1);
     f.c->setWire(f.en->id(), 1);
-    f.ticks(2);
+    f.cycles(2);
     f.c->setWire(f.wdata->id(), {0x33, 0x33, 0x33, 0x33});
-    f.ticks(2); // en 仍为高，这次不该写入
+    f.cycles(2); // en 仍为高，这次不该写入
     f.c->setWire(f.en->id(), 0);
-    f.ticks(1);
+    f.cycles(1);
     EXPECT_EQ(f.read(0x04), 0x22222222u) << "en 持续为高时不应重复写入";
 }
 
 TEST(GpioTest, ReadyFollowsEnable) {
     GpioFixture f;
     f.c->setWire(f.en->id(), 0);
-    f.ticks(2);
+    f.cycles(2);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0], 0);
     f.c->setWire(f.en->id(), 1);
-    f.ticks(2);
+    f.cycles(2);
     EXPECT_EQ(f.c->getWire(f.ready->id())[0], 1);
 }
 

@@ -12,7 +12,7 @@ constexpr int O_DAT = 0, O_ACK = 1, O_ADDR = 2, O_WDAT = 3, O_WE = 4, O_EN = 5;
 } // namespace
 
 RegBridge::RegBridge(const std::string &name) : SequentialComponent(name, "reg_bridge") {
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);
@@ -53,6 +53,8 @@ std::string RegBridge::genFuncDef_seq() const {
     std::string c;
     c += std::format("// RegBridge {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _adr = 0; dcs_memcpy(&_adr, _w[" + nid(I_ADR) + "], 4);\n";
     c += "    uint32_t _dat = 0; dcs_memcpy(&_dat, _w[" + nid(I_DAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";

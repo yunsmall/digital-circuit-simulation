@@ -4,6 +4,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UART.h"
 
+#include <cmath>
 #include <cstring>
 #include <format>
 
@@ -16,11 +17,15 @@ constexpr int O_DAT = 0, O_ACK = 1, O_TX = 2, O_IRQ = 3;
 constexpr uint32_t LCR_DLAB = 0x80;
 } // namespace
 
-UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "uart"), _baud_div(baud_div) {
-    // 位时序要求每位至少 2 拍；更小的值钳到 2（和 UartFeed/UartIn/UartTerm 一致）
-    if (_baud_div < 2)
-        _baud_div = 2;
-    setParam("baud_div", std::to_string(_baud_div));
+UART::UART(const std::string &name, int ns_per_period, std::uint64_t baud) :
+    SequentialComponent(name, "uart"), _ns_per_period(ns_per_period < 1 ? 1 : ns_per_period),
+    _baud(baud < 1 ? 1 : baud) {
+    // 每比特时钟周期数 = 1e9 / (波特率 × 时钟周期 ns)。位时序要求至少 2 拍
+    _cycles_per_bit = (int) std::llround(1e9 / ((double) _baud * _ns_per_period));
+    if (_cycles_per_bit < 2)
+        _cycles_per_bit = 2;
+    setParam("ns_per_period", std::to_string(_ns_per_period));
+    setParam("baud", std::to_string(_baud));
 
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
@@ -28,7 +33,7 @@ UART::UART(const std::string &name, int baud_div) : SequentialComponent(name, "u
     addInput("wb_sel_i", 4);
     addInput("wb_stb_i", 1);
     addInput("wb_cyc_i", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("rx", 1);
     addOutput("wb_dat_o", 32, false, true);
     addOutput("wb_ack_o", 1, false, true);
@@ -76,7 +81,7 @@ std::string UART::genInitCode() const {
             "    _uart_prev_stb_{0} = 0;\n"
             "    _uart_ier_{0} = 0; _uart_lcr_{0} = 0x03; _uart_mcr_{0} = 0; _uart_fcr_{0} = 0; _uart_scr_{0} = 0;\n"
             "    _uart_dll_{0} = 0; _uart_dlm_{0} = 0; _uart_latched_{0} = 0;\n",
-            _id, _baud_div);
+            _id, _cycles_per_bit);
     // 串口空闲时 TX 是高电平。空闲快速路径会跳过输出刷新，复位后的第一拍必须
     // 已经把线拉高，否则会一直是低（低电平是起始位）
     const int tx_nid = outputs()[O_TX]->netId();
@@ -95,6 +100,9 @@ std::string UART::genFuncDef_seq() const {
     std::string c;
     c += std::format("// UART {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    // 波特率和收发状态机按 clk 上升沿推进；tick 只是仿真步长
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    " + rd(I_STB, "_stb", 1) + "\n";
     c += "    " + rd(I_CYC, "_cyc", 1) + "\n";
     // rx 悬空时按空闲高处理。全局约定"未连接输入读 0"，但 0 在串口线上就是
@@ -231,7 +239,7 @@ std::string UART::genFuncDef_seq() const {
 }
 
 std::unique_ptr<Component> UART::clone(const std::string &new_name) const {
-    return std::make_unique<UART>(new_name, _baud_div);
+    return std::make_unique<UART>(new_name, _ns_per_period, _baud);
 }
 
 } // namespace dsc
@@ -239,8 +247,9 @@ std::unique_ptr<Component> UART::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart", {{"baud_div", "8"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx", "irq"}, dsc::ComponentCategory::Misc, "16550A 兼容 8N1 串口（reg-shift=2），按 baud_div 个 tick 一位"},
+    {"uart", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx", "irq"}, dsc::ComponentCategory::Misc, "16550A 兼容 8N1 串口（reg-shift=2），按 ns_per_period/baud 算每比特时钟周期"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UART>(n, dsc::paramInt(p, "baud_div", 8));
+            return std::make_unique<dsc::UART>(n, dsc::paramInt(p, "ns_per_period", 20),
+                                               (std::uint64_t) dsc::paramInt(p, "baud", 115200));
         });
 } // namespace

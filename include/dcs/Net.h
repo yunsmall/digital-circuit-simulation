@@ -5,6 +5,11 @@
 
 namespace dsc {
 
+// 输入引脚的边沿/变化依赖。对应 Verilog 的 always @(posedge/negedge/信号)。
+// Rising/Falling 只对 1 位信号有意义；Change 等价于 always @(a)，
+// 任意位宽都可以声明，任一位变化都算一次触发。
+enum class PinEdge { None, Rising, Falling, Change };
+
 // ============================================================
 // Net — 电路中的一根导线（线网）
 //
@@ -38,6 +43,14 @@ public:
     int bit_width() const {
         return _bit_width;
     }
+    // 伪时钟线：clkgen 声明"每 tick 都算上升/下降沿"，边沿检测直接返回真，
+    // 不生成比较代码。只能是一个方向，None 表示普通线网
+    PinEdge pseudoEdge() const {
+        return _pseudo_edge;
+    }
+    void setPseudoEdge(PinEdge e) {
+        _pseudo_edge = e;
+    }
 
     // 连接引脚时调用，位宽取两者较大值
     void updateBitWidth(int pw) {
@@ -53,6 +66,7 @@ private:
     std::string _name;
     int _id;
     int _bit_width = 0;
+    PinEdge _pseudo_edge = PinEdge::None;
 };
 
 } // namespace dsc

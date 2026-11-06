@@ -196,9 +196,11 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         using memset_fn = void *(*)(void *, int, unsigned long long);
         using memcpy_fn = void *(*)(void *, const void *, unsigned long long);
         using memmove_fn = void *(*)(void *, const void *, unsigned long long);
+        using memcmp_fn = int (*)(const void *, const void *, unsigned long long);
         static memset_fn s_memset = [](void *d, int c, unsigned long long n) { return std::memset(d, c, (size_t) n); };
         static memcpy_fn s_memcpy = [](void *d, const void *s2, unsigned long long n) { return std::memcpy(d, s2, (size_t) n); };
         static memmove_fn s_memmove = [](void *d, const void *s2, unsigned long long n) { return std::memmove(d, s2, (size_t) n); };
+        static memcmp_fn s_memcmp = [](const void *a, const void *b, unsigned long long n) { return std::memcmp(a, b, (size_t) n); };
         tcc_add_symbol(s, "memset", reinterpret_cast<void *>(s_memset));
         tcc_add_symbol(s, "memcpy", reinterpret_cast<void *>(s_memcpy));
         tcc_add_symbol(s, "memmove", reinterpret_cast<void *>(s_memmove));
@@ -206,6 +208,7 @@ JitCompileResult JitBackend::compile(const std::string &c_code,
         // LLVM 那边同名符号是 __builtin 的 inline 版本
         tcc_add_symbol(s, "dcs_memcpy", reinterpret_cast<void *>(s_memcpy));
         tcc_add_symbol(s, "dcs_memset", reinterpret_cast<void *>(s_memset));
+        tcc_add_symbol(s, "dcs_memcmp", reinterpret_cast<void *>(s_memcmp));
     }
     // 队列头尾的原子读写：TCC 的 JIT 没有系统原子运行时，和 memset 一样由宿主提供
     {

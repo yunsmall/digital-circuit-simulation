@@ -17,7 +17,7 @@ namespace dsc {
 
 class UartFeed : public SequentialComponent {
 public:
-    explicit UartFeed(const std::string &name, int baud_div = 8);
+    explicit UartFeed(const std::string &name, int ns_per_period = 20, std::uint64_t baud = 115200);
     ~UartFeed() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override;
@@ -54,7 +54,9 @@ private:
         uint8_t buf[CAP];
     };
     FeedState _state{};
-    int _baud_div = 8;
+    int _ns_per_period = 20;
+    std::uint64_t _baud = 115200;
+    int _cycles_per_bit = 2;
     // head 只由生产者写，但 --forever --watch 下 stdin 线程和 watch 主循环
     // 会同时 push；串行化生产者，消费者（JIT）仍然只读原子 head/tail
     std::mutex _push_mutex;

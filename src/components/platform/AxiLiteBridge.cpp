@@ -22,7 +22,7 @@ enum St { ST_IDLE = 0, ST_WRITE_WAIT = 1, ST_WRITE_RESP = 2, ST_READ_WAIT = 3, S
 } // namespace
 
 AxiLiteBridge::AxiLiteBridge(const std::string &name) : SequentialComponent(name, "axi_lite_bridge") {
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("s_axi_awaddr", 32);
     addInput("s_axi_awvalid", 1);
     addInput("s_axi_wdata", 32);
@@ -59,7 +59,7 @@ std::string AxiLiteBridge::genStateDecl() const {
             "static uint32_t _axib_wb_adr_{0}, _axib_wb_dat_{0};\n"
             "static uint8_t _axib_w_strb_{0}, _axib_bresp_{0}, _axib_rresp_{0};\n"
             "static uint8_t _axib_aw_got_{0}, _axib_w_got_{0}, _axib_wb_we_{0}, _axib_wb_stb_{0}, _axib_wb_cyc_{0};\n"
-            "static uint8_t _axib_bvalid_{0}, _axib_rvalid_{0}, _axib_st_{0}, _axib_prev_clk_{0};\n",
+            "static uint8_t _axib_bvalid_{0}, _axib_rvalid_{0}, _axib_st_{0};\n",
             _id);
 }
 
@@ -70,7 +70,7 @@ std::string AxiLiteBridge::genInitCode() const {
             "    _axib_w_strb_{0} = 0; _axib_bresp_{0} = 0; _axib_rresp_{0} = 0;\n"
             "    _axib_aw_got_{0} = 0; _axib_w_got_{0} = 0;\n"
             "    _axib_wb_we_{0} = 0; _axib_wb_stb_{0} = 0; _axib_wb_cyc_{0} = 0;\n"
-            "    _axib_bvalid_{0} = 0; _axib_rvalid_{0} = 0; _axib_st_{0} = 0; _axib_prev_clk_{0} = 0;\n",
+            "    _axib_bvalid_{0} = 0; _axib_rvalid_{0} = 0; _axib_st_{0} = 0;\n",
             _id);
 }
 
@@ -79,17 +79,10 @@ std::string AxiLiteBridge::genFuncDef_seq() const {
     std::string c;
     c += std::format("// AxiLiteBridge {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
-    // 只在一个时钟周期内的上升沿推进状态机。没有边沿门控时状态机会在每个
-    // tick 走一步（tickCycle 一个周期包含低/高两个 tick），握手信号可能只在
-    // 半个周期内有效，边沿触发的 AXI 主设备会漏掉它而永久等待。
-    // 非上升沿直接返回，_c_out_ 保持上一拍的值，握手信号因此能维持整周期。
-    // clk 没接时就当作永远低电平，状态机不推进，避免生成 _w[-1] 这类越界访问
-    const int _clk_nid = inputs()[I_CLK]->netId();
-    c += _clk_nid >= 0 ? "    const uint8_t _clk = _w[" + std::to_string(_clk_nid) + "][0] & 1;\n"
-                       : std::string("    const uint8_t _clk = 0;\n");
-    c += std::format("    if (!_clk || _axib_prev_clk_{0}) {{ _axib_prev_clk_{0} = _clk; return; }}\n",
-                     _id);
-    c += std::format("    _axib_prev_clk_{0} = _clk;\n", _id);
+    // 只在 clk 上升沿推进状态机（统一边沿标志由 JIT 计算）。非沿拍直接返回，
+    // _c_out_ 保持上一拍的值，握手信号因此能维持整个时钟周期
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _awaddr = 0; dcs_memcpy(&_awaddr, _w[" + nid(I_AWADDR) + "], 4);\n";
     c += "    uint32_t _wdata = 0; dcs_memcpy(&_wdata, _w[" + nid(I_WDATA) + "], 4);\n";
     c += "    uint32_t _araddr = 0; dcs_memcpy(&_araddr, _w[" + nid(I_ARADDR) + "], 4);\n";

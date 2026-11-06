@@ -26,7 +26,7 @@ public:
     // is_tri_state: 输出引脚是否为三态（仅输出有效）
     // is_sequential: 输出引脚是否依赖内部状态、打破组合环路（仅输出有效）
     Pin(const std::string &name, PinDir dir, int bit_width, Component *parent, bool is_tri_state = false,
-        bool is_sequential = false);
+        bool is_sequential = false, PinEdge edge = PinEdge::None);
 
     const std::string &name() const {
         return _name;
@@ -52,6 +52,18 @@ public:
     }
     void setSequential(bool v) {
         _is_sequential = v;
+    }
+
+    PinEdge edge() const {
+        return _edge;
+    }
+    // 输出引脚专用：声明该输出是伪时钟线（每 tick 都算上升/下降沿）。
+    // 只由 clkgen 在构造期设置
+    PinEdge driveEdge() const {
+        return _drive_edge;
+    }
+    void setDriveEdge(PinEdge e) {
+        _drive_edge = e;
     }
 
     Net *net() const {
@@ -81,6 +93,8 @@ private:
     Net *_net = nullptr;
     bool _is_tri_state = false;
     bool _is_sequential = false;
+    PinEdge _edge = PinEdge::None;
+    PinEdge _drive_edge = PinEdge::None;
 };
 
 } // namespace dsc

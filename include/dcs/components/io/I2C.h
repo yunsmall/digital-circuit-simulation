@@ -24,7 +24,7 @@ namespace dsc {
 
 class I2C : public SequentialComponent {
 public:
-    explicit I2C(const std::string &name, int clkdiv = 8);
+    explicit I2C(const std::string &name, int ns_per_period = 20, int scl_period_ns = 160);
     ~I2C() override;
 
     std::vector<JitSymbol> extraJitSymbols() const override { return {}; }
@@ -38,6 +38,8 @@ public:
     std::unique_ptr<Component> clone(const std::string &new_name) const override;
 
 private:
+    int _ns_per_period = 20;
+    int _scl_period_ns = 160;
     int _clkdiv = 8;
 };
 

@@ -57,6 +57,7 @@ struct Bus {
         circuit->connect(cpu, "halted", halted);
 
         if (with_ic) {
+            circuit->connect(ic, "clk", clk);
             circuit->connect(ic, "m0_adr_i", wb_adr);
             circuit->connect(ic, "m0_dat_i", wb_dat_o);
             circuit->connect(ic, "m0_we_i", wb_we);

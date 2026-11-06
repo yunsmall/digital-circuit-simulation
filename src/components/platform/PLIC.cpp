@@ -32,7 +32,7 @@ PLIC::PLIC(const std::string &name, int num_sources) : SequentialComponent(name,
     if (_num_sources > MAX_SOURCES)
         _num_sources = MAX_SOURCES;
     setParam("num_sources", std::to_string(_num_sources));
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);
@@ -87,6 +87,8 @@ std::string PLIC::genFuncDef_seq() const {
     std::string c;
     c += std::format("// PLIC {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     // 空闲快速路径：中断源位图和总线握手都没变化时，本拍不可能产生新状态或新输出。
     // 只读 3 根线就返回，省掉地址译码和每拍 16 次优先级比较
     c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";

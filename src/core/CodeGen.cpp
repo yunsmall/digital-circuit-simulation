@@ -9,6 +9,7 @@
 #include <queue>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -277,7 +278,7 @@ void emitSeqTriPropagation(std::ostream &oss, const std::vector<std::unique_ptr<
 
 } // namespace
 
-std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr,
+std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr, std::uint64_t tick_ns,
                              const std::vector<std::unique_ptr<Net>> &nets,
                              const std::vector<std::unique_ptr<Component>> &components,
                              const std::map<int, std::vector<BusDriver>> &bus_nets) {
@@ -289,11 +290,84 @@ std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr,
     for (size_t i = 0; i < nets.size(); i++)
         assert(nets[i]->id() == (int) i);
 
+    // clkgen 可以在输出上声明伪时钟线：每 tick 都算某个方向的沿，不做比较
+    for (auto &n: nets)
+        n->setPseudoEdge(PinEdge::None);
+    for (auto &c: components) {
+        for (auto &p: c->outputs()) {
+            const PinEdge de = p->driveEdge();
+            if (de == PinEdge::None)
+                continue;
+            if (de != PinEdge::Rising && de != PinEdge::Falling)
+                throw std::logic_error("伪时钟线只能是 Rising 或 Falling");
+            if (!p->net() || p->bit_width() != 1)
+                throw std::logic_error(std::format("元件 {} 的伪时钟输出 {} 必须是已连接的 1 位线网",
+                                                   c->name(), p->name()));
+            p->net()->setPseudoEdge(de);
+        }
+    }
+
+    // 收集所有声明了 PinEdge 的输入线网。同一条时钟线被多个元件共享时只算一次；
+    // 一个元件要上升沿、另一个要下降沿时合并成两者都算
+    struct EdgeNet {
+        int net_id = -1;
+        int width = 1;
+        bool rise = false, fall = false, change = false;
+        int change_slot = -1;
+    };
+    std::map<int, EdgeNet> edge_nets;
+    for (auto &c: components) {
+        for (auto &p: c->inputs()) {
+            if (p->edge() == PinEdge::None)
+                continue;
+            const int nid = p->netId();
+            if (nid < 0)
+                continue; // 悬空引脚没有线网可检测
+            if (const PinEdge pseudo = p->net()->pseudoEdge(); pseudo != PinEdge::None) {
+                // 伪时钟线只有"每 tick 一个沿"的标志，没有电平变化。DLL/Verilator
+                // 模型靠真实电平做内部边沿检测，接上来会永远看不到沿，直接报错
+                if (p->edge() != pseudo)
+                    throw std::logic_error(std::format(
+                            "元件 {} 的引脚 {} 接了每 tick {} 的伪时钟线，但引脚没有声明同名 PinEdge；"
+                            "DLL/Verilator 元件必须接真实 clkgen",
+                            c->name(), p->name(), static_cast<int>(pseudo)));
+                continue; // 伪时钟线不需要边沿比较
+            }
+            EdgeNet &e = edge_nets[nid];
+            e.net_id = nid;
+            // 按引脚位宽判断，不按线网位宽：1 位引脚接在宽线网上仍然只取 bit0
+            e.width = std::max(e.width, p->bit_width());
+            if ((p->edge() == PinEdge::Rising || p->edge() == PinEdge::Falling) && p->bit_width() != 1)
+                throw std::logic_error(std::format("元件 {} 的引脚 {} 是 {} 位，不能声明 Rising/Falling；"
+                                                   "多位信号请用 PinEdge::Change",
+                                                   c->name(), p->name(), p->bit_width()));
+            if (p->edge() == PinEdge::Rising)
+                e.rise = true;
+            else if (p->edge() == PinEdge::Falling)
+                e.fall = true;
+            else if (p->edge() == PinEdge::Change)
+                e.change = true;
+            if (e.width > 1 && (e.rise || e.fall))
+                throw std::logic_error(
+                        std::format("线网 {} 上同时有 1 位的上升/下降沿引脚和多位变化引脚，声明冲突", nid));
+        }
+    }
+    int change_slots = 0;
+    bool has_single_bit_edge = false;
+    for (auto &[nid, e]: edge_nets) {
+        if (e.width == 1)
+            has_single_bit_edge = true;
+        else if (e.change)
+            e.change_slot = change_slots++;
+    }
+
     std::ostringstream oss;
     // shim 内容由 CMake 从 shim/*.h 生成并内嵌，运行时不需要 include 目录
     oss << dsc::kShimSource << "\n";
     oss << std::format("#define NET_COUNT {}\n", nets.size());
-    oss << std::format("#define COMP_COUNT {}\n\n", components.size());
+    oss << std::format("#define COMP_COUNT {}\n", components.size());
+    // 一个仿真 tick 对应多少 ns；元件的物理时间换算在生成期完成，运行期不数 tick
+    oss << std::format("#define DCS_TICK_NS {}\n\n", tick_ns);
     // 未连接的输入引脚 netId() 返回 -1，元件生成的代码会直接读 _w[-1]。在线网数组
     // 前面留一个恒零槽位，_w[-1] 落在这个槽位里，既保住悬空输入读 0 的语义，又不用
     // 改上百处 _w[nid] 的生成代码。只有输入会读到负下标：输出没接线时 CodeGen 直接跳过
@@ -304,6 +378,16 @@ std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr,
     // tickForever 的停止标志：地址直接编进代码，元件状态指针也是这个做法
     oss << std::format("static const void *_dcs_stop_flag = (const void*)0x{:X};\n\n",
                        reinterpret_cast<uintptr_t>(stop_flag_ptr));
+
+    // 统一边沿检测状态：只覆盖声明过 PinEdge 的线网。多位 Change 用快照比较，
+    // 1 位线网用上拍值；flags 的 bit0/1/2 分别是上升/下降/变化
+    if (!edge_nets.empty()) {
+        oss << "static uint8_t _dcs_edge_flags[NET_COUNT];\n";
+        if (has_single_bit_edge)
+            oss << "static uint8_t _dcs_edge_prev[NET_COUNT];\n";
+        if (change_slots > 0)
+            oss << std::format("static uint8_t _dcs_change_prev[{}][16];\n", change_slots);
+    }
 
     // 每个元件的每个输出：_c_out_<comp_id>_<out_idx>[16] + _c_oe_<comp_id>_<out_idx>
     for (auto &c: components) {
@@ -401,6 +485,28 @@ std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr,
         oss << "    if (dcs_load_acq(_dcs_stop_flag)) return;\n";
     }
 
+    // 边沿必须在阶段 2 之后算：clkgen 是时序元件，它的输出要等阶段 2 才写进
+    // _w，阶段 3 的时序元件读到的就是这里的值。放在 tick 最开头会晚一拍
+    if (!edge_nets.empty()) {
+        oss << "    // 统一边沿检测（只更新声明过 PinEdge 的线网）\n";
+        for (auto &[nid, e]: edge_nets) {
+            if (e.width == 1) {
+                oss << std::format(
+                        "    {{ const uint8_t _c = _w[{}][0] & 1;"
+                        " _dcs_edge_flags[{}] = (uint8_t)((_c != _dcs_edge_prev[{}]) ? ((_c ? 1u : 2u) | 4u) : 0u);"
+                        " _dcs_edge_prev[{}] = _c; }}\n",
+                        nid, nid, nid, nid);
+            } else {
+                const int bytes = std::min(16, (e.width + 7) / 8);
+                oss << std::format(
+                        "    {{ if (dcs_memcmp(_w[{}], _dcs_change_prev[{}], {}u) != 0) {{"
+                        " dcs_memcpy(_dcs_change_prev[{}], _w[{}], {}u); _dcs_edge_flags[{}] = 4u; }}"
+                        " else _dcs_edge_flags[{}] = 0u; }}\n",
+                        nid, e.change_slot, bytes, e.change_slot, nid, bytes, nid, nid);
+            }
+        }
+    }
+
     oss << "    // 阶段3: 时序逻辑\n";
     for (auto &c: components) {
         auto *s = c.get();
@@ -455,6 +561,13 @@ void circuit_tick_forever(void) {
 void circuit_init(void) {
     dcs_memset(_w_all, 0, sizeof(_w_all));
 )";
+    if (!edge_nets.empty()) {
+        oss << "    dcs_memset(_dcs_edge_flags, 0, sizeof(_dcs_edge_flags));\n";
+        if (has_single_bit_edge)
+            oss << "    dcs_memset(_dcs_edge_prev, 0, sizeof(_dcs_edge_prev));\n";
+        if (change_slots > 0)
+            oss << "    dcs_memset(_dcs_change_prev, 0, sizeof(_dcs_change_prev));\n";
+    }
     // 清零所有 _c_out 和 _c_oe
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {
@@ -484,6 +597,13 @@ void circuit_init(void) {
     oss << R"(void circuit_reset(void) {
     dcs_memset(_w_all, 0, sizeof(_w_all));
 )";
+    if (!edge_nets.empty()) {
+        oss << "    dcs_memset(_dcs_edge_flags, 0, sizeof(_dcs_edge_flags));\n";
+        if (has_single_bit_edge)
+            oss << "    dcs_memset(_dcs_edge_prev, 0, sizeof(_dcs_edge_prev));\n";
+        if (change_slots > 0)
+            oss << "    dcs_memset(_dcs_change_prev, 0, sizeof(_dcs_change_prev));\n";
+    }
     // 清零所有 _c_out 和 _c_oe
     for (auto &c: components) {
         for (int oi = 0; oi < (int) c->outputs().size(); oi++) {

@@ -347,6 +347,13 @@ std::string genSeq(const DeviceSpec &s) {
     std::string c;
     c += std::format("// {}\n", dsc::cgen::commentText(s.node_name));
     c += std::format("static void {}() {{\n", s.func_name);
+    // 设备寄存器/队列状态都在 clk 上升沿采样；tick 只是仿真步长
+    if (n[I_CLK] >= 0)
+        c += std::format("    const bool _clk_pos = ((_dcs_edge_flags[{}] & 1) != 0);\n"
+                         "    if (!_clk_pos) return;\n",
+                         n[I_CLK]);
+    else
+        c += "    return;\n";
     // 空闲快速路径：绝大多数拍设备既没有 MMIO 事务、也没有在途的队列/主端口，
     // 这时只需要 stb/cyc 两根线和几个状态字就能判定。先做这个判定，剩下的
     // 7 根输入线、寄存器译码、队列状态机和 9 根输出线全部跳过。

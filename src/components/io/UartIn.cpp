@@ -4,6 +4,7 @@
 #include "dcs/ComponentFactory.h"
 #include "dcs/components/io/UartIn.h"
 
+#include <cmath>
 #include <cstring>
 #include <format>
 
@@ -59,10 +60,15 @@ int pollStdin() {
 }
 } // namespace
 
-UartIn::UartIn(const std::string &name, int baud_div) :
-    SequentialComponent(name, "uart_in"), _baud_div(baud_div < 2 ? 2 : baud_div) {
-    setParam("baud_div", std::to_string(_baud_div));
-    addInput("clk", 1);
+UartIn::UartIn(const std::string &name, int ns_per_period, std::uint64_t baud) :
+    SequentialComponent(name, "uart_in"), _ns_per_period(ns_per_period < 1 ? 1 : ns_per_period),
+    _baud(baud < 1 ? 1 : baud) {
+    _cycles_per_bit = (int) std::llround(1e9 / ((double) _baud * _ns_per_period));
+    if (_cycles_per_bit < 2)
+        _cycles_per_bit = 2;
+    setParam("ns_per_period", std::to_string(_ns_per_period));
+    setParam("baud", std::to_string(_baud));
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("rx", 1, false, true);
     _state.head = 0;
     _state.tail = 0;
@@ -97,6 +103,8 @@ std::string UartIn::genFuncDef_seq() const {
     c += "// UartIn\n";
     c += "extern int _dcs_uart_in_fetch(void *, void *, int);\n";
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(0, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += std::format(
             "    if (!_uin_busy_{0}) {{\n"
             "        int _c = -1;\n"
@@ -125,14 +133,14 @@ std::string UartIn::genFuncDef_seq() const {
             "        }}\n"
             "    }}\n",
             _id, reinterpret_cast<uintptr_t>(this), reinterpret_cast<uintptr_t>(&_state), InState::POLL_INTERVAL,
-            _baud_div);
+            _cycles_per_bit);
     c += "    " + genOutputWrite(0, "_level", 1) + "\n";
     c += "}\n";
     return c;
 }
 
 std::unique_ptr<Component> UartIn::clone(const std::string &new_name) const {
-    return std::make_unique<UartIn>(new_name, _baud_div);
+    return std::make_unique<UartIn>(new_name, _ns_per_period, _baud);
 }
 
 void UartIn::pushByte(uint8_t b) {
@@ -188,8 +196,9 @@ int UartIn::fetch(void *owner, void *state_ptr, int do_poll) {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"uart_in", {{"baud_div", "8"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：把宿主输入的字符按 8N1 发到 UART 的 rx 引脚（baud_div 默认与 uart 一致；可按实例 setSource 接管输入）"},
+    {"uart_in", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：按 ns_per_period/baud 算 8N1 位时间，把宿主字符发到 UART 的 rx（可按实例 setSource 接管输入）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "baud_div", 8));
+            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "ns_per_period", 20),
+                                                 (std::uint64_t) dsc::paramInt(p, "baud", 115200));
         });
 } // namespace

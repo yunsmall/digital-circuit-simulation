@@ -28,7 +28,7 @@ VirtioBlkMem::VirtioBlkMem(const std::string &name, uint64_t size_bytes) :
     // 导出对齐后的精确字节数：size_kb 向下取整，1536 字节会导成 1 KB，
     // 回读后容量缩水；size_bytes 是唯一能精确往返的口径
     setParam("size_bytes", std::to_string(_size_bytes));
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);

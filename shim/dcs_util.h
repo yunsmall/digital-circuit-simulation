@@ -34,11 +34,15 @@ DCS_FORCE_INLINE void *dcs_memcpy(void *dst, const void *src, unsigned long long
 DCS_FORCE_INLINE void *dcs_memset(void *dst, int c, unsigned long long n) {
     return __builtin_memset(dst, c, n);
 }
+DCS_FORCE_INLINE int dcs_memcmp(const void *a, const void *b, unsigned long long n) {
+    return __builtin_memcmp(a, b, n);
+}
 #elif defined(__TINYC__)
 // TCC 后端：TCC 不做内联和优化，手写循环会比 libc 的向量化实现慢；
-// 这两个符号由 JitBackend 用 tcc_add_symbol 注册成 libc 的 memcpy/memset
+// 这些符号由 JitBackend 用 tcc_add_symbol 注册成 libc 实现
 extern void *dcs_memcpy(void *, const void *, unsigned long long);
 extern void *dcs_memset(void *, int, unsigned long long);
+extern int dcs_memcmp(const void *, const void *, unsigned long long);
 #else
 // 其它编译器：标准 C 通用实现
 static inline void *dcs_memcpy(void *dst, const void *src, unsigned long long n) {
@@ -74,6 +78,14 @@ static inline void *dcs_memset(void *dst, int c, unsigned long long n) {
     while (n--)
         *d++ = (unsigned char) c;
     return dst;
+}
+static inline int dcs_memcmp(const void *a, const void *b, unsigned long long n) {
+    const unsigned char *x = (const unsigned char *) a;
+    const unsigned char *y = (const unsigned char *) b;
+    for (unsigned long long i = 0; i < n; i++)
+        if (x[i] != y[i])
+            return x[i] < y[i] ? -1 : 1;
+    return 0;
 }
 #endif
 

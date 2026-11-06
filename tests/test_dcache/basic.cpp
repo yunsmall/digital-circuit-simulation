@@ -17,7 +17,7 @@ struct Fixture {
     Net *c_adr = nullptr, *c_dat_o = nullptr, *c_dat_i = nullptr, *c_we = nullptr;
     Net *c_sel = nullptr, *c_stb = nullptr, *c_cyc = nullptr, *c_ack = nullptr;
     Net *m_adr = nullptr, *m_dat_o = nullptr, *m_dat_i = nullptr, *m_we = nullptr;
-    Net *m_sel = nullptr, *m_stb = nullptr, *m_cyc = nullptr, *m_ack = nullptr;
+    Net *m_sel = nullptr, *m_stb = nullptr, *m_cyc = nullptr, *m_ack = nullptr, *clk = nullptr;
     Net *sn_adr = nullptr, *sn_we = nullptr, *sn_stb = nullptr, *sn_cyc = nullptr;
 
     static constexpr uint32_t BASE = 0x80000000u;
@@ -36,7 +36,9 @@ struct Fixture {
         m_adr = mk("m_adr"); m_dat_o = mk("m_dat_o"); m_dat_i = mk("m_dat_i"); m_we = mk("m_we");
         m_sel = mk("m_sel"); m_stb = mk("m_stb"); m_cyc = mk("m_cyc"); m_ack = mk("m_ack");
         sn_adr = mk("sn_adr"); sn_we = mk("sn_we"); sn_stb = mk("sn_stb"); sn_cyc = mk("sn_cyc");
+        clk = mk("clk");
 
+        circuit->connect(cache, "clk", clk);
         circuit->connect(cache, "s_adr_i", c_adr);
         circuit->connect(cache, "s_dat_i", c_dat_o);
         circuit->connect(cache, "s_we_i", c_we);
@@ -60,6 +62,7 @@ struct Fixture {
         circuit->connect(cache, "sn_stb_i", sn_stb);
         circuit->connect(cache, "sn_cyc_i", sn_cyc);
 
+        circuit->connect(mem, "clk", clk);
         circuit->connect(mem, "wb_adr_i", m_adr);
         circuit->connect(mem, "wb_dat_i", m_dat_o);
         circuit->connect(mem, "wb_we_i", m_we);
@@ -91,6 +94,9 @@ struct Fixture {
         circuit->setWire(n->id(), v);
     }
     void tick() {
+        circuit->setWire(clk->id(), (uint8_t) 0);
+        circuit->tick();
+        circuit->setWire(clk->id(), (uint8_t) 1);
         circuit->tick();
     }
     void setAddr(Net *n, uint32_t a) {

@@ -9,7 +9,7 @@
 //   0x10 IRQ_ENABLED                 写 1 使能闹钟中断
 //   0x14 CLEAR_ALARM                 写任意值关闭闹钟并清中断
 //
-// 时间按每个 tick 递增 ns_per_tick 模拟（默认 100ns）。全部逻辑在 JIT 里。
+// 每个 clk 上升沿把时间递增 ns_per_period（该元件时钟脚一个周期的 ns 数）。全部逻辑在 JIT 里。
 #pragma once
 #include <cstdint>
 #include <string>
@@ -19,7 +19,7 @@ namespace dsc {
 
 class RTC : public SequentialComponent {
 public:
-    explicit RTC(const std::string &name, uint32_t ns_per_tick = 100);
+    explicit RTC(const std::string &name, uint32_t ns_per_period = 100);
     ~RTC() override;
 
     std::string genStateDecl() const override;
@@ -31,11 +31,11 @@ public:
     // 写入 setParam，exportJson/fromJson 往返不会丢时间基准
     void setBaseNs(uint64_t ns);
     uint64_t baseNs() const { return _base_ns; }
-    uint32_t nsPerTick() const { return _ns_per_tick; }
+    uint32_t nsPerPeriod() const { return _ns_per_period; }
 
 private:
     uint64_t _base_ns = 0;
-    uint32_t _ns_per_tick = 100;
+    uint32_t _ns_per_period = 100;
 };
 
 } // namespace dsc

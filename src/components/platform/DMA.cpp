@@ -9,7 +9,7 @@ namespace dsc {
 
 namespace {
 enum InIdx {
-    I_CFG_ADR = 0, I_CFG_DAT, I_CFG_WE, I_CFG_SEL, I_CFG_STB, I_CFG_CYC,
+    I_CLK = 0, I_CFG_ADR, I_CFG_DAT, I_CFG_WE, I_CFG_SEL, I_CFG_STB, I_CFG_CYC,
     I_M_DAT_I, I_M_ACK_I
 };
 enum OutIdx {
@@ -24,6 +24,7 @@ enum St { ST_IDLE = 0, ST_READ_REQ = 1, ST_READ_WAIT = 2, ST_WRITE_REQ = 3, ST_W
 } // namespace
 
 DMA::DMA(const std::string &name) : SequentialComponent(name, "dma") {
+    addInput("clk", 1, PinEdge::Rising);
     addInput("cfg_adr_i", 32);
     addInput("cfg_dat_i", 32);
     addInput("cfg_we_i", 1);
@@ -77,6 +78,8 @@ std::string DMA::genFuncDef_seq() const {
     std::string c;
     c += std::format("// DMA {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _cfg_adr = 0; dcs_memcpy(&_cfg_adr, _w[" + nid(I_CFG_ADR) + "], 4);\n";
     c += "    uint32_t _cfg_dat = 0; dcs_memcpy(&_cfg_dat, _w[" + nid(I_CFG_DAT) + "], 4);\n";
     c += "    uint8_t _cfg_we = _w[" + nid(I_CFG_WE) + "][0] & 1;\n";
@@ -178,7 +181,7 @@ std::unique_ptr<Component> DMA::clone(const std::string &new_name) const {
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"dma", {}, {"cfg_adr_i", "cfg_dat_i", "cfg_we_i", "cfg_sel_i", "cfg_stb_i", "cfg_cyc_i", "m_dat_i", "m_ack_i"}, {"cfg_dat_o", "cfg_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"}, dsc::ComponentCategory::Bus, "存储器到存储器块搬运的 DMA 控制器"},
+    {"dma", {}, {"clk", "cfg_adr_i", "cfg_dat_i", "cfg_we_i", "cfg_sel_i", "cfg_stb_i", "cfg_cyc_i", "m_dat_i", "m_ack_i"}, {"cfg_dat_o", "cfg_ack_o", "m_adr_o", "m_dat_o", "m_we_o", "m_sel_o", "m_stb_o", "m_cyc_o"}, dsc::ComponentCategory::Bus, "存储器到存储器块搬运的 DMA 控制器"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
             return std::make_unique<dsc::DMA>(n);
         });

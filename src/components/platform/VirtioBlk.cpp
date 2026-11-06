@@ -48,7 +48,7 @@ VirtioBlk::VirtioBlk(const std::string &name, const std::string &backend,
     // 和后端名字一样按扁平键记录，JSON 导出/回读能原样恢复
     for (auto &[k, v]: _backend_opts)
         setParam(std::string(kBackendOptsPrefix) + k, v);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("wb_adr_i", 32);
     addInput("wb_dat_i", 32);
     addInput("wb_we_i", 1);

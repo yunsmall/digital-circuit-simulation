@@ -15,7 +15,7 @@ struct Fixture {
     Net *sda_in = nullptr, *ack = nullptr, *scl = nullptr, *sda_out = nullptr, *sda_oe = nullptr;
 
     explicit Fixture(int clkdiv = 4) {
-        auto c = std::make_unique<I2C>("i2c0", clkdiv);
+        auto c = std::make_unique<I2C>("i2c0", 1, clkdiv);
         i2c = c.get();
         circuit->addComponent(std::move(c));
         clk = circuit->createNet("clk");

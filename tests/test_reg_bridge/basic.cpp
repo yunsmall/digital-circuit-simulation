@@ -35,8 +35,13 @@ struct RbFixture {
         c->init();
     }
 
-    void ticks(int n) {
-        for (int i = 0; i < n; i++) c->tick();
+    void cycles(int n) {
+        for (int i = 0; i < n; i++) {
+            c->setWire(clk->id(), 0);
+            c->tick();
+            c->setWire(clk->id(), 1);
+            c->tick();
+        }
     }
     static void set32(Net *n, Circuit *c, uint32_t v) {
         c->setWire(n->id(), {(uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24)});
@@ -53,13 +58,19 @@ struct RbFixture {
         c->setWire(ready->id(), (uint8_t) (rdy ? 1 : 0));
         c->setWire(stb->id(), 1);
         c->setWire(cyc->id(), 1);
-        c->tick(); // 发起拍：en 拉高，addr/wdata 锁存
+        // 上升沿发起事务，再走一个低半拍让 _c_out 传播到线网
+        c->setWire(clk->id(), 0);
+        c->tick();
+        c->setWire(clk->id(), 1);
+        c->tick();
+        c->setWire(clk->id(), 0);
+        c->tick();
     }
     void end() {
         c->setWire(stb->id(), 0);
-        ticks(2);
+        cycles(2);
         c->setWire(cyc->id(), 0);
-        ticks(1);
+        cycles(1);
     }
     int en() const { return c->getWire(o_en->id())[0] & 1; }
     int ack() const { return c->getWire(o_ack->id())[0] & 1; }
@@ -82,7 +93,7 @@ TEST(RegBridgeTest, ReadTransactionReturnsDataOnAck) {
     RbFixture f;
     f.c->setWire(f.rdat->id(), {0x78, 0x56, 0x34, 0x12});
     f.begin(0x08, 0, false);
-    f.ticks(4);
+    f.cycles(4);
     EXPECT_EQ(f.ack(), 1) << "ready 有效后必须回 ack";
     EXPECT_EQ(f.get32(f.o_dat), 0x12345678u) << "rdata 没有返回给主设备";
     f.end();
@@ -94,7 +105,7 @@ TEST(RegBridgeTest, EnIsSinglePulseEvenIfStbHeld) {
     f.begin(0x00, 0, true);
     // en 的脉冲在 begin 的两拍里已经过去，之后 stb 一直保持也不该再拉高
     for (int i = 0; i < 10; i++) {
-        f.ticks(1);
+        f.cycles(1);
         EXPECT_EQ(f.en(), 0) << "stb 保持期间不能重复发起事务";
     }
     f.end();
@@ -113,10 +124,10 @@ TEST(RegBridgeTest, TwoSequentialTransactions) {
 TEST(RegBridgeTest, AckWaitsForReady) {
     RbFixture f;
     f.begin(0x00, 0, false, false); // ready 先不给
-    f.ticks(5);
+    f.cycles(5);
     EXPECT_EQ(f.ack(), 0) << "ready 未到不应回 ack";
     f.c->setWire(f.ready->id(), 1);
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.ack(), 1) << "ready 到达后应回 ack";
     f.end();
 }
@@ -131,11 +142,11 @@ TEST(RegBridgeTest, AddressTruncatedToEightBits) {
 TEST(RegBridgeTest, WriteDataHeldWhileWaitingReady) {
     RbFixture f;
     f.begin(0x08, 0xDEADBEEF, true, false);
-    f.ticks(4);
+    f.cycles(4);
     EXPECT_EQ(f.get32(f.o_wdat), 0xDEADBEEFu) << "等待 ready 期间写数据必须保持";
     EXPECT_EQ(f.ack(), 0);
     f.c->setWire(f.ready->id(), 1);
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.ack(), 1);
     f.end();
 }
@@ -155,10 +166,10 @@ TEST(RegBridgeTest, ReadLatchesDataOnlyAfterReady) {
     f.c->setWire(f.rdat->id(), {0x11, 0x11, 0x11, 0x11});
     f.begin(0x00, 0, false, false);
     f.c->setWire(f.rdat->id(), {0x22, 0x22, 0x22, 0x22});
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.ack(), 0);
     f.c->setWire(f.ready->id(), 1);
-    f.ticks(3);
+    f.cycles(3);
     EXPECT_EQ(f.ack(), 1);
     EXPECT_EQ(f.get32(f.o_dat), 0x22222222u) << "应在 ready 生效时锁存当时的数据";
     f.end();
@@ -171,13 +182,13 @@ TEST(RegBridgeTest, LatchesDataOnReadyRisingEdge) {
     f.begin(0x10, 0, false, false);
     f.c->setWire(f.rdat->id(), {0xAA, 0xAA, 0xAA, 0xAA});
     f.c->setWire(f.ready->id(), 1);
-    f.c->tick();
+    f.cycles(1); // ready 上升沿，锁存 0xAAAAAAAA
     f.c->setWire(f.rdat->id(), {0xBB, 0xBB, 0xBB, 0xBB}); // ready 仍为高，数据变了
-    f.c->tick();
+    f.cycles(1);
     EXPECT_EQ(f.ack(), 1);
     EXPECT_EQ(f.get32(f.o_dat), 0xAAAAAAAAu) << "ack 必须是 ready 第一次有效那拍的数据";
     f.c->setWire(f.rdat->id(), {0xCC, 0xCC, 0xCC, 0xCC});
-    f.c->tick();
+    f.cycles(1);
     EXPECT_EQ(f.get32(f.o_dat), 0xAAAAAAAAu) << "ack 保持期间不能再被改写";
     f.end();
 }

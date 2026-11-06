@@ -17,10 +17,10 @@ struct FeedToUartFixture {
 
     FeedToUartFixture() {
         c = std::make_unique<Circuit>();
-        auto f = std::make_unique<UartFeed>("feed0", 8);
+        auto f = std::make_unique<UartFeed>("feed0", 1, 125000000);
         feed = f.get();
         c->addComponent(std::move(f));
-        auto u = std::make_unique<UART>("uart0", 8);
+        auto u = std::make_unique<UART>("uart0", 1, 125000000);
         uart = u.get();
         c->addComponent(std::move(u));
 
@@ -50,8 +50,13 @@ struct FeedToUartFixture {
         c->init();
     }
 
-    void ticks(int n) {
-        for (int i = 0; i < n; i++) c->tick();
+    void cycles(int n) {
+        for (int i = 0; i < n; i++) {
+            c->setWire(clk->id(), 0);
+            c->tick();
+            c->setWire(clk->id(), 1);
+            c->tick();
+        }
     }
     static void set32(Circuit *c, Net *n, uint32_t v) {
         c->setWire(n->id(), {(uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24)});
@@ -66,11 +71,11 @@ struct FeedToUartFixture {
         c->setWire(sel->id(), 0x0F);
         c->setWire(stb->id(), 1);
         c->setWire(cyc->id(), 1);
-        ticks(4);
+        cycles(4);
         uint32_t v = get32(rdat);
         c->setWire(stb->id(), 0);
         c->setWire(cyc->id(), 0);
-        ticks(2);
+        cycles(2);
         return v;
     }
 };
@@ -81,10 +86,10 @@ TEST(UartFeedToUartTest, ByteArrivesInReceiveRegister) {
     FeedToUartFixture f;
     // 先让串行线稳定在空闲高电平：UART 靠"高→低"的下降沿识别起始位，
     // 复位后第一拍线网还是 0，直接 push 会丢掉第一个起始沿
-    f.ticks(10);
+    f.cycles(10);
     ASSERT_TRUE(f.feed->push('A'));
     // 8N1 @ baud_div=8：起始位 + 8 数据位 + 停止位 ≈ 80 拍，留足余量
-    f.ticks(400);
+    f.cycles(400);
 
     const uint32_t lsr = f.readReg(0x14);
     EXPECT_TRUE((lsr & 1u) != 0) << "LSR.DR 没有置位，UART 没收到字节";
@@ -94,10 +99,10 @@ TEST(UartFeedToUartTest, ByteArrivesInReceiveRegister) {
 
 TEST(UartFeedToUartTest, TwoBytesArriveInOrder) {
     FeedToUartFixture f;
-    f.ticks(10);
+    f.cycles(10);
     // UART 有 16 字节接收 FIFO，连续两帧都应该保留下来
     ASSERT_TRUE(f.feed->push((const uint8_t *) "hi", 2));
-    f.ticks(400);
+    f.cycles(400);
     EXPECT_EQ(f.readReg(0x00) & 0xFFu, (uint32_t) 'h');
     EXPECT_EQ(f.readReg(0x00) & 0xFFu, (uint32_t) 'i');
 }

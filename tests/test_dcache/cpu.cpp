@@ -55,6 +55,7 @@ struct CpuCacheFixture {
         circuit->connect(cpu, "wb_cyc_o", wb_cyc);
         circuit->connect(cpu, "halted", halted);
 
+        circuit->connect(cache, "clk", clk);
         circuit->connect(cache, "s_adr_i", wb_adr);
         circuit->connect(cache, "s_dat_i", wb_dat_o);
         circuit->connect(cache, "s_we_i", wb_we);
@@ -78,6 +79,7 @@ struct CpuCacheFixture {
         circuit->connect(cache, "sn_stb_i", m_stb);
         circuit->connect(cache, "sn_cyc_i", m_cyc);
 
+        circuit->connect(mem, "clk", clk);
         circuit->connect(mem, "wb_adr_i", m_adr);
         circuit->connect(mem, "wb_dat_i", m_dat_o);
         circuit->connect(mem, "wb_we_i", m_we);

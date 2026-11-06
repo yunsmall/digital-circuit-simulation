@@ -23,6 +23,7 @@ struct BusDriver;
 // 需要 dllimport 语义，走符号注入会重定位失败
 std::string generateCircuitC(void *circuit_ptr,
                              const void *stop_flag_ptr,
+                             std::uint64_t tick_ns,
                              const std::vector<std::unique_ptr<Net>> &nets,
                              const std::vector<std::unique_ptr<Component>> &components,
                              const std::map<int, std::vector<BusDriver>> &bus_nets);

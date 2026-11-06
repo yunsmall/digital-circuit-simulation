@@ -10,6 +10,7 @@
 // 上只允许一个线程写（导入蓝图、切 sourceDir）。已经加载完的多个电路并发
 // compile 只读库和 JIT 头文件目录，是安全的。
 #pragma once
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -33,6 +34,15 @@ public:
     }
     [[nodiscard]] const std::string &jitIncludeDir() const {
         return _jit_include_dir;
+    }
+
+    // 电路级 timescale：一个仿真 tick 对应多少纳秒。只用于把物理时间参数
+    // 换算成时钟周期；设计逻辑本身仍然只数时钟沿
+    void setTickNs(std::uint64_t ns) {
+        _tick_ns = ns > 0 ? ns : 1;
+    }
+    [[nodiscard]] std::uint64_t tickNs() const {
+        return _tick_ns;
     }
 
     // 当前正在加载的 JSON/蓝图所在目录。元件参数里的相对路径由元件自己
@@ -79,6 +89,7 @@ private:
     CircuitLibrary _library;
     std::string _jit_include_dir;
     std::string _source_dir;
+    std::uint64_t _tick_ns = 1;
 };
 
 } // namespace dsc

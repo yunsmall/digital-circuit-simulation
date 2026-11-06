@@ -12,7 +12,7 @@ constexpr int O_RDAT = 0, O_READY = 1, O_GPIO_OUT = 2;
 
 Gpio::Gpio(const std::string &name) : SequentialComponent(name, "gpio") {
     setParam("bit_width", "32");
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("addr", 8);
     addInput("wdata", 32);
     addInput("we", 1);
@@ -44,6 +44,8 @@ std::string Gpio::genFuncDef_seq() const {
     std::string c;
     c += std::format("// GPIO {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
     c += "    uint32_t _addr = 0; dcs_memcpy(&_addr, _w[" + nid(I_ADDR) + "], 1);\n";
     c += "    uint32_t _wdat = 0; dcs_memcpy(&_wdat, _w[" + nid(I_WDAT) + "], 4);\n";
     c += "    uint8_t _we = _w[" + nid(I_WE) + "][0] & 1;\n";

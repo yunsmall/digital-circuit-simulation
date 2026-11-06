@@ -100,6 +100,7 @@ WishboneInterconnect::WishboneInterconnect(const std::string &name, const std::s
         addInput(std::format("s{}_dat_i", i), 32);
         addInput(std::format("s{}_ack_i", i), 1);
     }
+    addInput("clk", 1, PinEdge::Rising);
 
     // ---- 主设备侧输出 ----
     for (int mi = 0; mi < _masters; mi++) {
@@ -167,6 +168,8 @@ std::string WishboneInterconnect::genFuncDef_seq() const {
     std::string c;
     c += std::format("// WishboneInterconnect: {} slaves, {} masters\n", N, M);
     c += std::format("static void {}() {{\n", funcName_seq());
+    c += "    const bool _clk_pos = " + genGetWireEdge((int) inputs().size() - 1, PinEdge::Rising) + ";\n";
+    c += "    if (!_clk_pos) return;\n";
 
     // 从设备侧总线的输出线按选中下标直接寻址。每拍重写 6×N 根线曾是本元件的
     // 全部开销所在（perf 实测互连吃掉整机四成），现在只驱动被选中的那一个，
@@ -466,7 +469,7 @@ extern "C" void dcs_wb_trace(uint32_t adr, uint32_t grant, uint32_t si, uint32_t
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"wishbone_ic", {{"segments", "0:65536"}, {"num_masters", "1"}}, {"m0_adr_i", "m0_dat_i", "m0_we_i", "m0_sel_i", "m0_stb_i", "m0_cyc_i", "s0_dat_i", "s0_ack_i"}, {"m0_dat_o", "m0_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"},
+    {"wishbone_ic", {{"segments", "0:65536"}, {"num_masters", "1"}}, {"m0_adr_i", "m0_dat_i", "m0_we_i", "m0_sel_i", "m0_stb_i", "m0_cyc_i", "s0_dat_i", "s0_ack_i", "clk"}, {"m0_dat_o", "m0_ack_o", "s0_adr_o", "s0_dat_o", "s0_we_o", "s0_sel_o", "s0_stb_o", "s0_cyc_o"}, dsc::ComponentCategory::Bus, "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
             return std::make_unique<dsc::WishboneInterconnect>(n, dsc::paramStr(p, "segments", "0:65536"), dsc::paramInt(p, "num_masters", 1));
         });

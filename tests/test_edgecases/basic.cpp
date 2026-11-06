@@ -19,7 +19,7 @@ struct UartFx {
     UART *u = nullptr;
     Net *clk, *adr, *dat_i, *dat_o, *we, *sel, *stb, *cyc, *rx, *ack, *tx;
     explicit UartFx(int baud = 4) {
-        auto p = std::make_unique<UART>("u", baud);
+        auto p = std::make_unique<UART>("u", 1, 1000000000LL / baud);
         u = p.get();
         c->addComponent(std::move(p));
         clk = c->createNet("clk"); adr = c->createNet("adr"); dat_i = c->createNet("dat_i");
@@ -168,7 +168,7 @@ struct I2cFx {
     I2C *i = nullptr;
     Net *clk, *adr, *dat_i, *dat_o, *we, *sel, *stb, *cyc, *sda_in, *ack, *scl, *sda_out, *sda_oe;
     explicit I2cFx(int d = 4) {
-        auto p = std::make_unique<I2C>("i", d);
+        auto p = std::make_unique<I2C>("i", 1, d);
         i = p.get();
         c->addComponent(std::move(p));
         clk = c->createNet("clk"); adr = c->createNet("adr"); dat_i = c->createNet("dat_i");
@@ -250,6 +250,7 @@ struct CacheFx {
         m_adr = c->createNet("m_adr"); m_dat_o = c->createNet("m_dat_o"); m_dat_i = c->createNet("m_dat_i");
         m_we = c->createNet("m_we"); m_sel = c->createNet("m_sel"); m_stb = c->createNet("m_stb");
         m_cyc = c->createNet("m_cyc"); m_ack = c->createNet("m_ack");
+        c->connect(cache, "clk", clk);
         c->connect(cache, "wb_adr_i", c_adr); c->connect(cache, "wb_dat_i", c_dat_o);
         c->connect(cache, "wb_we_i", c_we); c->connect(cache, "wb_sel_i", c_sel);
         c->connect(cache, "wb_stb_i", c_stb); c->connect(cache, "wb_cyc_i", c_cyc);
