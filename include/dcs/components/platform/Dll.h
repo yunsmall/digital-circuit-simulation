@@ -76,10 +76,14 @@ private:
     dcs_dll_reset_t _reset_fn = nullptr;
 
     // 可选导出：每个输入引脚的边沿依赖（DCS_DLL_INPUT_EDGES）。
+    // 数组长度必须等于 num_inputs；框架按下标读取，不另传长度、不做越界校验
     // 指针指向 DLL 内部，卸载后必须清空，处理方式和 _desc 相同
     const uint8_t *_input_edges = nullptr;
     // 可选导出：包装层自己合成伪时钟沿的能力（DCS_DLL_SET_PSEUDO）
     dcs_dll_set_pseudo_t _set_pseudo_fn = nullptr;
+
+    // init/reset 共用：把伪时钟掩码传给 DLL 实例。没有伪时钟输入时不生成代码
+    [[nodiscard]] std::string genSetPseudoCode() const;
 
     // 生成一个阶段的 tick 函数体（comb 或 seq 公用）
     std::string genTickFunc(const char *phase_suffix) const;

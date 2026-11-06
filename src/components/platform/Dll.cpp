@@ -552,6 +552,28 @@ std::string DllComponent::genFuncDef_seq() const {
     return genTickFunc("seq");
 }
 
+std::string DllComponent::genSetPseudoCode() const {
+    if (!_set_pseudo_fn)
+        return "";
+    const int id = _id;
+    const auto mask = pseudoMask();
+    bool any_pseudo = false;
+    for (uint8_t v: mask)
+        any_pseudo = any_pseudo || v != 0;
+    if (!any_pseudo)
+        return "";
+    std::string values;
+    for (int i = 0; i < (int) mask.size(); i++)
+        values += std::format("{}{}", i ? ", " : "", (int) mask[i]);
+    return std::format(
+            "    extern void _dcs_dll_set_pseudo_{0}(void*, const uint8_t*);\n"
+            "    {{\n"
+            "        const uint8_t _dll_pseudo_{0}[{1}] = {{{2}}};\n"
+            "        if (_dcs_dll_state_{0}) _dcs_dll_set_pseudo_{0}(_dcs_dll_state_{0}, _dll_pseudo_{0});\n"
+            "    }}\n",
+            id, (int) mask.size(), values);
+}
+
 std::string DllComponent::genInitCode() const {
     int id = _id;
     int no = (int) outputs().size();
@@ -561,34 +583,16 @@ std::string DllComponent::genInitCode() const {
     code += std::format("    if (_dcs_dll_state_{0}) _dcs_dll_destroy_{0}(_dcs_dll_state_{0});\n", id);
     code += std::format("    _dcs_dll_state_{0} = _dcs_dll_create_{0}();\n", id);
     // 告诉包装层哪些输入接的是伪时钟线：这些输入的电平恒 0，包装层必须在
-    // 每次 tick 里自己合成一个时钟沿。必须在 create 之后、reset 之前设置，
-    // reset 里重建模型时包装层还要用这份掩码
-    if (_set_pseudo_fn) {
-        auto mask = pseudoMask();
-        bool any_pseudo = false;
-        for (uint8_t v: mask)
-            any_pseudo = any_pseudo || v != 0;
-        if (any_pseudo) {
-            std::string values;
-            for (int i = 0; i < (int) mask.size(); i++)
-                values += std::format("{}{}", i ? ", " : "", (int) mask[i]);
-            code += std::format("    extern void _dcs_dll_set_pseudo_{0}(void*, const uint8_t*);\n", id);
-            code += "    {\n";
-            code += std::format("        const uint8_t _dll_pseudo_{0}[{1}] = {{{2}}};\n",
-                                id, (int) mask.size(), values);
-            code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_set_pseudo_{0}(_dcs_dll_state_{0}, "
-                                "_dll_pseudo_{0});\n",
-                                id);
-            code += "    }\n";
-        }
-    }
+    // 每次 tick 里自己合成一个时钟沿。必须放在 reset 之后：有的包装层 reset
+    // 会把整份状态清零，包括掩码
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
     code += "        dcs_memset(_out, 0, sizeof(_out));\n";
     // create 可能返回空指针（DLL 自己的初始化失败）：空状态不能传给 reset，
     // 和 genResetCode 用同样的保护
     code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
-    code += "    }";
+    code += "    }\n";
+    code += genSetPseudoCode();
     return code;
 }
 
@@ -603,7 +607,10 @@ std::string DllComponent::genResetCode() const {
     // 可能在 compile 之后、init 之前被 circuit_reset 调用：此时 DLL 实例还没
     // create，state 是静态零初始化。空指针不能传给 DLL 的 reset 回调
     code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_reset_{0}(_dcs_dll_state_{0}, (uint8_t*)_out);\n", id);
-    code += "    }";
+    code += "    }\n";
+    // 有的包装层 reset 会把整份状态清零（包括伪时钟掩码）：复位后再设一次，
+    // 免得复位之后伪时钟静默失效
+    code += genSetPseudoCode();
     return code;
 }
 

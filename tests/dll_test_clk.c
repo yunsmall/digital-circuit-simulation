@@ -46,6 +46,9 @@ DCS_DLL_EXPORT void dcs_dll_reset(void *st, uint8_t *outputs) {
     if (s) {
         s->count = 0;
         s->prev_clk = 0;
+        // 模拟"reset 把整份状态清零"的包装层：伪时钟掩码也不能保留。
+        // 框架必须在 reset 之后重新调用 dcs_dll_set_pseudo
+        s->pseudo_clk = 0;
     }
     memset(outputs, 0, 16);
 }
