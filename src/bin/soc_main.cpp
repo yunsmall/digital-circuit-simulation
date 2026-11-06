@@ -16,6 +16,7 @@
 #include <dcs/Context.h>
 #include <dcs/util/MemDump.h>
 #include <dcs/util/PathList.h>
+#include <dcs/util/TextWrap.h>
 #include <dcs/components/platform/RiscVCPU.h>
 #include <dcs/components/platform/VirtioBlk.h>
 #include <dcs/components/platform/WishboneDcache.h>
@@ -857,7 +858,7 @@ int main(int argc, char *argv[]) {
     try {
         result = opts.parse(argc, argv);
     } catch (const cxxopts::exceptions::exception &e) {
-        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), dcs_cli::formatHelp(opts.help()));
+        std::cerr << std::format("参数错误: {}\n{}\n", e.what(), dsc::formatHelp(opts.help()));
         return 1;
     }
 
@@ -866,7 +867,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     if (result.count("help") || argc == 1) {
-        std::cout << dcs_cli::formatHelp(opts.help()) << "\n";
+        std::cout << dsc::formatHelp(opts.help()) << "\n";
 #ifdef DCS_USE_TCC
         std::cout << "JIT 后端: TinyCC\n\n";
 #else
@@ -897,7 +898,7 @@ int main(int argc, char *argv[]) {
     dcs_cli::configureLibrary(ctx, lib_paths);
 
     if (!result.count("circuit")) {
-        std::cerr << "错误: 请指定 JSON 电路文件\n\n" << dcs_cli::formatHelp(opts.help()) << "\n";
+        std::cerr << "错误: 请指定 JSON 电路文件\n\n" << dsc::formatHelp(opts.help()) << "\n";
         return 1;
     }
     auto optList = [&](const char *key) {
