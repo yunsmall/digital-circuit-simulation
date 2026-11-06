@@ -200,6 +200,7 @@ struct AxiFx {
         wb_adr = c->createNet("wa"); wb_dat_o = c->createNet("wdo"); wb_dat_i = c->createNet("wdi");
         wb_we = c->createNet("wwe"); wb_sel = c->createNet("wsel"); wb_stb = c->createNet("wstb");
         wb_cyc = c->createNet("wcyc"); wb_ack = c->createNet("wack");
+        c->connect(b, "clk", clk);
         c->connect(b, "s_axi_awaddr", awaddr); c->connect(b, "s_axi_awvalid", awvalid);
         c->connect(b, "s_axi_wdata", wdata); c->connect(b, "s_axi_wstrb", wstrb);
         c->connect(b, "s_axi_wvalid", wvalid); c->connect(b, "s_axi_bready", bready);

@@ -5,6 +5,9 @@
 // 读通道 AR 收到即发一次 Wishbone 读，拿到数据后在 R 通道返回。
 // 同一时刻只处理一笔事务（无 outstanding），足够应付寄存器访问。
 //
+// 时序：状态机只在 clk 上升沿推进，握手输出保持整个时钟周期，边沿触发的
+// AXI 主设备才能在上升沿采到 READY/BVALID/RVALID。
+//
 // 复位：genResetCode 等同 genInitCode——复位会撤销在途事务（BVALID/RVALID 拉低、
 // 已收到的 AW/AR 丢弃）。AXI 要求主从一起复位，circuit_reset 必须和外部 AXI 主
 // 设备的复位同时发生；单独复位桥会让等响应的一侧永远等下去。

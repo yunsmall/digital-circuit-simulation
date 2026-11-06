@@ -9,7 +9,7 @@ namespace dsc {
 
 namespace {
 enum InIdx {
-    I_AWADDR = 0, I_AWVALID, I_WDATA, I_WSTRB, I_WVALID, I_BREADY,
+    I_CLK = 0, I_AWADDR, I_AWVALID, I_WDATA, I_WSTRB, I_WVALID, I_BREADY,
     I_ARADDR, I_ARVALID, I_RREADY, I_WB_DAT, I_WB_ACK
 };
 enum OutIdx {
@@ -22,6 +22,7 @@ enum St { ST_IDLE = 0, ST_WRITE_WAIT = 1, ST_WRITE_RESP = 2, ST_READ_WAIT = 3, S
 } // namespace
 
 AxiLiteBridge::AxiLiteBridge(const std::string &name) : SequentialComponent(name, "axi_lite_bridge") {
+    addInput("clk", 1);
     addInput("s_axi_awaddr", 32);
     addInput("s_axi_awvalid", 1);
     addInput("s_axi_wdata", 32);
@@ -58,7 +59,7 @@ std::string AxiLiteBridge::genStateDecl() const {
             "static uint32_t _axib_wb_adr_{0}, _axib_wb_dat_{0};\n"
             "static uint8_t _axib_w_strb_{0}, _axib_bresp_{0}, _axib_rresp_{0};\n"
             "static uint8_t _axib_aw_got_{0}, _axib_w_got_{0}, _axib_wb_we_{0}, _axib_wb_stb_{0}, _axib_wb_cyc_{0};\n"
-            "static uint8_t _axib_bvalid_{0}, _axib_rvalid_{0}, _axib_st_{0};\n",
+            "static uint8_t _axib_bvalid_{0}, _axib_rvalid_{0}, _axib_st_{0}, _axib_prev_clk_{0};\n",
             _id);
 }
 
@@ -69,7 +70,7 @@ std::string AxiLiteBridge::genInitCode() const {
             "    _axib_w_strb_{0} = 0; _axib_bresp_{0} = 0; _axib_rresp_{0} = 0;\n"
             "    _axib_aw_got_{0} = 0; _axib_w_got_{0} = 0;\n"
             "    _axib_wb_we_{0} = 0; _axib_wb_stb_{0} = 0; _axib_wb_cyc_{0} = 0;\n"
-            "    _axib_bvalid_{0} = 0; _axib_rvalid_{0} = 0; _axib_st_{0} = 0;\n",
+            "    _axib_bvalid_{0} = 0; _axib_rvalid_{0} = 0; _axib_st_{0} = 0; _axib_prev_clk_{0} = 0;\n",
             _id);
 }
 
@@ -78,6 +79,17 @@ std::string AxiLiteBridge::genFuncDef_seq() const {
     std::string c;
     c += std::format("// AxiLiteBridge {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
+    // 只在一个时钟周期内的上升沿推进状态机。没有边沿门控时状态机会在每个
+    // tick 走一步（tickCycle 一个周期包含低/高两个 tick），握手信号可能只在
+    // 半个周期内有效，边沿触发的 AXI 主设备会漏掉它而永久等待。
+    // 非上升沿直接返回，_c_out_ 保持上一拍的值，握手信号因此能维持整周期。
+    // clk 没接时就当作永远低电平，状态机不推进，避免生成 _w[-1] 这类越界访问
+    const int _clk_nid = inputs()[I_CLK]->netId();
+    c += _clk_nid >= 0 ? "    const uint8_t _clk = _w[" + std::to_string(_clk_nid) + "][0] & 1;\n"
+                       : std::string("    const uint8_t _clk = 0;\n");
+    c += std::format("    if (!_clk || _axib_prev_clk_{0}) {{ _axib_prev_clk_{0} = _clk; return; }}\n",
+                     _id);
+    c += std::format("    _axib_prev_clk_{0} = _clk;\n", _id);
     c += "    uint32_t _awaddr = 0; dcs_memcpy(&_awaddr, _w[" + nid(I_AWADDR) + "], 4);\n";
     c += "    uint32_t _wdata = 0; dcs_memcpy(&_wdata, _w[" + nid(I_WDATA) + "], 4);\n";
     c += "    uint32_t _araddr = 0; dcs_memcpy(&_araddr, _w[" + nid(I_ARADDR) + "], 4);\n";
@@ -152,7 +164,7 @@ std::unique_ptr<Component> AxiLiteBridge::clone(const std::string &new_name) con
 // ---- 工厂注册 ----
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"axi_lite_bridge", {}, {"s_axi_awaddr", "s_axi_awvalid", "s_axi_wdata", "s_axi_wstrb", "s_axi_wvalid", "s_axi_bready", "s_axi_araddr", "s_axi_arvalid", "s_axi_rready", "wb_dat_i", "wb_ack_i"}, {"s_axi_awready", "s_axi_wready", "s_axi_bresp", "s_axi_bvalid", "s_axi_arready", "s_axi_rdata", "s_axi_rresp", "s_axi_rvalid", "wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Bus, "AXI4-Lite 从设备到 Wishbone 主设备的桥"},
+    {"axi_lite_bridge", {}, {"clk", "s_axi_awaddr", "s_axi_awvalid", "s_axi_wdata", "s_axi_wstrb", "s_axi_wvalid", "s_axi_bready", "s_axi_araddr", "s_axi_arvalid", "s_axi_rready", "wb_dat_i", "wb_ack_i"}, {"s_axi_awready", "s_axi_wready", "s_axi_bresp", "s_axi_bvalid", "s_axi_arready", "s_axi_rdata", "s_axi_rresp", "s_axi_rvalid", "wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o"}, dsc::ComponentCategory::Bus, "AXI4-Lite 从设备到 Wishbone 主设备的桥"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &) -> std::unique_ptr<dsc::Component> {
             return std::make_unique<dsc::AxiLiteBridge>(n);
         });

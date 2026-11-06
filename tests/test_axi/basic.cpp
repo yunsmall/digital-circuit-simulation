@@ -43,6 +43,7 @@ struct Fixture {
         wb_sel = circuit->createNet("wb_sel"); wb_stb = circuit->createNet("wb_stb");
         wb_cyc = circuit->createNet("wb_cyc"); wb_ack = circuit->createNet("wb_ack");
 
+        circuit->connect(br, "clk", clk);
         circuit->connect(br, "s_axi_awaddr", awaddr);
         circuit->connect(br, "s_axi_awvalid", awvalid);
         circuit->connect(br, "s_axi_wdata", wdata);
@@ -210,6 +211,40 @@ TEST(AxiBridgeTest, ZeroWstrbWriteStillResponds) {
     for (int i = 0; i < 5; ++i)
         f.cycle();
     EXPECT_FALSE(f.bit(f.bvalid)) << "bready 握手后 bvalid 应撤销";
+}
+
+// 状态机只能在 clk 上升沿推进：低电平期间即使 VALID 一直为高也不能握手；
+// 上升沿之后握手信号要维持整个周期，边沿触发的 AXI 主设备才能采到
+TEST(AxiBridgeTest, ClockEdgeGatesHandshake) {
+    Fixture f;
+    f.compile();
+    f.put(0x50, 0);
+
+    f.circuit->setWire(f.clk->id(), (uint8_t) 0);
+    f.circuit->setWire(f.awaddr->id(), {0x50, 0, 0, 0});
+    f.circuit->setWire(f.wdata->id(), {0x11, 0x22, 0x33, 0x44});
+    f.circuit->setWire(f.wstrb->id(), (uint8_t) 0x0F);
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 1);
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 1);
+    for (int i = 0; i < 5; ++i)
+        f.circuit->tick();
+    EXPECT_FALSE(f.bit(f.awready)) << "没有上升沿时不能推进状态机";
+    EXPECT_FALSE(f.bit(f.wready));
+
+    // 产生上升沿，再走一个低半周期让 _c_out_ 传播到线网
+    f.circuit->setWire(f.clk->id(), (uint8_t) 1);
+    f.circuit->tick();
+    f.circuit->setWire(f.clk->id(), (uint8_t) 0);
+    f.circuit->tick();
+    EXPECT_TRUE(f.bit(f.awready)) << "上升沿之后 AWREADY 应保持一个完整周期";
+    EXPECT_TRUE(f.bit(f.wready));
+
+    f.circuit->setWire(f.awvalid->id(), (uint8_t) 0);
+    f.circuit->setWire(f.wvalid->id(), (uint8_t) 0);
+    f.circuit->setWire(f.bready->id(), (uint8_t) 1);
+    for (int i = 0; i < 20; ++i)
+        f.cycle();
+    EXPECT_EQ(f.peek(0x50), 0x44332211u);
 }
 
 TEST(AxiBridgeTest, WriteReachesMemory) {
