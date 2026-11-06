@@ -273,6 +273,9 @@ def main():
     ap.add_argument("--name", default=None, help="DLL 文件名/元件实例名（默认取顶层模块名）")
     ap.add_argument("--type", default=None, dest="type_name", help="描述符里的元件类型名")
     ap.add_argument("-o", "--outdir", default=None, help="输出目录（默认 verilog_dll/<top>）")
+    ap.add_argument("--verilator-arg", action="append", default=[], metavar="ARG",
+                    help="额外传给 verilator 的参数，可重复；"
+                         "带 - 的值写成 --verilator-arg=-Wno-fatal")
     args = ap.parse_args()
 
     # 生成的工程要直接编 ${VERILATOR_INCLUDE}/verilated.cpp，路径无效时
@@ -295,7 +298,8 @@ def main():
         base = pathlib.Path("verilog_dll")
         base.mkdir(parents=True, exist_ok=True)
         probe = pathlib.Path(tempfile.mkdtemp(prefix=".probe_", dir=base))
-        ast, header, top = verilate(args.vfiles, None, probe)
+        ast, header, top = verilate(args.vfiles, None, probe,
+                                    verilator_args=args.verilator_arg)
         out = base / top
     out.mkdir(parents=True, exist_ok=True)
     obj_dir = out / "obj_dir"
@@ -308,7 +312,8 @@ def main():
     else:
         if probe is not None:
             shutil.rmtree(probe, ignore_errors=True)
-        ast, header, top = verilate(args.vfiles, top, obj_dir)
+        ast, header, top = verilate(args.vfiles, top, obj_dir,
+                                    verilator_args=args.verilator_arg)
     name = args.name or top
     type_name = args.type_name or top
     ports, clocks = parse_design(ast, top)

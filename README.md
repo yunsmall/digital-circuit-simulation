@@ -66,6 +66,12 @@ Requires **Verilator 5.026 or newer**. The generators read Verilator's JSON AST
 `Invalid option` — for example Ubuntu 24.04 ships 5.020, so install a newer
 Verilator first.
 
+Verilator treats warnings as fatal by default (`%Error: Exiting due to N
+warning(s)`). Both generator scripts accept `--verilator-arg=...` (repeatable)
+to pass any Verilator option through, e.g. `--verilator-arg=-Wno-fatal` to let
+width/lint warnings through or `--verilator-arg=-Wno-WIDTHEXPAND` for a single
+category.
+
 MSYS2/UCRT64 Verilator:
 
 ```bash

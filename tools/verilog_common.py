@@ -90,17 +90,19 @@ def detect_top(ast_path: pathlib.Path):
 
 
 def verilate(src, top, workdir: pathlib.Path, *, verilator_bin=None,
-             verilator_root=None):
+             verilator_root=None, verilator_args=None):
     """生成模型源码，并额外导出一份 AST（端口/时序信息都从 AST 读）。
 
     src 可以是单个路径或路径列表：多文件模块（子模块、include 的 .v）要一起交给
     Verilator，它按顶层模块名展开。top 为 None 时从 AST 判定顶层（不能按文件名猜：
-    顶层不一定在第一个文件里）。返回 (ast, header, top)。
+    顶层不一定在第一个文件里）。verilator_args 原样透传给两次 Verilator 调用，
+    例如 ["-Wno-fatal", "-Wno-WIDTH"]。返回 (ast, header, top)。
     """
     if isinstance(src, (list, tuple)):
         srcs = [pathlib.Path(s) for s in src]
     else:
         srcs = [pathlib.Path(src)]
+    extra = list(verilator_args or [])
 
     # 先只导 AST。多文件里如果有一个以上没被实例化的模块，Verilator 自动选顶层
     # 是按命令行顺序挑的，和真实根模块可能不一致，所以顶层一律从 AST 判定，
@@ -108,7 +110,7 @@ def verilate(src, top, workdir: pathlib.Path, *, verilator_bin=None,
     ast = workdir / "ast.json"
     top_args = ["--top-module", top] if top else []
     run_verilator([*top_args, "--json-only-output", ast, "--Mdir", workdir / "ast",
-                   *map(str, srcs)], workdir,
+                   *extra, *map(str, srcs)], workdir,
                   verilator_bin=verilator_bin, verilator_root=verilator_root)
     if not top:
         top = detect_top(ast)
@@ -119,7 +121,7 @@ def verilate(src, top, workdir: pathlib.Path, *, verilator_bin=None,
     # --pins-inout-enables：顶层 inout 会被拆成 input + <name>__en + <name>__out，
     # 这是 Verilator 官方支持的双向端口建模方式，正好对应 dcs 的三态总线
     run_verilator(["--cc", "--pins-inout-enables", "--top-module", top,
-                   *map(str, srcs), "--Mdir", workdir], workdir,
+                   *extra, *map(str, srcs), "--Mdir", workdir], workdir,
                   verilator_bin=verilator_bin, verilator_root=verilator_root)
     header = workdir / f"V{top}.h"
     if not header.exists():

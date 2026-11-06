@@ -273,6 +273,9 @@ def main():
     ap.add_argument("--type", default=None, dest="type_name")
     ap.add_argument("--outdir", default=".")
     ap.add_argument("--workdir", default=None)
+    ap.add_argument("--verilator-arg", action="append", default=[], metavar="ARG",
+                    help="额外传给 verilator 的参数，可重复；"
+                         "带 - 的值写成 --verilator-arg=-Wno-fatal")
     args = ap.parse_args()
 
     src = pathlib.Path(args.vfile)
@@ -280,7 +283,8 @@ def main():
     work = pathlib.Path(args.workdir) if args.workdir else \
         pathlib.Path("build_verilog_gen") / (args.top or src.stem)
 
-    ast, header, top = verilate(src, args.top, work)
+    ast, header, top = verilate(src, args.top, work,
+                                verilator_args=args.verilator_arg)
     name = args.name or camel(top)
     type_name = args.type_name or top.lower()
     out = pathlib.Path(args.outdir)
