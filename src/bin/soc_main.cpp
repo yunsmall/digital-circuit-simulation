@@ -157,6 +157,9 @@ void suspendTerminalAndStop(int sig) {
     std::raise(sig);
 }
 void resumeTerminalAfterContinue(int) {
+    // suspendTerminalAndStop 停止前把 SIGTSTP 改回了默认动作，SIGCONT 后必须
+    // 重新注册，否则第二次外部 kill -TSTP 会直接停住而不先恢复终端
+    std::signal(SIGTSTP, suspendTerminalAndStop);
     if (g_raw_wanted) {
         tcsetattr(STDIN_FILENO, TCSANOW, &g_raw_mode);
         g_raw_active = 1;
