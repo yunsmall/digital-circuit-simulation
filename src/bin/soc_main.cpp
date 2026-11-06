@@ -179,13 +179,20 @@ public:
         const DWORD mode = _saved & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
         _active = SetConsoleMode(_h, mode) != 0;
         if (_active) {
-            g_raw_con = _h;
-            g_raw_saved_mode = _saved;
             static bool handler_registered = false;
             if (!handler_registered) {
-                SetConsoleCtrlHandler(restoreConsoleModeOnExit, TRUE);
-                handler_registered = true;
+                // 兜底处理注册失败就退回原控制台模式：否则 Ctrl-Break/关窗
+                // 这类不展开栈的路径没有恢复机会，进程死后终端留在 raw
+                if (SetConsoleCtrlHandler(restoreConsoleModeOnExit, TRUE))
+                    handler_registered = true;
+                else {
+                    SetConsoleMode(_h, _saved);
+                    _active = false;
+                    return;
+                }
             }
+            g_raw_con = _h;
+            g_raw_saved_mode = _saved;
         }
 #else
         if (!::isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &_saved) != 0)
@@ -197,16 +204,20 @@ public:
         raw.c_iflag &= ~(IXON | ICRNL | INLCR | IGNCR);
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
+        // 先把信号处理装好再 tcsetattr：反过来会留一个“已经进 raw、但信号
+        // 仍按默认动作终止”的窗口，终端会永久停在 raw
+        g_raw_saved = _saved;
+        g_raw_mode = raw;
+        g_raw_wanted = 1;
+        g_raw_active = 1;
+        for (int sig: {SIGHUP, SIGTERM, SIGQUIT, SIGINT})
+            std::signal(sig, restoreTerminalAndReraise);
+        std::signal(SIGTSTP, suspendTerminalAndStop);
+        std::signal(SIGCONT, resumeTerminalAfterContinue);
         _active = tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0;
-        if (_active) {
-            g_raw_saved = _saved;
-            g_raw_mode = raw;
-            g_raw_wanted = 1;
-            g_raw_active = 1;
-            for (int sig: {SIGHUP, SIGTERM, SIGQUIT, SIGINT})
-                std::signal(sig, restoreTerminalAndReraise);
-            std::signal(SIGTSTP, suspendTerminalAndStop);
-            std::signal(SIGCONT, resumeTerminalAfterContinue);
+        if (!_active) {
+            g_raw_wanted = 0;
+            g_raw_active = 0;
         }
 #endif
     }
