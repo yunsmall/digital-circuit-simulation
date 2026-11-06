@@ -6,7 +6,6 @@
 #include <cassert>
 #include <format>
 #include <map>
-#include <queue>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -15,22 +14,30 @@
 
 namespace dsc {
 
-std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
-    int C = (int) comb.size();
+// Kahn 拓扑排序的通用内核：按输出线网的驱动关系建边，返回排好序的部分和
+// 因成环剩下的节点。成环怎么处理由调用者决定（组合三态环交给阶段 2b，
+// 时钟图里的环必须报错）
+struct TopoResult {
+    std::vector<Component *> order;
+    std::vector<Component *> leftovers;
+};
+
+TopoResult topoOrder(const std::vector<Component *> &nodes) {
+    const int C = (int) nodes.size();
     std::unordered_map<Component *, int> idx;
     for (int i = 0; i < C; i++)
-        idx[comb[i]] = i;
+        idx[nodes[i]] = i;
 
     std::vector<std::vector<int>> adj(C);
     std::vector<int> indeg(C, 0);
     std::unordered_map<int, Component *> net_writer;
-    for (auto *c: comb)
+    for (auto *c: nodes)
         for (auto &p: c->outputs())
             if (p->net())
                 net_writer[p->net()->id()] = c;
 
     for (int bi = 0; bi < C; bi++) {
-        auto *b = comb[bi];
+        auto *b = nodes[bi];
         // 这里不能用 getCombinationalDeps()：它为三态/时序输出返回空依赖，那是
         // 环路检测的语义（三态可断开，不能据此判环）。排序是数据流顺序，三态门
         // 仍必须排在驱动它输入的组合元件之后，否则它读到的是上一拍的输入
@@ -49,7 +56,7 @@ std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
         }
     }
 
-    std::vector<Component *> result;
+    TopoResult r;
     std::vector<int> q;
     for (int i = 0; i < C; i++)
         if (indeg[i] == 0)
@@ -57,15 +64,39 @@ std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
     while (!q.empty()) {
         int u = q.back();
         q.pop_back();
-        result.push_back(comb[u]);
+        r.order.push_back(nodes[u]);
         for (int v: adj[u])
             if (--indeg[v] == 0)
                 q.push_back(v);
     }
     for (int i = 0; i < C; i++)
         if (indeg[i] > 0)
-            result.push_back(comb[i]);
-    return result;
+            r.leftovers.push_back(nodes[i]);
+    return r;
+}
+
+std::vector<Component *> topologicalSort(const std::vector<Component *> &comb) {
+    auto r = topoOrder(comb);
+    // 组合环（只能经三态总线绕成）保留原序追加，交给阶段 2b 迭代兜底
+    r.order.insert(r.order.end(), r.leftovers.begin(), r.leftovers.end());
+    return r.order;
+}
+
+// 时钟源和组合元件的联合排序。时钟源之间可能经过组合逻辑互相驱动
+// （clkgen → 反相器 → clkdiv）：只把时钟源排在一起、组合逻辑全放到后面，
+// 分频器就会读到上一拍的输入，输出相位晚一拍。两类元件放进同一张图，谁在前
+// 由实际驱动关系决定。剩下的环里只要有时钟源，就无法给出确定的时钟树；
+// 纯组合环照旧保留原序，交给阶段 2b
+std::vector<Component *> topologicalSortWithClocks(const std::vector<Component *> &comb,
+                                                   const std::vector<Component *> &clock_sources) {
+    std::vector<Component *> nodes = comb;
+    nodes.insert(nodes.end(), clock_sources.begin(), clock_sources.end());
+    auto r = topoOrder(nodes);
+    for (auto *c: r.leftovers)
+        if (c->isClockSource())
+            throw std::logic_error("时钟源之间存在环：时钟输出直接或经组合逻辑驱动了另一个时钟源的输入");
+    r.order.insert(r.order.end(), r.leftovers.begin(), r.leftovers.end());
+    return r.order;
 }
 
 namespace {
@@ -118,6 +149,7 @@ std::set<Component *> computeTriAffected(const std::vector<Component *> &sorted,
 }
 
 // 组合阶段：执行组合元件，并把非总线三态输出立即传播到 _w。
+// 列表里也可以混入时钟源（联合拓扑序），它们只生成 seq 调用。
 // track_change 为真时顺带记录三态线网有没有变化（阶段 2b 的收敛判据）
 void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
                    const std::set<Component *> *only,
@@ -125,6 +157,10 @@ void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
     for (auto *c: sorted) {
         if (only && !only->count(c))
             continue;
+        if (c->isClockSource() && c->hasSequential()) {
+            oss << "    " << c->funcName_seq() << "();\n";
+            continue;
+        }
         if (!c->hasCombinational())
             continue;
         oss << "    " << c->funcName_comb() << "();\n";
@@ -463,78 +499,17 @@ std::string generateCircuitC(void *circuit_ptr, const void *stop_flag_ptr, std::
     // 电路里没有三态元件时集合为空，阶段2b 就是零开销
     std::set<Component *> tri_affected = computeTriAffected(sorted, components);
 
-    // 时钟源先于组合逻辑执行：clkgen 的输出直写 _w，组合锥（反相器/门）才能
-    // 用本拍的时钟电平重算，边沿检测也才能看到本拍的组合输出。放到阶段 3 会让
-    // 直连时钟的元件和经过组合逻辑的时钟差一拍。
-    //
-    // 多个时钟源之间按"输出线网 →（可穿过组合逻辑）→ 另一个时钟源的输入"的
-    // 实际依赖拓扑排序：clkdiv 自动排在驱动它的 clkgen 之后，多级分频和以后
-    // 新增的派生时钟源都不需要改这里。时钟源之间成环说明不是合法的时钟树
+    // 时钟源和组合逻辑按联合拓扑序执行：clkgen 的输出直写 _w，下游组合锥
+    // （反相器/门）用本拍的时钟电平重算；时钟源自身的输入若由组合逻辑驱动
+    // （clkgen → 反相器 → clkdiv），那个组合元件会排在它前面，分频器读到的
+    // 是本拍的值，不会整体晚一拍。时钟图里出现环说明不是合法的时钟树
     std::vector<Component *> clock_sources;
     for (auto &c: components)
         if (c->isClockSource() && c->hasSequential())
             clock_sources.push_back(c.get());
-    if (clock_sources.size() > 1) {
-        std::set<Component *> clock_set(clock_sources.begin(), clock_sources.end());
-        std::map<int, std::vector<Component *>> consumers;
-        for (auto &c: components)
-            for (auto &in: c->inputs())
-                if (in->netId() >= 0)
-                    consumers[in->netId()].push_back(c.get());
-
-        std::map<Component *, std::vector<Component *>> succ;
-        std::map<Component *, int> indeg;
-        for (auto *src: clock_sources) {
-            std::set<Component *> visited{src};
-            std::vector<int> work;
-            for (auto &o: src->outputs())
-                if (o->netId() >= 0)
-                    work.push_back(o->netId());
-            while (!work.empty()) {
-                int nid = work.back();
-                work.pop_back();
-                auto it = consumers.find(nid);
-                if (it == consumers.end())
-                    continue;
-                for (auto *dst: it->second) {
-                    if (!visited.insert(dst).second)
-                        continue;
-                    if (dst->isClockSource() && clock_set.count(dst)) {
-                        succ[src].push_back(dst);
-                        indeg[dst]++;
-                    } else if (dst->hasCombinational()) {
-                        // 时钟可以经过组合逻辑再驱动下一个源（反相/门控）
-                        for (auto &o: dst->outputs())
-                            if (o->netId() >= 0)
-                                work.push_back(o->netId());
-                    }
-                }
-            }
-        }
-        std::vector<Component *> ordered;
-        std::queue<Component *> ready;
-        for (auto *c: clock_sources)
-            if (indeg[c] == 0)
-                ready.push(c);
-        while (!ready.empty()) {
-            auto *c = ready.front();
-            ready.pop();
-            ordered.push_back(c);
-            for (auto *d: succ[c])
-                if (--indeg[d] == 0)
-                    ready.push(d);
-        }
-        if (ordered.size() != clock_sources.size())
-            throw std::logic_error("时钟源之间存在环：时钟输出直接或经组合逻辑驱动了另一个时钟源的输入");
-        clock_sources = std::move(ordered);
-    }
-    if (!clock_sources.empty()) {
-        oss << "    // 时钟源（先于组合逻辑，按实际依赖排序）\n";
-        for (auto *c: clock_sources)
-            oss << "    " << c->funcName_seq() << "();\n";
-    }
-    oss << "    // 阶段1: 组合逻辑\n";
-    emitCombStage(oss, sorted, nullptr, bus_nets, false);
+    auto stage_order = topologicalSortWithClocks(comb, clock_sources);
+    oss << "    // 阶段1: 时钟源 + 组合逻辑（联合拓扑序）\n";
+    emitCombStage(oss, stage_order, nullptr, bus_nets, false);
     if (!tri_affected.empty()) oss << "    int _bus_changed = 0;\n";
     oss << "    // 阶段2: 总线决议 + 时序输出传播\n";
     emitPropagation(oss, components, bus_nets, false);

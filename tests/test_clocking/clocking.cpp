@@ -10,6 +10,7 @@
 #include <dcs/Circuit.h>
 #include <dcs/Component.h>
 #include <dcs/ComponentFactory.h>
+#include <dcs/components/combinational/Gates.h>
 #include <dcs/components/platform/CLINT.h>
 #include <dcs/components/sequential/Sequential.h>
 
@@ -717,4 +718,90 @@ TEST(Clocking, UnknownExpressionVariableFails) {
     auto c = Circuit::fromJson(json, error, "", nullptr);
     EXPECT_EQ(c, nullptr);
     EXPECT_NE(error.find("no_such_var"), std::string::npos) << error;
+}
+
+// 分频器也是时钟源：下游边沿元件必须在分频输出上升沿的同一拍计数。
+// 联合拓扑序把 clkgen 排在 clkdiv 前面，二者都在组合阶段之前执行
+TEST(Clocking, ClockDividerDrivesDownstreamInSameTick) {
+    Circuit c;
+    auto *g = c.addComponent(std::make_unique<ClockGen>("g", 1, 1, PinEdge::None));
+    auto *div = c.addComponent(std::make_unique<ClockDivider>("div", 2));
+    auto *ec = c.addComponent(std::make_unique<EdgeCounter>("ec", PinEdge::Rising));
+    Net *clk = c.createNet("clk"), *dv = c.createNet("dv"), *cnt = c.createNet("cnt");
+    c.connect(g, "clk", clk);
+    c.connect(div, "clk", clk);
+    c.connect(div, "out", dv);
+    c.connect(ec, "clk", dv);
+    c.connect(ec, "count", cnt);
+    auto e = c.compile();
+    ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
+    c.init();
+    // 2 分频：第一个 clk 上升沿把 counter 推到 1、输出变 0，第二个沿回 0、输出变 1
+    const uint8_t expect[8] = {0, 0, 1, 1, 0, 0, 1, 1};
+    uint32_t prev_count = 0;
+    for (int i = 0; i < 8; ++i) {
+        c.tick();
+        uint8_t lv = c.getWire(dv->id())[0] & 1;
+        uint32_t now = readCount(c, cnt);
+        EXPECT_EQ(lv, expect[i]) << "第 " << i << " 拍分频输出不对";
+        const bool should_rise = (i == 2 || i == 6);
+        EXPECT_EQ(now, prev_count + (should_rise ? 1u : 0u)) << "第 " << i << " 拍计数不对";
+        prev_count = now;
+    }
+}
+
+// 时钟经组合逻辑（反相器）再驱动分频器：分频器必须读本拍的组合输出，
+// 不能读到上一拍。联合拓扑序应排成 clkgen → 反相器 → clkdiv
+TEST(Clocking, ClockDividerSeesCombinationalClockInSameTick) {
+    Circuit c;
+    auto *g = c.addComponent(std::make_unique<ClockGen>("g", 1, 1, PinEdge::None));
+    auto *inv = c.addComponent(std::make_unique<UnaryGate>("inv", 1, true));
+    auto *div = c.addComponent(std::make_unique<ClockDivider>("div", 2));
+    auto *ec = c.addComponent(std::make_unique<EdgeCounter>("ec", PinEdge::Rising));
+    Net *clk = c.createNet("clk"), *nclk = c.createNet("nclk"), *dv = c.createNet("dv"), *cnt = c.createNet("cnt");
+    c.connect(g, "clk", clk);
+    c.connect(inv, "in", clk);
+    c.connect(inv, "out", nclk);
+    c.connect(div, "clk", nclk);
+    c.connect(div, "out", dv);
+    c.connect(ec, "clk", dv);
+    c.connect(ec, "count", cnt);
+    auto e = c.compile();
+    ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
+    c.init();
+    // 反相时钟的上升沿出现在 tick2/4/6/8；分频输出在 tick1 就是高，
+    // tick2 回 0、tick4 再变 1。若分频器晚一拍，tick2 会读到旧的 nclk=0，
+    // 输出保持 1，序列立刻对不上
+    const uint8_t expect[8] = {1, 0, 0, 1, 1, 0, 0, 1};
+    uint32_t prev_count = 0;
+    for (int i = 0; i < 8; ++i) {
+        c.tick();
+        uint8_t lv = c.getWire(dv->id())[0] & 1;
+        uint32_t now = readCount(c, cnt);
+        EXPECT_EQ(lv, expect[i]) << "第 " << i << " 拍分频输出不对（分频器相位晚了一拍？）";
+        const bool should_rise = (i == 0 || i == 3 || i == 7);
+        EXPECT_EQ(now, prev_count + (should_rise ? 1u : 0u)) << "第 " << i << " 拍计数不对";
+        prev_count = now;
+    }
+}
+
+// 两个时钟源经组合逻辑互相驱动：联合拓扑序排不出顺序，必须报错
+TEST(Clocking, ClockSourceCycleThroughCombRejected) {
+    Circuit c;
+    auto *d1 = c.addComponent(std::make_unique<ClockDivider>("d1", 2));
+    auto *d2 = c.addComponent(std::make_unique<ClockDivider>("d2", 2));
+    auto *i1 = c.addComponent(std::make_unique<UnaryGate>("i1", 1, true));
+    auto *i2 = c.addComponent(std::make_unique<UnaryGate>("i2", 1, true));
+    Net *o1 = c.createNet("o1"), *o2 = c.createNet("o2"), *n1 = c.createNet("n1"), *n2 = c.createNet("n2");
+    c.connect(d1, "out", o1);
+    c.connect(i1, "in", o1);
+    c.connect(i1, "out", n2);
+    c.connect(d2, "clk", n2);
+    c.connect(d2, "out", o2);
+    c.connect(i2, "in", o2);
+    c.connect(i2, "out", n1);
+    c.connect(d1, "clk", n1);
+    auto e = c.compile();
+    EXPECT_NE(e.code, ErrorCode::OK);
+    EXPECT_NE(e.message.find("时钟源之间存在环"), std::string::npos) << e.message;
 }
