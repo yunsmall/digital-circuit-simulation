@@ -941,6 +941,11 @@ void Circuit::tickBatch(uint64_t n) {
     }
 }
 
+void Circuit::interruptTickForever() {
+    // JIT 的死循环每拍检查这个标志（和总线冲突用的是同一个）
+    _stop_flag = 1;
+}
+
 void Circuit::tickForever() {
     if (!_compiled)
         return;

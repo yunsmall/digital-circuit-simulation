@@ -39,6 +39,7 @@
 #include <conio.h>
 #include <io.h>
 #else
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -110,6 +111,52 @@ int readConsoleChar() {
     return n == 1 ? (int) c : -1;
 #endif
 }
+
+// 交互串口用的宿主终端模式：关掉行规程对 Ctrl-C 的解释，让它变成普通
+// 0x03 字节送进客户机（客户机 tty 再把它变成前台进程的 SIGINT）。
+// 输出侧保留 OPOST，否则程序自己打印的 '\n' 不会回到行首。
+// 构造失败（stdin 不是终端）时保持原样，此时 Ctrl-C 仍是宿主信号
+class TerminalRawMode {
+public:
+    TerminalRawMode() {
+#ifdef _WIN32
+        _h = GetStdHandle(STD_INPUT_HANDLE);
+        if (_h == INVALID_HANDLE_VALUE || !GetConsoleMode(_h, &_saved))
+            return;
+        // 关掉 Ctrl-C 控制事件处理，它才会作为 0x03 进入输入流
+        const DWORD mode = _saved & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+        _active = SetConsoleMode(_h, mode) != 0;
+#else
+        if (!::isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &_saved) != 0)
+            return;
+        termios raw = _saved;
+        raw.c_lflag &= ~(ICANON | ECHO | ISIG | IEXTEN);
+        raw.c_iflag &= ~IXON;
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        _active = tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0;
+#endif
+    }
+    ~TerminalRawMode() {
+#ifdef _WIN32
+        if (_active) SetConsoleMode(_h, _saved);
+#else
+        if (_active) tcsetattr(STDIN_FILENO, TCSANOW, &_saved);
+#endif
+    }
+    TerminalRawMode(const TerminalRawMode &) = delete;
+    TerminalRawMode &operator=(const TerminalRawMode &) = delete;
+    bool active() const { return _active; }
+
+private:
+#ifdef _WIN32
+    HANDLE _h = INVALID_HANDLE_VALUE;
+    DWORD _saved = 0;
+#else
+    termios _saved{};
+#endif
+    bool _active = false;
+};
 
 dsc::WishboneMemory *firstMemory(dsc::Circuit &circuit) {
     return dcs_cli::findFirstComponent<dsc::WishboneMemory>(circuit);
@@ -393,11 +440,27 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     }
     // 只在 --forever 时起读线程：有限 tick 模式下会返回、circuit 被析构，
     // detach 的线程再去 push 就是访问已释放对象
+    std::atomic<bool> quit_requested{false};
     std::atomic<bool> *reader_stop = nullptr;
+    // 只有纯交互（--forever 且没有 --watch）才改终端模式；--watch 用文件喂
+    // 命令，stdin 不参与，Ctrl-C 保持宿主的默认行为
+    std::unique_ptr<TerminalRawMode> raw_mode;
+    if (forever && watch_file.empty() && uart_feed)
+        raw_mode = std::make_unique<TerminalRawMode>();
     if (forever && uart_feed) {
         // 停止标志放堆上：读线程持有它，runSoc 返回后也不能让栈帧先消失
         reader_stop = new std::atomic<bool>(false);
-        std::thread([uart_feed, reader_stop] {
+        dsc::Circuit *circ_ptr = circuit.get();
+        std::thread([uart_feed, reader_stop, &quit_requested, circ_ptr] {
+            bool ctrl_a = false;
+            auto inject = [&](uint8_t b) {
+                while (!uart_feed->push(b)) {
+                    if (reader_stop->load(std::memory_order_acquire))
+                        return false;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                return true;
+            };
             for (;;) {
                 if (reader_stop->load(std::memory_order_acquire))
                     return;
@@ -409,11 +472,30 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
-                while (!uart_feed->push((uint8_t) ch)) {
-                    if (reader_stop->load(std::memory_order_acquire))
-                        return;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                // Ctrl-A 是宿主侧的转义前缀（QEMU 风格）：Ctrl-A x 退出仿真，
+                // Ctrl-A Ctrl-A 发送字面 0x01，其它组合把 Ctrl-A 本身送进去
+                if (ch == 0x01) {
+                    if (ctrl_a) {
+                        ctrl_a = false;
+                        if (!inject(0x01))
+                            return;
+                    } else {
+                        ctrl_a = true;
+                    }
+                    continue;
                 }
+                if (ctrl_a) {
+                    ctrl_a = false;
+                    if (ch == 'x' || ch == 'X') {
+                        quit_requested.store(true, std::memory_order_release);
+                        circ_ptr->interruptTickForever();
+                        return;
+                    }
+                    if (!inject(0x01))
+                        return;
+                }
+                if (!inject((uint8_t) ch))
+                    return;
             }
         }).detach();
     }
@@ -446,13 +528,20 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         if (watch_file.empty()) {
             if (!uart_feed && !has_uart_in)
                 std::cerr << "警告: 电路里没有 uart_feed/uart_in，键盘输入不会送进串口\n";
-            std::cout << "无限仿真中（Ctrl+C 停止）\n" << std::flush;
+            if (raw_mode && raw_mode->active())
+                std::cout << "无限仿真中（Ctrl+C 转发给客户机，Ctrl-A x 退出）\n";
+            else
+                std::cout << "无限仿真中（Ctrl+C 停止）\n";
+            std::cout << std::flush;
             circuit->tickForever();
             // tickForever 只在运行期错误时返回；不查错误会继续走到 --watch 分支并报出误导性的参数错误
             if (circuit->hasError()) {
                 std::cerr << std::format("运行错误: {}\n", circuit->tickError().message);
                 return 1;
             }
+            // interruptTickForever() 是正常打断，不置错误
+            if (quit_requested.load(std::memory_order_acquire))
+                return finish(0);
         }
         // --watch：仿真不退出，外部往文件里追加内容就是往串口发命令。
         // 每批 tick 结束后检查文件增量，这样改硬件模型后跑一次就能反复验证，

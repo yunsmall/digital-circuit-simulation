@@ -125,6 +125,10 @@ public:
     void tickBatch(uint64_t n);
     // JIT 内的死循环，一直跑到进程被 Ctrl+C 终止；未编译/有错误时直接返回
     void tickForever();
+    // 只打断 tickForever 的 JIT 死循环，让这个阻塞调用尽快返回；它不是
+    // 仿真生命周期操作：不 reset、不 deinit，元件也不需要对它做任何响应。
+    // 正常打断时 hasError() 仍为 false，调用方据此区分"用户要求退出"和运行错误
+    void interruptTickForever();
     void reset(); // 重置仿真状态（仅清零线网和时序状态，不重建 DLL 实例）
     void deinit(); // 结束仿真（销毁 DLL 状态、调用 deinit 等）
     // 线网槽属于 JIT：未编译或结构已改时读写不做任何事

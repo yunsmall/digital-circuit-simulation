@@ -12,11 +12,11 @@
 
 生成到 <输出目录>（默认 verilog_dll/<top>/）:
     obj_dir/                 Verilator 模型和 AST（保留，便于排查/重建）
-    <name>_wrapper.cpp       包装层（可以直接改；已存在时脚本不会覆盖）
+    <name>_wrapper.cpp       包装层（可以直接改；已存在时保留，--force 强制覆盖）
     sc_time_stamp.cpp        Verilator 在 COFF 上需要的弱符号替身
     CMakeLists.txt           独立工程，产物固定落到 dist/
     <name>.json              把模块所有端口接成线网的冒烟电路，可直接 dcs 运行
-    dist/<name>.dll          运行 `cmake -S . -B build && cmake --build build` 后出现
+    dist/<平台产物名>        cmake 构建后出现（.dll / lib*.so / lib*.dylib）
 """
 import argparse
 import os
@@ -276,6 +276,8 @@ def main():
     ap.add_argument("--verilator-arg", action="append", default=[], metavar="ARG",
                     help="额外传给 verilator 的参数，可重复；"
                          "带 - 的值写成 --verilator-arg=-Wno-fatal")
+    ap.add_argument("--force", action="store_true",
+                    help="覆盖已存在的 <name>_wrapper.cpp（默认保留，方便手改胶水层）")
     args = ap.parse_args()
 
     # 生成的工程要直接编 ${VERILATOR_INCLUDE}/verilated.cpp，路径无效时
@@ -333,8 +335,8 @@ def main():
 
     sequential = bool(clocks)
     wrapper = out / f"{name}_wrapper.cpp"
-    if wrapper.exists():
-        print(f"包装层已存在，保留: {wrapper}（删掉它可重新生成）")
+    if wrapper.exists() and not args.force:
+        print(f"包装层已存在，保留: {wrapper}（用 --force 覆盖重新生成）")
     else:
         wrapper.write_text(gen_wrapper(top, type_name, ports, sequential), encoding="utf-8")
     (out / "sc_time_stamp.cpp").write_text(SC_TIME_STUB, encoding="utf-8")

@@ -97,8 +97,9 @@ cmake --build my_demo/build
 
 `my_demo/top.json` is a smoke circuit — replace the `constant`/`clkgen` components
 with your own stimulus (port names, widths and comb/seq are read from Verilator's
-AST). Re-run the first command after editing Verilog; `<name>_wrapper.cpp` is kept
-when it already exists (delete it to regenerate for new ports).
+AST). `<name>_wrapper.cpp` is the glue layer and is yours to edit: the generator
+keeps it when it already exists, so re-running the command never loses your
+changes. Pass `--force` to overwrite it (e.g. after the port list changed).
 
 ### Generating components from Verilog
 
