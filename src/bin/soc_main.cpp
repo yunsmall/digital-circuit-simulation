@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -116,6 +117,35 @@ int readConsoleChar() {
 // 0x03 字节送进客户机（客户机 tty 再把它变成前台进程的 SIGINT）。
 // 输出侧保留 OPOST，否则程序自己打印的 '\n' 不会回到行首。
 // 构造失败（stdin 不是终端）时保持原样，此时 Ctrl-C 仍是宿主信号
+#ifdef _WIN32
+namespace {
+HANDLE g_raw_con = INVALID_HANDLE_VALUE;
+DWORD g_raw_saved_mode = 0;
+BOOL WINAPI restoreConsoleModeOnExit(DWORD type) {
+    // 正常退出走析构；这里兜住 Ctrl-Break/关窗这类不会栈展开的终止路径
+    if (g_raw_con != INVALID_HANDLE_VALUE &&
+        (type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT ||
+         type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT))
+        SetConsoleMode(g_raw_con, g_raw_saved_mode);
+    return FALSE; // 继续默认处理（终止进程）
+}
+} // namespace
+#else
+namespace {
+termios g_raw_saved{};
+volatile std::sig_atomic_t g_raw_active = 0;
+// SIGHUP/SIGTERM 等不会展开栈，析构不会执行；这里先把终端恢复再按默认处理
+void restoreTerminalAndReraise(int sig) {
+    if (g_raw_active) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_raw_saved);
+        g_raw_active = 0;
+    }
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+} // namespace
+#endif
+
 class TerminalRawMode {
 public:
     TerminalRawMode() {
@@ -126,22 +156,41 @@ public:
         // 关掉 Ctrl-C 控制事件处理，它才会作为 0x03 进入输入流
         const DWORD mode = _saved & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
         _active = SetConsoleMode(_h, mode) != 0;
+        if (_active) {
+            g_raw_con = _h;
+            g_raw_saved_mode = _saved;
+            static bool handler_registered = false;
+            if (!handler_registered) {
+                SetConsoleCtrlHandler(restoreConsoleModeOnExit, TRUE);
+                handler_registered = true;
+            }
+        }
 #else
         if (!::isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &_saved) != 0)
             return;
         termios raw = _saved;
         raw.c_lflag &= ~(ICANON | ECHO | ISIG | IEXTEN);
-        raw.c_iflag &= ~IXON;
+        // 不转换回车/换行：和 QEMU 的串口一致，Enter 以 CR 送到客户机，
+        // 由客户机 tty 自己的行规程决定怎么处理（vi 等原始模式程序依赖 CR）
+        raw.c_iflag &= ~(IXON | ICRNL | INLCR | IGNCR);
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
         _active = tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0;
+        if (_active) {
+            g_raw_saved = _saved;
+            g_raw_active = 1;
+            for (int sig: {SIGHUP, SIGTERM, SIGQUIT, SIGINT})
+                std::signal(sig, restoreTerminalAndReraise);
+        }
 #endif
     }
     ~TerminalRawMode() {
 #ifdef _WIN32
         if (_active) SetConsoleMode(_h, _saved);
+        g_raw_con = INVALID_HANDLE_VALUE;
 #else
         if (_active) tcsetattr(STDIN_FILENO, TCSANOW, &_saved);
+        g_raw_active = 0;
 #endif
     }
     TerminalRawMode(const TerminalRawMode &) = delete;
