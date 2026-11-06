@@ -522,7 +522,10 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             // 线程继续跑，进程退出时由系统回收
         }
     }
-    // 守卫覆盖本函数之后的所有返回路径（含 --feed 打开失败这类错误退出）
+    // 守卫覆盖本函数之后的所有返回路径（含 --feed 打开失败这类错误退出）。
+    // 读线程可能还阻塞在 read 上：守卫只置停止标志、故意泄漏 Circuit，
+    // UartFeed 也没有 simDeinit，所以 finish 里的 deinit 不会让读线程
+    // 访问已释放对象
     ForeverReaderGuard reader_guard{reader_stop, circuit};
 
     // --feed：把一段脚本预先塞进串口输入队列，启动完成后自动执行。
