@@ -52,3 +52,4 @@ images/
 # AI 审查用的临时报告，不入库
 __pycache__/
 *.review.md
+review/
