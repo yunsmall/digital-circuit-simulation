@@ -60,7 +60,13 @@ ctest --test-dir build_tcc --output-on-failure
 
 ### Verilator integration (optional)
 
-Requires MSYS2/UCRT64 Verilator:
+Requires **Verilator 5.026 or newer**. The generators read Verilator's JSON AST
+(`--json-only-output`, added in 5.022) and model top-level `inout` ports with
+`--pins-inout-enables` (added in 5.026). Older packages fail with
+`Invalid option` — for example Ubuntu 24.04 ships 5.020, so install a newer
+Verilator first.
+
+MSYS2/UCRT64 Verilator:
 
 ```bash
 cmake -B build \
@@ -120,7 +126,8 @@ cmake --build verilog_dll/my_top/build
 The output directory contains the Verilator model (`obj_dir/`), the generated
 wrapper (`<name>_wrapper.cpp`, editable; never overwritten by the script),
 `CMakeLists.txt` (pick any compiler/generator; artifacts go to `dist/`), and a
-smoke-test circuit JSON whose `path` points at `dist/<name>.dll`.
+smoke-test circuit JSON whose `path` points at the platform's artifact name in
+`dist/` (`<name>.dll`, `lib<name>.so` or `lib<name>.dylib`).
 
 Reference it from a circuit with:
 
