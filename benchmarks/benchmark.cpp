@@ -256,8 +256,12 @@ void runOne(const std::string &path, long long ticks, int repeat, std::vector<Re
             r.ticks = i * 2;
             r.done_cycles = done;
             if (f.cpu && done == 0)
-                std::fprintf(stderr, "  [%s] 未完成: pc=0x%llx mcause=%u mepc=0x%x mtval=0x%x\n", r.name.c_str(),
-                             (unsigned long long) f.cpu->pc(), f.cpu->mcause(), f.cpu->mepc(), f.cpu->mtval());
+                std::fprintf(stderr, "  [%s] 未完成: pc=0x%llx mcause=%llu mepc=0x%llx mtval=0x%llx\n",
+                             r.name.c_str(),
+                             (unsigned long long) f.cpu->pc(),
+                             (unsigned long long) f.cpu->mcause(),
+                             (unsigned long long) f.cpu->mepc(),
+                             (unsigned long long) f.cpu->mtval());
             if (f.cpu)
                 std::fprintf(stderr, "  [%s] icache 命中 %llu / 缺失 %llu\n", r.name.c_str(),
                              (unsigned long long) f.cpu->icacheHits(), (unsigned long long) f.cpu->icacheMisses());

@@ -280,7 +280,7 @@ TEST(TruthTable, ReportsRuntimeTickError) {
     c.connect(inv, "out", nx);
     mustCompile(c);
     c.init();
-    c.setWire(en->id(), {0});
+    c.setWire(en->id(), 0);
 
     TruthTable t;
     std::string err;

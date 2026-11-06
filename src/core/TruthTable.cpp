@@ -86,7 +86,7 @@ bool computeTruthTable(Circuit &c, const std::vector<std::string> &inputs, const
     for (uint32_t combo = 0; combo < total; combo++) {
         for (int k = 0; k < n; k++) {
             const uint8_t bit = (uint8_t) ((combo >> (n - 1 - k)) & 1u);
-            c.setWire(in_nets[k]->id(), {bit});
+            c.setWire(in_nets[k]->id(), bit);
         }
         for (int i = 0; i < SETTLE; i++)
             c.tick();

@@ -2917,7 +2917,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                             s.regs[10] = 0;
                             s.regs[11] = 0;
                         } else {
-                            s.regs[10] = (uint64_t) -2; // SBI_ERR_NOT_SUPPORTED
+                            s.regs[10] = static_cast<XLen>(-2); // SBI_ERR_NOT_SUPPORTED
                             s.regs[11] = 0;
                         }
                         break;
@@ -2964,7 +2964,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
                         s.regs[11] = 0;
                         break;
                     default:
-                        s.regs[10] = (uint64_t) -2; // SBI_ERR_NOT_SUPPORTED
+                        s.regs[10] = static_cast<XLen>(-2); // SBI_ERR_NOT_SUPPORTED
                         s.regs[11] = 0;
                         break;
                     }
