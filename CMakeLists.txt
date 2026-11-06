@@ -550,6 +550,11 @@ install(FILES
 
 # ---- Verilator 集成（可选）----
 if(DCS_BUILD_VERILOG)
+    # find_package 设置的 VERILATOR_BIN_COMMAND 只在调用目录及其子目录可见；
+    # 下面 dcs_verilog_models 是在本目录调用 verilate() 的，必须在同一作用域
+    # 先加载包，否则命令里会缺 verilator 可执行文件（cmake -E env 报
+    # unknown option '--compiler'）
+    find_package(verilator CONFIG REQUIRED)
     add_subdirectory(verilog_test)
 
     # tools/verilog2dcs.py 生成的元件：verilog_gen/<top>/ 放 Verilog 源和
