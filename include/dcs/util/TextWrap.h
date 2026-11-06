@@ -70,7 +70,9 @@ inline std::string wrapDisplayText(const std::string &text, std::size_t width, s
 }
 
 // 重排 cxxopts 的 help：带"选项 + 两空格 + 描述"的行按描述列折行，
-// 其余超宽行按整行折。输入必须是没被 cxxopts 折过的（宽度设得很大）
+// 其余超宽行按整行折。输入必须是没被 cxxopts 折过的（宽度设得很大）。
+// 描述内部的换行不在 cxxopts help 的行结构里（选项行靠双空格分列），
+// 这里按独立行处理；本项目的帮助文本不含这种换行
 inline std::string formatHelp(const std::string &help, std::size_t width = 100) {
     std::istringstream in(help);
     std::string out, line;
