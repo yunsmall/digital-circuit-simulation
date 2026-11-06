@@ -48,11 +48,31 @@ namespace {
 struct State {
     std::unique_ptr<VerilatedContext> ctx = std::make_unique<VerilatedContext>();
     V@TOP@ m{ctx.get()};
+    // 哪些输入接在伪时钟线上：这些线在 dcs 里电平恒 0，必须由这里合成时钟沿。
+    // 数组长度固定按端口数生成，没有输入时留 1 字节占位
+    uint8_t pseudo[@NIN_OR_1@] = {};
+    bool any_pseudo = false;
 };
 } // namespace
 
 @INPUT_ARR@
 @OUTPUT_ARR@
+// dcs 运行时通过 dcs_dll_input_edges 读取每个输入的边沿依赖（0 无 / 1 上升 /
+// 2 下降 / 3 任意变化）。导出的是数组本身，DllComponent 直接取符号地址当数组用
+@INPUT_EDGES@
+
+// dcs 编译电路时告诉我们哪些输入接的是伪时钟线。电平恒 0 的输入不能直接
+// 喂给模型，tick 里会按声明的边沿方向先置非活跃电平、再置活跃电平，各 eval 一次
+extern "C" DCS_DLL_EXPORT void dcs_dll_set_pseudo(void *p, const uint8_t *mask) {
+    auto *s = static_cast<State *>(p);
+    if (!s || !mask)
+        return;
+    s->any_pseudo = false;
+    for (int i = 0; i < @NIN@; i++) {
+        s->pseudo[i] = mask[i] != 0;
+        s->any_pseudo = s->any_pseudo || s->pseudo[i];
+    }
+}
 
 extern "C" DCS_DLL_EXPORT dcs_dll_descriptor_t dcs_dll_desc = {
         "@TYPE@", @NIN@, @NOUT@, @IN_PTR@, @OUT_PTR@};
@@ -82,12 +102,23 @@ extern "C" DCS_DLL_EXPORT void dcs_dll_reset(void *p, uint8_t *out) {
 }
 
 // 每拍调一次：写输入 → eval → 读输出。Verilator 自己记录上一拍时钟做边沿检测，
-// 不能在外面加边沿门控，否则模型看不到下降沿，之后的上升沿都不成立
+// 不能在外面加边沿门控，否则模型看不到下降沿，之后的上升沿都不成立。
+// 接在伪时钟线上的输入电平恒 0，模型读不到任何跳变，所以这些输入由这里合成：
+// 先置非活跃电平 eval，再置活跃电平 eval
 extern "C" DCS_DLL_EXPORT void dcs_dll_tick_@PHASE@(void *p, const uint8_t *in, uint8_t *out) {
     auto *s = static_cast<State *>(p);
     V@TOP@ &m = s->m;
 @WRITE_IN@
-    m.eval();
+    if (!s->any_pseudo) {
+        m.eval();
+    } else {
+        // 多个伪时钟在同一拍里一起翻转：先全部置非活跃电平，eval 让模型记录
+        // "沿前"状态；再全部置活跃电平，eval 产生沿
+@PSEUDO_LOW@
+        m.eval();
+@PSEUDO_HIGH@
+        m.eval();
+    }
 @READ_OUT@
 }
 """
@@ -166,7 +197,7 @@ endforeach()
 """
 
 
-def gen_wrapper(top: str, type_name: str, ports, sequential: bool) -> str:
+def gen_wrapper(top: str, type_name: str, ports, sequential: bool, clock_edges: dict) -> str:
     # tristate 标记只告诉运行时"这根输出可能是三态"，DLL 接口没有逐拍使能
     # 通道，包装层每拍都按数据驱动（inout 按常驱动处理，见 README 的限制说明）
     ins = [p for p in ports if p["dir"] == "input"]
@@ -180,6 +211,36 @@ def gen_wrapper(top: str, type_name: str, ports, sequential: bool) -> str:
             f'{1 if (sequential and var == "s_outputs") else 0}}}'
             for p in pins)
         return f"static dcs_dll_pin_desc_t {var}[] = {{\n{rows}\n}};"
+
+    # 端口出现在 always 敏感列表里的边沿：只上升=1，只下降=2，两者都有降级成
+    # Change=3。Rising/Falling 由 DllComponent 校验必须是 1 位
+    def edge_of(p):
+        e = clock_edges.get(p["name"])
+        if not e:
+            return 0
+        if e["rise"] and e["fall"]:
+            return 3
+        return 1 if e["rise"] else 2
+
+    edges = [edge_of(p) for p in ins]
+    if ins:
+        # C++ 的 const 全局默认内部链接，必须写 extern 才能进 DLL 导出表
+        input_edges = ('extern "C" {\nDCS_DLL_EXPORT extern const uint8_t '
+                       'dcs_dll_input_edges[] = {'
+                       + ", ".join(str(e) for e in edges) + "};\n}")
+    else:
+        input_edges = "// 模块没有输入，不导出 dcs_dll_input_edges"
+
+    def pseudo_lines(active: bool):
+        if not ins:
+            return "        // 模块没有输入"
+        rows = []
+        for i, p in enumerate(ins):
+            # 下降沿时钟的非活跃电平是高电平，活跃电平是低电平
+            falling = edges[i] == 2
+            level = (0 if falling else 1) if active else (1 if falling else 0)
+            rows.append(f"        if (s->pseudo[{i}]) m.{p['cpp']} = {level};")
+        return "\n".join(rows)
 
     write_in = "\n".join(
         f"    std::memcpy(&m.{p['cpp']}, in + {i * 16}, {(p['width'] + 7) // 8});"
@@ -195,11 +256,15 @@ def gen_wrapper(top: str, type_name: str, ports, sequential: bool) -> str:
             .replace("@PHASE@", "seq" if sequential else "comb")
             .replace("@INPUT_ARR@", pin_arr("s_inputs", ins))
             .replace("@OUTPUT_ARR@", pin_arr("s_outputs", outs))
+            .replace("@INPUT_EDGES@", input_edges)
             .replace("@NIN@", str(len(ins)))
+            .replace("@NIN_OR_1@", str(max(1, len(ins))))
             .replace("@NOUT@", str(len(outs)))
             .replace("@IN_PTR@", "s_inputs" if ins else "nullptr")
             .replace("@OUT_PTR@", "s_outputs" if outs else "nullptr")
             .replace("@WRITE_IN@", write_in)
+            .replace("@PSEUDO_LOW@", pseudo_lines(False))
+            .replace("@PSEUDO_HIGH@", pseudo_lines(True))
             .replace("@READ_OUT@", read_out))
 
 
@@ -318,7 +383,7 @@ def main():
                                     verilator_args=args.verilator_arg)
     name = args.name or top
     type_name = args.type_name or top
-    ports, clocks = parse_design(ast, top)
+    ports, clocks, clock_edges = parse_design(ast, top)
 
     # 和 verilog2dcs 同样的检查：Verilator 没拆开的 inout 无法生成
     header_text = header.read_text(encoding="utf-8", errors="replace")
@@ -338,7 +403,7 @@ def main():
     if wrapper.exists() and not args.force:
         print(f"包装层已存在，保留: {wrapper}（用 --force 覆盖重新生成）")
     else:
-        wrapper.write_text(gen_wrapper(top, type_name, ports, sequential), encoding="utf-8")
+        wrapper.write_text(gen_wrapper(top, type_name, ports, sequential, clock_edges), encoding="utf-8")
     (out / "sc_time_stamp.cpp").write_text(SC_TIME_STUB, encoding="utf-8")
 
     project_include = find_dcs_include()

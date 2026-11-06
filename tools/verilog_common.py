@@ -266,17 +266,36 @@ def parse_design(ast_path: pathlib.Path, top: str):
     ports = expanded
 
     # 沿触发的 always 才算时序。Verilator 会自己保存上一拍时钟做边沿检测，
-    # 这里只用来决定元件类型，不影响每拍 eval 的驱动方式
+    # 这里只用来决定元件类型和引脚边沿声明，不影响每拍 eval 的驱动方式。
+    # clock_edges 记录每个信号出现过的沿：同一信号在两个 always 块里分别做
+    # posedge/negedge 时两者都算，DCS 侧只能降级成 Change
     clocks = []
+    clock_edges = {}
     for node in mod.get("stmtsp", []):
         if node.get("type") != "ALWAYS":
             continue
         # 未展开的引用在 JSON 里是 "UNLINKED" 字符串，不是列表
         for sentree in as_list(node.get("sentreep")):
             for item in as_list(sentree.get("sensesp")):
-                if item.get("edgeType") not in ("POS", "NEG"):
+                edge_type = item.get("edgeType")
+                if edge_type not in ("POS", "NEG"):
                     continue
                 for v in as_list(item.get("sensp")):
-                    if v.get("type") == "VARREF" and v.get("name") not in clocks:
-                        clocks.append(v.get("name"))
-    return ports, clocks
+                    if v.get("type") != "VARREF":
+                        continue
+                    name = v.get("name")
+                    if not name:
+                        continue
+                    if name not in clocks:
+                        clocks.append(name)
+                    e = clock_edges.setdefault(name, {"rise": False, "fall": False})
+                    e["rise" if edge_type == "POS" else "fall"] = True
+
+    # inout 拆出的输入引脚叫 <name>_i，敏感列表里用的是原名。不把边沿信息
+    # 复制过去，双向时钟/复位会退化成普通电平，伪时钟接线直接失效
+    for p in ports:
+        if p.get("from_inout") and p["dir"] == "input":
+            base = p["name"][:-2] if p["name"].endswith("_i") else None
+            if base and base in clock_edges and p["name"] not in clock_edges:
+                clock_edges[p["name"]] = dict(clock_edges[base])
+    return ports, clocks, clock_edges

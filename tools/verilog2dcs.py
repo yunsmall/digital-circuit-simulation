@@ -103,11 +103,23 @@ static bool dcsAnyBits(const void *p, std::size_t n) {
 
 // 端口在 Verilator 模型里是引用成员（VL_IN8 展开成 "CData &a"），
 // 没法用对象内偏移访问，只能每拍走一次这个回调搬引脚。
-// 每个端口在缓冲区里占固定 16 字节（dcs 线网槽宽度），窄端口只用到前几字节
-static void dcsEval@NAME@(void *p, const unsigned char *in, unsigned char *out) {
+// 每个端口在缓冲区里占固定 16 字节（dcs 线网槽宽度），窄端口只用到前几字节。
+// pseudo 标记哪些输入接在"每 tick 一个沿"的伪时钟线上：这些线电平恒 0，
+// 必须在这里合成时钟跳变，否则模型永远看不到沿
+static void dcsEval@NAME@(void *p, const unsigned char *in, unsigned char *out,
+                          const unsigned char *pseudo) {
     auto *m = static_cast<V@TOP@ *>(p);
 @WRITE_IN@
-    m->eval();
+    if (!(@PSEUDO_ANY@)) {
+        m->eval();
+    } else {
+        // 多个伪时钟在同一拍里一起翻转：先全部置非活跃电平，eval 让模型记录
+        // "沿前"状态；再全部置活跃电平，eval 产生沿
+@PSEUDO_LOW@
+        m->eval();
+@PSEUDO_HIGH@
+        m->eval();
+    }
 @READ_OUT@
 }
 
@@ -124,15 +136,28 @@ std::vector<Component::JitSymbol> @NAME@::extraJitSymbols() const {
 }
 
 std::string @NAME@::genStateDecl() const {
-    return std::format(
-            "static void *_vmd_{0} = (void *)0x{1:X}ULL;\\n"
-            "extern void dcs_eval_@TYPE@(void *, const unsigned char *, unsigned char *);\\n",
+    // 伪时钟掩码在生成 C 代码时才知道（接线是 compile 前定的）：哪些输入接在
+    // 伪时钟线上，回调就要为它们合成沿。数组按实例生成，回调是类型级共享的
+    std::string mask;
+    for (int i = 0; i < (int) inputs().size(); i++) {
+        const Net *n = inputs()[i]->net();
+        mask += std::format("{}{}", i ? ", " : "", (n && n->pseudoEdge() != PinEdge::None) ? 1 : 0);
+    }
+    std::string c = std::format(
+            "static void *_vmd_{0} = (void *)0x{1:X}ULL;\\n",
             _id, (unsigned long long) (std::uintptr_t) _state->model.get());
+    c += std::format("static const unsigned char _vpm_{0}[{1}] = {{{2}}};\\n",
+                     _id, inputs().empty() ? 1 : (int) inputs().size(),
+                     mask.empty() ? "0" : mask);
+    c += std::format(
+            "extern void dcs_eval_@TYPE@(void *, const unsigned char *, unsigned char *, "
+            "const unsigned char *);\\n");
+    return c;
 }
 
 std::string @NAME@::genFuncDef_@KIND@() const {
     std::string c;
-    c += std::format("DCS_INLINE void {}() {{\\n", funcName_@KIND@());
+    c += std::format("static void {}() {{\\n", funcName_@KIND@());
     c += std::format("    static unsigned char _vio_in_{0}[@NINS_BYTES@];\\n", _id);
     c += std::format("    static unsigned char _vio_out_{0}[@NOUTS_BYTES@];\\n", _id);
 @LOAD@
@@ -168,11 +193,21 @@ def gen_header(name: str, comb: bool) -> str:
             .replace("@IS_SEQ@", "false" if comb else "true"))
 
 
-def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
+def gen_source(name: str, type_name: str, top: str, ports, comb: bool, clock_edges: dict) -> str:
     ins = [p for p in ports if p["dir"] == "input"]
     outs = [p for p in ports if p["dir"] == "output"]
 
-    pins = [f'    addInput("{p["name"]}", {p["width"]});' for p in ins]
+    # 敏感列表里的沿决定输入引脚的 PinEdge：只上升、只下降，或两者都有时降级成
+    # Change（多位信号的"任意变化"）。没有出现在敏感列表里的输入就是普通电平
+    def pin_edge(p):
+        e = clock_edges.get(p["name"])
+        if not e:
+            return ""
+        if e["rise"] and e["fall"]:
+            return ", PinEdge::Change"
+        return ", PinEdge::Rising" if e["rise"] else ", PinEdge::Falling"
+
+    pins = [f'    addInput("{p["name"]}", {p["width"]}{pin_edge(p)});' for p in ins]
     def add_out(p):
         ts = bool(p.get("tristate"))
         if comb:
@@ -189,6 +224,23 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
     # 每个端口在缓冲区里占 16 字节，窄端口只用到前几字节
     write_in = [f"    std::memcpy(&m->{p['cpp']}, in + {i * 16}, {(p['width'] + 7) // 8});"
                 for i, p in enumerate(ins)]
+
+    # 伪时钟合成：只有出现在敏感列表里的时钟输入可能被接到伪时钟线。
+    # 没有时钟输入时直接单次 eval，不引入任何运行时判断
+    pseudo_terms = [f"pseudo[{i}] != 0" for i, p in enumerate(ins)
+                    if clock_edges.get(p["name"])]
+    pseudo_any = " || ".join(pseudo_terms) if pseudo_terms else "false"
+    pseudo_low, pseudo_high = [], []
+    for i, p in enumerate(ins):
+        e = clock_edges.get(p["name"])
+        if not e:
+            continue
+        # 两者都有的信号在 dcs 侧是 Change，不会接伪时钟；万一接上按上升处理
+        falling = e["fall"] and not e["rise"]
+        pseudo_low.append(f"        if (pseudo[{i}]) m->{p['cpp']} = {1 if falling else 0};")
+        pseudo_high.append(f"        if (pseudo[{i}]) m->{p['cpp']} = {0 if falling else 1};")
+    if not pseudo_low:
+        pseudo_low = pseudo_high = ["        // 没有时钟输入"]
 
     # 三态输出要多占一个槽放使能，槽位在这里统一分配
     out_layout = []
@@ -234,17 +286,13 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
                 f'    c += "    " + genOutputWrite({i}, '
                 f'std::format("_vio_out_{{}}[{val_off}]", _id), {p["width"]}, "_oe{i}") + "\\n";')
 
-    if comb:
-        evals = [
-            f'    c += std::format("    dcs_eval_{type_name}(_vmd_{{0}}, _vio_in_{{0}}, _vio_out_{{0}});\\n", _id);',
-        ]
-    else:
-        # Verilator 模型内部自己记录时钟上一拍的值来做边沿检测，所以每一拍
-        # 都必须把输入（含 clk）写进去再 eval。在外面加边沿门控会让模型
-        # 永远看不到下降沿，下一个上升沿也就不算沿了
-        evals = [
-            f'    c += std::format("    dcs_eval_{type_name}(_vmd_{{0}}, _vio_in_{{0}}, _vio_out_{{0}});\\n", _id);',
-        ]
+    # 每拍都把输入（含 clk）写进模型再 eval：Verilator 自己记录时钟上一拍的电平
+    # 做边沿检测，外面加边沿门控会让它永远看不到下降沿。接在伪时钟线上的输入
+    # 由回调按掩码自己合成沿
+    evals = [
+        f'    c += std::format("    dcs_eval_{type_name}(_vmd_{{0}}, _vio_in_{{0}}, _vio_out_{{0}}, '
+        f'_vpm_{{0}});\\n", _id);',
+    ]
     body_load = load
     body_store = store
 
@@ -256,6 +304,9 @@ def gen_source(name: str, type_name: str, top: str, ports, comb: bool) -> str:
             .replace("@META_IN@", "{" + ", ".join(f'"{p["name"]}"' for p in ins) + "}")
             .replace("@META_OUT@", "{" + ", ".join(f'"{p["name"]}"' for p in outs) + "}")
             .replace("@WRITE_IN@", "\n".join(write_in) if write_in else "    // 模块没有输入")
+            .replace("@PSEUDO_ANY@", pseudo_any)
+            .replace("@PSEUDO_LOW@", "\n".join(pseudo_low))
+            .replace("@PSEUDO_HIGH@", "\n".join(pseudo_high))
             .replace("@READ_OUT@", "\n".join(read_out) if read_out else "    // 模块没有输出")
             .replace("@PINS@", "\n".join(pins) if pins else "    // 模块没有端口")
             .replace("@NINS_BYTES@", str(max(1, len(ins)) * 16))
@@ -288,7 +339,7 @@ def main():
     name = args.name or camel(top)
     type_name = args.type_name or top.lower()
     out = pathlib.Path(args.outdir)
-    ports, clocks = parse_design(ast, top)
+    ports, clocks, clock_edges = parse_design(ast, top)
 
     # Verilator 只把"简单三态结构"拆成 input+__en+__out；没拆开的话端口里不会有 __en，
     # 生成出来的代码会编译失败，不如在这里给出明确原因
@@ -314,7 +365,7 @@ def main():
     hpath.parent.mkdir(parents=True, exist_ok=True)
     cpath.parent.mkdir(parents=True, exist_ok=True)
     hpath.write_text(gen_header(name, comb), encoding="utf-8")
-    cpath.write_text(gen_source(name, type_name, top, ports, comb), encoding="utf-8")
+    cpath.write_text(gen_source(name, type_name, top, ports, comb, clock_edges), encoding="utf-8")
 
     vdir = out / "verilog_gen" / top
     vdir.mkdir(parents=True, exist_ok=True)

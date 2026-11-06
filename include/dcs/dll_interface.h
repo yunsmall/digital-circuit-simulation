@@ -94,6 +94,21 @@ typedef void (*dcs_dll_reset_t)(void *state, uint8_t *outputs);
 #define DCS_DLL_TICK_SEQ "dcs_dll_tick_seq"
 #define DCS_DLL_RESET "dcs_dll_reset"
 
+// 可选导出：每个输入引脚的边沿依赖。数组长度 = num_inputs，值：
+//   0 = 无，1 = 上升沿，2 = 下降沿，3 = 任意变化
+// 导出形式是数组本身：
+//   extern "C" DCS_DLL_EXPORT const uint8_t dcs_dll_input_edges[] = {...};
+// 运行时直接把符号地址当数组首地址。没有这个符号时所有输入按普通电平处理，
+// 接伪时钟会在编译期报错
+#define DCS_DLL_INPUT_EDGES "dcs_dll_input_edges"
+
+// 可选导出：告诉包装层哪些输入接在"每 tick 一个沿"的伪时钟线上。
+// mask 长度 = num_inputs，1 表示该输入需要包装层自己合成时钟沿
+// （电平恒 0，不能直接喂给模型）。输入声明了边沿但 DLL 没导出这个函数时，
+// 接伪时钟会在 compile 前报错
+#define DCS_DLL_SET_PSEUDO "dcs_dll_set_pseudo"
+typedef void (*dcs_dll_set_pseudo_t)(void *state, const uint8_t *mask);
+
 #ifdef __cplusplus
 }
 #endif

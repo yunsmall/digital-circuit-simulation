@@ -24,8 +24,14 @@ target_include_directories(reg8_dll PRIVATE ${DCS_INCLUDE})
 set_target_properties(reg8_dll PROPERTIES CXX_STANDARD 17)
 verilate(reg8_dll SOURCES reg8.v TOP_MODULE reg8)
 
+# dual_clk — 两个时钟域：一个上升沿、一个下降沿，用来测多伪时钟合成
+add_library(dual_clk_dll SHARED wrap_dual_clk.cpp)
+target_include_directories(dual_clk_dll PRIVATE ${DCS_INCLUDE})
+set_target_properties(dual_clk_dll PROPERTIES CXX_STANDARD 17)
+verilate(dual_clk_dll SOURCES dual_clk.v TOP_MODULE dual_clk)
+
 # 编译后自动复制 DLL 到 JSON 所在目录
-foreach(_dll adder8_dll counter8_dll reg8_dll)
+foreach(_dll adder8_dll counter8_dll reg8_dll dual_clk_dll)
     add_custom_command(TARGET ${_dll} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:${_dll}>" "${CMAKE_CURRENT_SOURCE_DIR}"

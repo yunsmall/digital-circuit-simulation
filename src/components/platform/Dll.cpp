@@ -177,6 +177,8 @@ bool DllComponent::loadSymbols(std::string &error) {
     // 重新加载可能换了 DLL 内容，能力位以这次加载为准
     _has_comb = false;
     _has_seq = false;
+    _input_edges = nullptr;
+    _set_pseudo_fn = nullptr;
 #ifdef _WIN32
     auto loadSym = [&](const char *name, auto &fn_ptr) -> bool {
         FARPROC fp = GetProcAddress((HMODULE) _dll_handle, name);
@@ -233,6 +235,17 @@ bool DllComponent::loadSymbols(std::string &error) {
         error = "DLL 必须至少导出 dcs_dll_tick_comb 或 dcs_dll_tick_seq";
         return false;
     }
+    // 这两个是可选的：老 DLL 没有它们，所有输入按普通电平处理。
+    // dcs_dll_input_edges 是数组符号，符号地址本身就是边沿数组的首地址，
+    // 不能像函数指针那样把符号内容 memcpy 出来
+#ifdef _WIN32
+    if (FARPROC fp = GetProcAddress((HMODULE) _dll_handle, DCS_DLL_INPUT_EDGES))
+        _input_edges = reinterpret_cast<const uint8_t *>(fp);
+#else
+    if (void *sym = dlsym(_dll_handle, DCS_DLL_INPUT_EDGES))
+        _input_edges = static_cast<const uint8_t *>(sym);
+#endif
+    loadSym(DCS_DLL_SET_PSEUDO, _set_pseudo_fn);
     // 全局 init/deinit 按路径共享：这里登记回调，simInit 只在第一个实例上调用
     dll_set_callbacks(_dll_path, _init_fn, _deinit_fn);
     _loaded = true;
@@ -275,8 +288,24 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
         if (!validateDllDescriptor(_desc, desc_err))
             return fail_load(std::move(desc_err));
 
-        for (int i = 0; i < _desc.num_inputs; i++)
-            addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width);
+        for (int i = 0; i < _desc.num_inputs; i++) {
+            // 边沿依赖是外部二进制给的，非法值不能直接 static_cast 成枚举
+            PinEdge edge = PinEdge::None;
+            if (_input_edges) {
+                const unsigned raw = _input_edges[i];
+                if (raw > 3)
+                    return fail_load(std::format("DLL 输入 '{}' 的边沿类型 {} 无效（0..3）",
+                                                 _desc.inputs[i].name, raw));
+                edge = static_cast<PinEdge>(raw);
+                if ((edge == PinEdge::Rising || edge == PinEdge::Falling)
+                    && _desc.inputs[i].bit_width != 1)
+                    return fail_load(std::format(
+                            "DLL 输入 '{}' 声明为{}沿，但位宽是 {}；沿只能用于 1 位信号",
+                            _desc.inputs[i].name, edge == PinEdge::Rising ? "上" : "下",
+                            _desc.inputs[i].bit_width));
+            }
+            addInput(_desc.inputs[i].name, _desc.inputs[i].bit_width, edge);
+        }
         for (int i = 0; i < _desc.num_outputs; i++) {
             auto &od = _desc.outputs[i];
             addOutput(od.name, od.bit_width, od.is_tri_state != 0);
@@ -297,31 +326,31 @@ bool DllComponent::ensurePins(Context &ctx, std::string &error) {
 // deinit() 卸载了 DLL 并把函数指针清空；重新编译时 JIT 符号表和代码生成
 // 都要求地址有效。这里只重新加载符号，引脚已经由 prepare() 建好，不能再创建
 bool DllComponent::prepareForCompile(Context &, std::string &error) {
-    if (_loaded)
-        return true;
-    _dll_handle = dll_load(_dll_path, error);
-    if (!_dll_handle)
-        return false;
-    // 失败/异常都要归还引用计数并清空指向已卸载 DLL 的函数指针
-    auto fail_load = [&](std::string msg) {
-        dll_unload(_dll_path);
-        _dll_handle = nullptr;
-        _loaded = false;
-        _desc = {};
-        resetDllPointers();
-        error = std::move(msg);
-        return false;
-    };
-    try {
-        if (!loadSymbols(error))
-            return fail_load(std::move(error));
-    } catch (...) {
-        dll_unload(_dll_path);
-        _dll_handle = nullptr;
-        _loaded = false;
-        _desc = {};
-        resetDllPointers();
-        throw;
+    if (!_loaded) {
+        _dll_handle = dll_load(_dll_path, error);
+        if (!_dll_handle)
+            return false;
+        // 失败/异常都要归还引用计数并清空指向已卸载 DLL 的函数指针
+        auto fail_load = [&](std::string msg) {
+            dll_unload(_dll_path);
+            _dll_handle = nullptr;
+            _loaded = false;
+            _desc = {};
+            resetDllPointers();
+            error = std::move(msg);
+            return false;
+        };
+        try {
+            if (!loadSymbols(error))
+                return fail_load(std::move(error));
+        } catch (...) {
+            dll_unload(_dll_path);
+            _dll_handle = nullptr;
+            _loaded = false;
+            _desc = {};
+            resetDllPointers();
+            throw;
+        }
     }
     return true;
 }
@@ -340,6 +369,8 @@ void DllComponent::resetDllPointers() {
     _reset_fn = nullptr;
     _tick_comb_fn = nullptr;
     _tick_seq_fn = nullptr;
+    _input_edges = nullptr;
+    _set_pseudo_fn = nullptr;
 }
 
 void DllComponent::simInit() {
@@ -415,6 +446,8 @@ std::vector<Component::JitSymbol> DllComponent::extraJitSymbols() const {
         syms.push_back({std::format("_dcs_dll_tick_comb_{}", id), reinterpret_cast<void *>(_tick_comb_fn)});
     if (_tick_seq_fn)
         syms.push_back({std::format("_dcs_dll_tick_seq_{}", id), reinterpret_cast<void *>(_tick_seq_fn)});
+    if (_set_pseudo_fn)
+        syms.push_back({std::format("_dcs_dll_set_pseudo_{}", id), reinterpret_cast<void *>(_set_pseudo_fn)});
     return syms;
 }
 
@@ -422,7 +455,34 @@ std::vector<Component::JitSymbol> DllComponent::extraJitSymbols() const {
 // C 代码生成
 // ============================================================
 
+bool DllComponent::inputIsPseudoClock(int index) const {
+    if (index < 0 || index >= (int) inputs().size())
+        return false;
+    const Net *n = inputs()[index]->net();
+    return n && n->pseudoEdge() != PinEdge::None;
+}
+
+std::vector<uint8_t> DllComponent::pseudoMask() const {
+    std::vector<uint8_t> mask(inputs().size(), 0);
+    for (int i = 0; i < (int) mask.size(); i++)
+        mask[i] = inputIsPseudoClock(i) ? 1 : 0;
+    return mask;
+}
+
 std::string DllComponent::genTickFunc(const char *phase) const {
+    // 伪时钟线的电平恒 0，DLL 模型靠真实电平做内部边沿检测；包装层没有
+    // dcs_dll_set_pseudo 就只能看到一根永远为低的时钟。Net::pseudoEdge() 是
+    // CodeGen 在生成代码阶段才填的（connect 时还不知道输出引脚的 driveEdge），
+    // 所以检查放在这里，由 generateCircuitC 的异常转成 compile 错误
+    if (!_set_pseudo_fn) {
+        for (int i = 0; i < (int) inputs().size(); i++) {
+            if (inputIsPseudoClock(i))
+                throw std::logic_error(std::format(
+                        "DLL 元件 {} 的输入 {} 接了伪时钟线，但这个 DLL 没有导出 {}"
+                        "（包装层无法自己合成时钟沿）；请改接真实 clkgen",
+                        name(), inputs()[i]->name(), DCS_DLL_SET_PSEUDO));
+        }
+    }
     int id = _id;
     int ni = (int) inputs().size();
     int no = (int) outputs().size();
@@ -500,6 +560,28 @@ std::string DllComponent::genInitCode() const {
     // circuit_init 可能被重复调用（init 当重置用）：先销毁旧状态，避免泄漏
     code += std::format("    if (_dcs_dll_state_{0}) _dcs_dll_destroy_{0}(_dcs_dll_state_{0});\n", id);
     code += std::format("    _dcs_dll_state_{0} = _dcs_dll_create_{0}();\n", id);
+    // 告诉包装层哪些输入接的是伪时钟线：这些输入的电平恒 0，包装层必须在
+    // 每次 tick 里自己合成一个时钟沿。必须在 create 之后、reset 之前设置，
+    // reset 里重建模型时包装层还要用这份掩码
+    if (_set_pseudo_fn) {
+        auto mask = pseudoMask();
+        bool any_pseudo = false;
+        for (uint8_t v: mask)
+            any_pseudo = any_pseudo || v != 0;
+        if (any_pseudo) {
+            std::string values;
+            for (int i = 0; i < (int) mask.size(); i++)
+                values += std::format("{}{}", i ? ", " : "", (int) mask[i]);
+            code += std::format("    extern void _dcs_dll_set_pseudo_{0}(void*, const uint8_t*);\n", id);
+            code += "    {\n";
+            code += std::format("        const uint8_t _dll_pseudo_{0}[{1}] = {{{2}}};\n",
+                                id, (int) mask.size(), values);
+            code += std::format("        if (_dcs_dll_state_{0}) _dcs_dll_set_pseudo_{0}(_dcs_dll_state_{0}, "
+                                "_dll_pseudo_{0});\n",
+                                id);
+            code += "    }\n";
+        }
+    }
     code += "    {\n";
     code += std::format("        uint8_t _out[{}][16];\n", out_count);
     code += "        dcs_memset(_out, 0, sizeof(_out));\n";

@@ -11,7 +11,9 @@
 //   c.addComponent(std::move(dl));
 //   // 引脚由 DLL 描述符自动创建，无需手动添加
 #pragma once
+#include <cstdint>
 #include <string>
+#include <vector>
 #include "dcs/Component.h"
 #include "dcs/dll_interface.h"
 
@@ -73,10 +75,20 @@ private:
     dcs_dll_tick_t _tick_seq_fn = nullptr;
     dcs_dll_reset_t _reset_fn = nullptr;
 
+    // 可选导出：每个输入引脚的边沿依赖（DCS_DLL_INPUT_EDGES）。
+    // 指针指向 DLL 内部，卸载后必须清空，处理方式和 _desc 相同
+    const uint8_t *_input_edges = nullptr;
+    // 可选导出：包装层自己合成伪时钟沿的能力（DCS_DLL_SET_PSEUDO）
+    dcs_dll_set_pseudo_t _set_pseudo_fn = nullptr;
+
     // 生成一个阶段的 tick 函数体（comb 或 seq 公用）
     std::string genTickFunc(const char *phase_suffix) const;
     // 清空从 DLL 取到的全部函数指针（卸载或加载失败后共用）
     void resetDllPointers();
+    // 该输入是否接在伪时钟线上（电平恒 0，必须由包装层合成沿）
+    bool inputIsPseudoClock(int index) const;
+    // 生成 C 代码时用的伪时钟掩码，没有伪时钟输入时返回空
+    std::vector<uint8_t> pseudoMask() const;
 };
 
 // 校验 DLL 导出的描述符本身能不能用：描述符来自外部二进制，被损坏或恶意构造时

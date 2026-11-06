@@ -455,12 +455,23 @@ if(GTest_FOUND)
 
     # 测试用 DLL 元件（8 位 AND 门）
     add_library(dll_test_and SHARED tests/dll_test_and.c)
-    target_include_directories(dll_test_and PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    set_target_properties(dll_test_and PROPERTIES C_STANDARD 11)
+    # 边沿/伪时钟测试 DLL：同一份源码编两个，nopseudo 副本故意不导出
+    # dcs_dll_set_pseudo，用来验证"声明了边沿却接伪时钟"必须在编译前报错
+    add_library(dll_test_clk SHARED tests/dll_test_clk.c)
+    add_library(dll_test_clk_nopseudo SHARED tests/dll_test_clk.c)
+    target_compile_definitions(dll_test_clk_nopseudo PRIVATE DCS_TEST_NO_SET_PSEUDO)
+    foreach(dll_target dll_test_and dll_test_clk dll_test_clk_nopseudo)
+        target_include_directories(${dll_target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set_target_properties(${dll_target} PROPERTIES C_STANDARD 11)
+    endforeach()
     # 复制到测试输出目录
     add_custom_command(TARGET test_dll POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:dll_test_and>" "$<TARGET_FILE_DIR:test_dll>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:dll_test_clk>" "$<TARGET_FILE_DIR:test_dll>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:dll_test_clk_nopseudo>" "$<TARGET_FILE_DIR:test_dll>"
     )
 endif()
 endif()
