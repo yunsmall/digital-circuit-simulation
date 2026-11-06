@@ -130,19 +130,16 @@ bool VirtioBlk::setImagePath(Context &ctx, const std::string &path, std::string 
     return installBackend("file", {{"path", resolved}}, ctx, error);
 }
 
-bool VirtioBlk::prepareImpl(Context &ctx, std::string &error) {
-    // 外部后端（setBackend / 测试注入）已经声明了容量和读写语义时优先用它；
-    // 否则按 backend 名字走注册表。文件/ROM 的打开逻辑都在各自后端里。
+bool VirtioBlk::prepareImpl(Context & /*ctx*/, std::string &error) {
+    // 外部后端（setBackend / 测试注入）已经声明了容量和读写语义时优先用它。
     // 不能只按 _ops.read 是否为空判断：外部后端漏填 read 时会被注册表后端静默覆盖
-    if (_external_backend) {
-        if (!_ops.read) {
-            error = "外部注入的 virtio_blk 后端缺少 read 回调";
-            return false;
-        }
-    } else if (!_ops.read && _backend != "none") {
-        if (!installBackend(_backend, _backend_opts, ctx, error))
-            return false;
+    if (_external_backend && !_ops.read) {
+        error = "外部注入的 virtio_blk 后端缺少 read 回调";
+        return false;
     }
+    // 介质故意不在这里打开：JSON 里写的是相对路径，本机可能没有那个文件，
+    // 宿主的 --disk 要等电路加载完才能覆盖。打开推迟到 prepareForCompile()
+    // （compile()/validate() 之前），加载阶段只需要引脚
     _state->ops = _ops;
     _state->image_size = _ops.size;
     _state->read_only = _ops.read && !_ops.write;
