@@ -484,7 +484,6 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         return 1;
     }
     std::cout << "JIT 编译成功\n\n";
-    circuit->init();
 
     // 只要 --dump-mem 已经解析成功，正常结束和运行错误都导出同一份现场：
     // 总线冲突/振荡时正是最需要看存储器的时候，dcs_soc 也是这么做的
@@ -496,6 +495,13 @@ int simulate(const std::string &path, uint64_t ticks, int delay_ms, bool monitor
         circuit->deinit();
         return code;
     };
+
+    circuit->init();
+    // simInit() 失败只写 _tick_error，不检查会继续跑到"正常结束"
+    if (circuit->hasError()) {
+        std::cerr << std::format("初始化错误: {}\n", circuit->tickError().message);
+        return finish(1);
+    }
 
     // 可选：把线网变化导出成 VCD，便于用 GTKWave 观察时序
     std::ofstream vcd;

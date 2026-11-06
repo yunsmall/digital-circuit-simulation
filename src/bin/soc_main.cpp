@@ -278,6 +278,13 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     }
     std::cout << "JIT 编译成功\n\n";
     circuit->init();
+    // simInit() 失败只写 _tick_error；继续去 --load/--set 会往一个没启动的
+    // 仿真里写数据，而且 tick 之后立刻返回，用户只看到"跑完了"
+    if (circuit->hasError()) {
+        std::cerr << std::format("初始化错误: {}\n", circuit->tickError().message);
+        circuit->deinit();
+        return 1;
+    }
 
     dsc::WishboneMemory *mem = firstMemory(*circuit);
     if (!mem) {

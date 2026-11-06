@@ -958,8 +958,11 @@ void Circuit::tickForever() {
         _jit.tick_forever();
         return;
     }
-    // 回退路径的 tick() 遇到错误会立即返回，不检查的话外层就变成忙循环
+    // 回退路径的 tick() 遇到错误会立即返回；interruptTickForever() 只置停止
+    // 标志不置错误，所以这里也要查，否则用户按 Ctrl-A x 后永远退不出去
     for (;;) {
+        if (_stop_flag)
+            return;
         tick();
         if (_tick_error.code != ErrorCode::OK)
             return;
