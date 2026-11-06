@@ -14,10 +14,11 @@ extern "C" unsigned long long dcs_wallclock_base(void) {
     return (unsigned long long) duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
 }
 
-WallClock::WallClock(const std::string &name, int ns_per_tick, const std::string &base_epoch, bool sync_host) :
-    SequentialComponent(name, "wallclock"), _ns_per_tick(ns_per_tick), _base_epoch(base_epoch), _sync_host(sync_host) {
-    if (ns_per_tick < 1 || ns_per_tick > 1000000000)
-        throw std::invalid_argument("ns_per_tick 必须在1-1000000000之间");
+WallClock::WallClock(const std::string &name, int ns_per_period, const std::string &base_epoch, bool sync_host) :
+    SequentialComponent(name, "wallclock"), _ns_per_period(ns_per_period), _base_epoch(base_epoch),
+    _sync_host(sync_host) {
+    if (ns_per_period < 1 || ns_per_period > 1000000000)
+        throw std::invalid_argument("ns_per_period 必须在1-1000000000之间");
     // base_epoch 会原样写进生成的 C（`<base> .base = <值>ULL;`），必须严格解析成
     // 无符号整数；只放行全数字，空串表示用宿主时间。任何分号/换行/运算符都不能进
     if (!_base_epoch.empty()) {
@@ -29,10 +30,10 @@ WallClock::WallClock(const std::string &name, int ns_per_tick, const std::string
             throw std::invalid_argument("base_epoch 必须是非负十进制整数（Unix 秒）");
         _base_epoch = std::to_string(value); // 归一化，避免前导零/异形数字进生成代码
     }
-    setParam("ns_per_tick", std::to_string(ns_per_tick));
+    setParam("ns_per_period", std::to_string(ns_per_period));
     setParam("base_epoch", _base_epoch);
     setParam("sync_host", sync_host ? "1" : "0");
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("year", 16, false, true);
     addOutput("month", 4, false, true);
     addOutput("day", 5, false, true);
@@ -47,7 +48,6 @@ std::string WallClock::genStructDef() const {
             "typedef struct {{\n"
             "    uint64_t base, ns, last_sec;\n"
             "    uint32_t y, mo, d, h, mi, s, wd;\n"
-            "    uint8_t prev_clk;\n"
             "}} {};",
             stateTypeName());
 }
@@ -68,7 +68,7 @@ std::string WallClock::genInitCode() const {
         base = std::format("    {}.base = {}ULL;\n", st, _base_epoch);
     // last_sec 置成最大值，保证第一拍就把日历算出来
     return base + std::format(
-                          "    {0}.ns = 0; {0}.last_sec = 0xFFFFFFFFFFFFFFFFULL; {0}.prev_clk = 0;\n"
+                          "    {0}.ns = 0; {0}.last_sec = 0xFFFFFFFFFFFFFFFFULL;\n"
                           "    {0}.y = 0; {0}.mo = 0; {0}.d = 0; {0}.h = 0; {0}.mi = 0; {0}.s = 0; {0}.wd = 0;\n",
                           st);
 }
@@ -77,14 +77,13 @@ std::string WallClock::genFuncDef_seq() const {
     auto st = stateVarName();
     std::string c;
     c += std::format("static void {}() {{\n", funcName_seq());
-    c += std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", inputs()[0]->netId());
     // 时间只在时钟上升沿推进；非沿拍只把锁存值输出，和真实时钟元件一致
-    c += std::format("    if (_clk && !{}.prev_clk) {{\n", st);
+    c += "    if (" + genGetWireEdge(0, PinEdge::Rising) + ") {\n";
     if (_sync_host) {
         // 每个沿直接问宿主当前时间，和真实时钟严格对齐，代价是一沿一次宿主调用
         c += "        const uint64_t _sec = dcs_wallclock_base();\n";
     } else {
-        c += std::format("        {}.ns += {}ULL;\n", st, _ns_per_tick);
+        c += std::format("        {}.ns += {}ULL;\n", st, _ns_per_period);
         c += std::format("        const uint64_t _sec = {}.base + {}.ns / 1000000000ULL;\n", st, st);
     }
     c += std::format("        if (_sec != {}.last_sec) {{\n", st);
@@ -109,7 +108,6 @@ std::string WallClock::genFuncDef_seq() const {
     c += std::format("            {}.y = _y + ({}.mo <= 2u ? 1u : 0u);\n", st, st);
     c += "        }\n";
     c += "    }\n";
-    c += std::format("    {}.prev_clk = _clk;\n", st);
     c += std::format("    uint32_t _o0 = {}.y;\n", st);
     c += "    " + genOutputWrite(0, "_o0", 16) + "\n";
     c += std::format("    uint32_t _o1 = {}.mo;\n", st);
@@ -133,18 +131,19 @@ std::vector<Component::JitSymbol> WallClock::extraJitSymbols() const {
 }
 
 std::unique_ptr<Component> WallClock::clone(const std::string &n) const {
-    return std::make_unique<WallClock>(n, _ns_per_tick, _base_epoch, _sync_host);
+    return std::make_unique<WallClock>(n, _ns_per_period, _base_epoch, _sync_host);
 }
 
 } // namespace dsc
 
 namespace {
 DCS_REGISTER_COMPONENT(
-    {"wallclock", {{"ns_per_tick", "100"}, {"base_epoch", ""}, {"sync_host", "0", {"0", "1"}}}, {"clk"},
+    {"wallclock", {{"ns_per_period", "100"}, {"base_epoch", ""}, {"sync_host", "0", {"0", "1"}}}, {"clk"},
      {"year", "month", "day", "hour", "minute", "second", "weekday"}, dsc::ComponentCategory::Misc,
-     "日历时钟：虚拟模式按 ns_per_tick 累加；sync_host=1 时每个上升沿直接取宿主当前时间"},
+     "日历时钟：虚拟模式按 ns_per_period 累加；sync_host=1 时每个上升沿直接取宿主当前时间"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-        return std::make_unique<dsc::WallClock>(n, dsc::paramInt(p, "ns_per_tick", 100), dsc::paramStr(p, "base_epoch", ""),
+        return std::make_unique<dsc::WallClock>(n, dsc::paramPositiveInt(p, "ns_per_period", 100),
+                                                dsc::paramStr(p, "base_epoch", ""),
                                                 dsc::paramInt(p, "sync_host", 0) != 0);
     });
 } // namespace

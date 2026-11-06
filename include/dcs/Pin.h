@@ -66,6 +66,15 @@ public:
         _drive_edge = e;
     }
 
+    // 生成期由 CodeGen 填：这个 Change 引脚在"（线网，位宽）分组"里的槽位。
+    // 同一线网上的 1 位和 16 位 Change 引脚各看各的宽度，不能共用一份变化快照
+    int changeSlot() const {
+        return _change_slot;
+    }
+    void setChangeSlot(int slot) {
+        _change_slot = slot;
+    }
+
     Net *net() const {
         return _net;
     }
@@ -95,6 +104,7 @@ private:
     bool _is_sequential = false;
     PinEdge _edge = PinEdge::None;
     PinEdge _drive_edge = PinEdge::None;
+    int _change_slot = -1;
 };
 
 } // namespace dsc

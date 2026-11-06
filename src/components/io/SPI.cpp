@@ -167,7 +167,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"spi", {{"ns_per_period", "20"}, {"sclk_period_ns", "80"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "miso"}, {"wb_dat_o", "wb_ack_o", "sclk", "mosi", "cs"}, dsc::ComponentCategory::Misc, "SPI 主机（模式 0），按 ns_per_period/sclk_period_ns 分频收发 8 位"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::SPI>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                              dsc::paramInt(p, "sclk_period_ns", 80));
+            return std::make_unique<dsc::SPI>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                              dsc::paramPositiveInt(p, "sclk_period_ns", 80));
         });
 } // namespace

@@ -351,11 +351,23 @@ DCS_REGISTER_COMPONENT(
 每个 tick 内 `circuit_tick` 按以下顺序执行：
 
 ```
+时钟源: clkgen 的 seq 函数（最先执行，写本 tick 时钟电平）
 阶段1: 组合逻辑（按拓扑序，每个 comb 执行后立即将其 _c_out_ 传播到 _w[]）
 阶段2: 总线决议 + 时序输出传播（seq 的 _c_out_ → _w[]）
 阶段2b: 反复重跑"输入接了总线"的组合元件 + 重新决议总线，直到总线值不再变化
-阶段3: 所有时序逻辑函数（seq）
+边沿: 统一边沿检测（本 tick 电平 vs 上一 tick 采样值，写 _dcs_edge_flags/change 槽）
+阶段3: 其它时序逻辑函数（seq，跳过 clkgen）
 ```
+
+- **时钟源必须最先执行**：clkgen 的非三态输出由 `genOutputWrite` 直写 `_w`。如果它和
+  其它 seq 一起排在阶段 3，边沿检测读到的是上一拍的时钟电平，而按电平自检的元件
+  （`riscv_cpu`）会读到本拍电平，两者错开一拍，Wishbone 握手失败。放在阶段 1 之前
+  还能让经过反相器/门的时钟路径用本拍电平重算，而不是晚一拍。
+- **非三态时序输出直写 `_w`**：同一阶段内后执行的元件能读到先执行元件本拍写的值
+  （三态输出走 `_c_out_` + 阶段 2/阶段 4 传播）。阶段内因此存在顺序依赖，组合请求
+  正是靠它在 CPU → 互连 → 从设备之间同拍传播。
+- **`tick` 是半个时钟周期**：clkgen 1/1 时 tick1 是上升沿、tick2 是下降沿；边沿检测
+  比较的是本 tick 采样点和上一 tick 采样点。
 
 - **comb 输出同 tick 可见**：阶段1 内，每个组合元件执行后立即 `_c_out_` → `_w[]`，下游组合元件读到当前拍结果。组合链单拍穿透。
 - **seq 输出跨 tick 可见**：seq 在阶段3 写 `_c_out_`，下一 tick 的阶段2 才进 `_w[]`。跨时序元件的信号传播有 1 tick 延迟。
@@ -482,6 +494,21 @@ ROM 的 `read_latency`），不要默认插进 CPU 通路。
 ack/dat 下一拍就组合多路选择给主设备，从设备侧请求仍在时序阶段发出。这样经互连
 访问和直连从设备的周期数相同（`tests/test_wishbone_ic/perf_latency.cpp` 守着这条
 不变量）；空闲拍不重写主设备侧输出（`_wbic_any` 门控）。
+
+## Wishbone 协议实现
+
+修改任何 Wishbone 主/从设备（`WishboneMemory`、`WishboneROMAdapter`、`wishbone_ic`、
+`PLIC`、`RegBridge`、UART/SPI/I2C 的寄存器接口、virtio 等）前，必须先核对
+Wishbone B4 规范第 3、5 章的 RULE
+（本机 PDF 路径见 `CLAUDE.local.md`），
+按标准时序实现，禁止自创一套“适合仿真”的宽容机制：
+
+- 所有信号在 `CLK_I` 上升沿采样（RULE 5.00）；标准模式下 `STB` 保持到 `ACK`
+  被采样后才撤销，从设备的 `ACK` 必须响应 `STB` 的拉高/撤销（RULE 3.35、3.50）。
+- 从设备只在上升沿看 `STB/CYC`，不需要为“半个周期内撤了又拉”的违规主设备
+  加 pending 容错；主设备自己必须保证事务之间的低相位跨越采样沿
+  （见 `RiscVCPU.cpp` 里的相位注释）。
+- 互连换主/换从时插入的空拍必须让从设备在上升沿真的看到 `STB=0`。
 
 ## 电路 JSON 的两种文件形式
 

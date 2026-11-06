@@ -21,7 +21,7 @@ Assert::Assert(const std::string &name, const std::string &message, int max_repo
     _max_reports(max_reports) {
     setParam("message", message);
     setParam("max_reports", std::to_string(max_reports));
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("cond", 1);
 }
 
@@ -41,7 +41,7 @@ void Assert::onFailFromJit(uint64_t count) {
 }
 
 std::string Assert::genStructDef() const {
-    return std::format("typedef struct {{\n    uint64_t fails;\n    uint8_t prev_clk;\n}} {};", stateTypeName());
+    return std::format("typedef struct {{\n    uint64_t fails;\n}} {};", stateTypeName());
 }
 
 std::string Assert::genStateDecl() const {
@@ -49,12 +49,11 @@ std::string Assert::genStateDecl() const {
 }
 
 std::string Assert::genInitCode() const {
-    return std::format("    {}.fails = 0; {}.prev_clk = 0; _assert_owner_{} = (void *)0x{:X}ULL;", stateVarName(),
-                       stateVarName(), _id, (unsigned long long) reinterpret_cast<uintptr_t>(this));
+    return std::format("    {}.fails = 0; _assert_owner_{} = (void *)0x{:X}ULL;", stateVarName(), _id,
+                       (unsigned long long) reinterpret_cast<uintptr_t>(this));
 }
 
 std::string Assert::genFuncDef_seq() const {
-    int clk_nid = inputs()[0]->netId();
     int cond_nid = inputs()[1]->netId();
     int cond_nw = cond_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
     auto st = stateVarName();
@@ -62,15 +61,12 @@ std::string Assert::genFuncDef_seq() const {
     std::string c;
     c += "extern void dcs_assert_fail(void *, unsigned long long);\n";
     c += std::format("static void {}() {{\n", funcName_seq());
-    c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
-                      : std::string("    bool _clk = false;\n");
     c += "    " + gen_read_wire(cond_nid, 1, cond_nw, "_cond") + "\n";
-    c += std::format("    if (_clk && !{}.prev_clk && !(_cond & 1)) {{\n", st);
+    c += std::format("    if ({} && !(_cond & 1)) {{\n", genGetWireEdge(0, PinEdge::Rising));
     c += std::format("        {}.fails++;\n", st);
     // 每次都回调，宿主才能读到准确次数；打印次数由回调按 max_reports 限制
     c += std::format("        dcs_assert_fail(_assert_owner_{}, {}.fails);\n", _id, st);
     c += "    }\n";
-    c += std::format("    {}.prev_clk = _clk;\n", st);
     c += "}\n";
     return c;
 }

@@ -117,7 +117,9 @@ public:
     // 驱动 clk 线网跑完整时钟周期（低电平拍 + 高电平拍）。需要逐拍控制总线时用 tick()
     // clk_net_id 必须是外部驱动的时钟线（由 setWire/tickCycle 自己写）。如果这根线
     // 同时接着 clkgen 的输出，clkgen 会在每个 tick 的阶段 3 把它覆盖掉，tickCycle
-    // 写的电平只能在本拍的组合阶段被看到，时序元件看到的仍是 clkgen 的波形
+    // 写的电平只能在本拍的组合阶段被看到，时序元件看到的仍是 clkgen 的波形。
+    // clkgen 的伪时钟输出（tick_edge 非 none）电平恒 0，不能作为这里的参数：
+    // 它的"每 tick 一个沿"由 JIT 边沿标志直接给出，手动驱动没有意义
     void tickCycle(int clk_net_id);
     // 连跑 n 个周期，循环在 JIT 内部完成（省掉每周期一次调用）；约束同 tickCycle
     void tickCycles(int clk_net_id, uint64_t n);

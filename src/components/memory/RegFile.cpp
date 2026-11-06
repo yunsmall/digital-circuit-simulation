@@ -27,7 +27,7 @@ RegFile::RegFile(const std::string &name, int bit_width, int depth, int num_read
     setParam("num_write_ports", std::to_string(num_write_ports));
 
     const int ab = addrBits();
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     for (int i = 0; i < _write_ports; i++) {
         addInput(std::format("we{}", i), 1);
         addInput(std::format("waddr{}", i), ab);
@@ -47,8 +47,7 @@ int RegFile::addrBits() const {
 }
 
 std::string RegFile::genStructDef() const {
-    return std::format("typedef struct {{\n    uint64_t regs[{}];\n    uint8_t prev_clk;\n}} {};", _depth,
-                       stateTypeName());
+    return std::format("typedef struct {{\n    uint64_t regs[{}];\n}} {};", _depth, stateTypeName());
 }
 
 std::string RegFile::genStateDecl() const {
@@ -57,7 +56,7 @@ std::string RegFile::genStateDecl() const {
 
 std::string RegFile::genInitCode() const {
     auto st = stateVarName();
-    return std::format("    dcs_memset({}.regs, 0, sizeof({}.regs)); {}.prev_clk = 0;", st, st, st);
+    return std::format("    dcs_memset({}.regs, 0, sizeof({}.regs));", st, st);
 }
 
 std::string RegFile::genFuncDef_comb() const {
@@ -83,10 +82,7 @@ std::string RegFile::genFuncDef_seq() const {
     auto st = stateVarName();
     std::string c;
     c += std::format("static void {}() {{\n", funcName_seq());
-    int clk_nid = inputs()[0]->netId();
-    c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
-                      : std::string("    bool _clk = false;\n");
-    c += std::format("    if (_clk && !{}.prev_clk) {{\n", st);
+    c += "    if (" + genGetWireEdge(0, PinEdge::Rising) + ") {\n";
     for (int i = 0; i < _write_ports; i++) {
         const int we_i = 1 + i * 3;
         const int wa_i = we_i + 1;
@@ -102,7 +98,6 @@ std::string RegFile::genFuncDef_seq() const {
         c += std::format("            {0}.regs[_wa{1}] = (uint64_t) _wd{1} & {2};\n", st, i, gen_mask(_bit_width));
     }
     c += "    }\n";
-    c += std::format("    {}.prev_clk = _clk;\n", st);
     c += "}\n";
     return c;
 }

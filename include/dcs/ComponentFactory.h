@@ -11,6 +11,7 @@
 #include <format>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <map>
@@ -31,6 +32,16 @@ inline int paramInt(const std::unordered_map<std::string, std::string> &p, const
     int v = d;
     auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
     return (ec == std::errc{} && ptr == s.data() + s.size()) ? v : d;
+}
+
+// 必须是正整数的参数（波特率、时钟周期数这类）。paramInt 只负责语法解析，
+// 负值会正常返回；元件里再钳到 1 会把用户写错的参数静默变成极快/极慢的时序。
+// 工厂捕获 std::invalid_argument 并转成 create 错误，JSON 路径不会崩进程
+inline int paramPositiveInt(const std::unordered_map<std::string, std::string> &p, const std::string &k, int d) {
+    const int v = paramInt(p, k, d);
+    if (v < 1)
+        throw std::invalid_argument(std::format("参数 {} 必须是正整数（给定 {}）", k, v));
+    return v;
 }
 
 inline std::string paramStr(const std::unordered_map<std::string, std::string> &p, const std::string &k,

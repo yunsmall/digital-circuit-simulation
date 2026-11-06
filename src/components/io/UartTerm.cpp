@@ -65,7 +65,7 @@ std::string UartTerm::genFuncDef_seq() const {
     c += "    " + (rx_pin->net() ? gen_read_wire(rx_pin->netId(), 1, rx_nw, "_rx") : std::string("bool _rx = true;")) + "\n";
     c += std::format("    uint8_t _bv = 0; uint8_t _lb = *_term_last_{0};\n", _id);
     // 起始沿 -> 半位确认（挡掉窄脉冲噪声）-> 每位中点采样 -> 停止位校验。
-    // 位宽以 tick 计，必须和对面 UART 的 baud_div 一致
+    // 位宽以 clk 周期计，必须和对面 UART 的 ns_per_period/baud 算出的值一致
     c += std::format(
             "    if (!_term_active_{0}) {{\n"
             "        if (_term_prev_rx_{0} && !_rx) {{\n"
@@ -115,7 +115,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"uart_term", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk", "rx"}, {"data", "valid"}, dsc::ComponentCategory::Misc, "串口终端接收端：按 ns_per_period/baud 把 8N1 电平解成字节，data/valid 接给 print（ascii=1）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartTerm>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                                   (std::uint64_t) dsc::paramInt(p, "baud", 115200));
+            return std::make_unique<dsc::UartTerm>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                                   (std::uint64_t) dsc::paramPositiveInt(p, "baud", 115200));
         });
 } // namespace

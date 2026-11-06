@@ -277,6 +277,34 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `adc` | ADC: quantizes a float voltage to an N-bit code, saturating at both ends | `bit_width` (1–32), `vref` |
 | `dac` | DAC: maps an N-bit code linearly onto `[0, vref]`, output is a float bit pattern | `bit_width` (1–32), `vref` |
 
+#### Simulation timing semantics
+
+`tick` is the simulation's minimum time step (one half clock period), not a unit of design
+time. With a 1/1 `clkgen`, one clock period = 2 ticks. A `circuit_tick` runs in this order:
+
+1. **clock sources (`clkgen`) run first**, writing this tick's clock level into the net
+2. combinational logic (topological order; outputs visible in the same tick, and the
+   combinational cone is recomputed from this tick's clock)
+3. bus resolution + sequential output propagation
+4. phase 2b: re-run combinational components whose inputs touch a bus until it settles
+5. **unified edge detection**: every input net declared with `PinEdge` is compared against
+   the previous tick's sampled level
+6. all other sequential components
+
+So `tick N` does not read the midpoint level between two edges; it reads the level after
+the clock source has updated for this tick, and the edge detected at `tick N` is the edge of
+that sampling point (with 1/1, tick 1 is the rising edge and tick 2 the falling edge).
+Components declare their dependency via `addInput(..., PinEdge::Rising)` and read the flag
+with `genGetWireEdge`. Components that do not declare an edge (e.g. `riscv_cpu`, which must
+re-drive the bus every tick from the current level) still read `_w` directly, so clock
+sources have to run before them to keep both kinds of components on the same phase.
+
+Non-tristate sequential outputs are written straight to `_w` by `genOutputWrite`, so a later
+component in the same phase sees values written earlier in that phase. This is how dcs lets
+a combinational request cross CPU → interconnect → slave within one tick; the cost is an
+ordering dependency inside the phase, so a signal every component depends on (the clock)
+must run first.
+
 ### Sequential Logic
 
 | Type | Description | Parameters |
@@ -317,7 +345,7 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `wishbone_ic` | Wishbone address decoder/router | `segments` (e.g. `0:65536,0x80000000:65536`), `num_masters` |
 | `clint` | CLINT: mtime/mtimecmp/msip | — |
 | `plic` | PLIC interrupt controller | `num_sources` |
-| `uart` | 16550A-compatible UART | `baud_div` |
+| `uart` | 16550A-compatible UART | `ns_per_period`, `baud` |
 | `spi` / `i2c` | SPI / I2C master | `clkdiv` |
 | `dma` | Memory-to-memory DMA | — |
 | `axi_lite_bridge` | AXI-Lite ↔ Wishbone bridge | — |
@@ -326,7 +354,7 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `reg_bridge` | Wishbone slave → plain register interface (addr/wdata/we/en) | — |
 | `gpio` | 32-bit GPIO with DIR/OUT/IN registers | — |
 | `pwm` | Single-channel PWM (PERIOD/DUTY/CTRL) | — |
-| `rtc` | Goldfish-style RTC in nanoseconds, with alarm IRQ | `ns_per_tick` |
+| `rtc` | Goldfish-style RTC in nanoseconds, with alarm IRQ | `ns_per_period` |
 | `watchdog` | Watchdog timer (CTRL/TIMEOUT/FEED/STATUS) | — |
 | `virtio_blk` | virtio-blk whose image comes from a host file or a ROM | `path` |
 | `virtio_blk_mem` | virtio-blk over device-private storage | `size_kb` |
@@ -349,7 +377,7 @@ A/F/D/Zfh/Zba/Zbb/Zbc/Zbs/Zicond extensions, and Sdtrig hardware breakpoints
 | `assert` | Simulation assertion: reports when `cond` is 0 on a clock edge | `message`, `max_reports` |
 | `display` | Display element (LED/7-seg/text) that hands values to the host GUI | `bit_width`, `kind` (led/seg/text), `digits` |
 | `bcd2seg` | BCD/hex to seven-segment decoder (bit7 is the decimal point) | `hex_mode` (0/1), `active_low` (0/1) |
-| `wallclock` | Calendar clock, virtual or synced to host time | `ns_per_tick`, `base_epoch`, `sync_host` (0/1) |
+| `wallclock` | Calendar clock, virtual or synced to host time | `ns_per_period`, `base_epoch`, `sync_host` (0/1) |
 | `uart_in` | Serial input driven by host stdin (8N1 into UART.rx) | `baud_div` |
 | `uart_feed` | Serial input fed by the host program (no stdio involved) | `baud_div` |
 | `uart_term` | Serial terminal receiver: 8N1 levels → bytes | `baud_div` |

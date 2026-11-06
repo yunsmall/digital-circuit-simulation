@@ -91,6 +91,12 @@ public:
     [[nodiscard]] virtual bool hasSequential() const {
         return false;
     }
+    // 时钟源（clkgen）在阶段 3 的其它时序元件之前执行。它的输出直写线网，
+    // 边沿检测和未迁移到 genGetWireEdge 的元件（如 CPU）都要用本拍的电平；
+    // 放到阶段 3 末尾会让标志读到上一拍，CPU 与从设备就会错开一个相位
+    [[nodiscard]] virtual bool isClockSource() const {
+        return false;
+    }
     // 组合部分函数定义（默认为空，组合子类必须重写）
     [[nodiscard]] virtual std::string genFuncDef_comb() const {
         return "";

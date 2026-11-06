@@ -198,7 +198,6 @@ std::string ROM::genStateDecl() const {
     std::string code;
     code += std::format("static uint8_t* _dcs_rom_p_{0} = (uint8_t*)0x{1:X}ULL;\n", id,
                         reinterpret_cast<uintptr_t>(_data_ptr));
-    code += std::format("static uint8_t  _dcs_rom_clk_{0};\n", id);
     if (_rd_stages > 0)
         code += std::format("static uint64_t _rom_addr_{0}[{1}];\n", id, _rd_stages);
     return code;
@@ -207,7 +206,6 @@ std::string ROM::genStateDecl() const {
 std::string ROM::genInitCode() const {
     int id = _id;
     std::string code;
-    code += std::format("    _dcs_rom_clk_{0} = 0;\n", id);
     code += std::format("    dcs_memset(_rom_addr_{0}, 0, sizeof(_rom_addr_{0}));\n", id);
     return code;
 }
@@ -216,19 +214,14 @@ std::string ROM::genFuncDef_seq() const {
     int id = _id;
     int a_nid = inputs()[0]->netId();
     int a_nw = a_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
-    int clk_nid = inputs()[1]->netId();
     int q_nid = outputs()[0]->netId();
     int d_bytes = byte_count(_data_width);
     std::string addr_mask = gen_mask(_addr_width);
-
-    std::string clk_read = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
 
     std::string code;
     code += std::format("// ROM: {}b × {}\n", _data_width, _depth);
     code += std::format("static void {}() {{\n", funcName_seq());
     code += "    " + gen_read_wire(a_nid, _addr_width, a_nw, "_addr") + "\n";
-    code += "    " + clk_read + "\n";
     code += std::format("    _addr &= {};\n", addr_mask);
 
     // 读流水线

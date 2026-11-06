@@ -444,6 +444,7 @@ if(GTest_FOUND)
     add_dcs_test(test_wbmem      tests/test_wbmem/*.cpp)
     add_dcs_test(test_rvc        tests/test_rvc/*.cpp)
     add_dcs_test(test_cli_help   tests/test_cli_help/*.cpp)
+    add_dcs_test(test_clocking   tests/test_clocking/*.cpp)
     # Verilator 集成测试：DLL 由 verilog_test/ 子项目生成，测试里用的是相对路径，
     # 所以工作目录要指到那里，否则加载不到 DLL
     if(DCS_BUILD_VERILOG)

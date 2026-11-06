@@ -25,7 +25,7 @@ Memory::Memory(const std::string &name, int addr_width, int data_width, int read
     addInput("addr", addr_width);
     addInput("data_in", data_width);
     addInput("we", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("data_out", data_width, false, true);
     addOutput("busy", 1, false, true);
 }
@@ -49,7 +49,6 @@ std::string Memory::genStateDecl() const {
     std::string code;
     code += std::format("static uint8_t* _dcs_mem_p_{0} = (uint8_t*)0x{1:X}ULL;\n", id,
                         reinterpret_cast<uintptr_t>(_mem.data()));
-    code += std::format("static uint8_t  _dcs_mem_clk_{0};\n", id);
     // 读流水线
     if (_rd_stages > 0)
         code += std::format("static uint64_t _rd_addr_{0}[{1}];\n", id, _rd_stages);
@@ -65,7 +64,6 @@ std::string Memory::genStateDecl() const {
 std::string Memory::genInitCode() const {
     int id = _id;
     std::string code;
-    code += std::format("    _dcs_mem_clk_{0} = 0;\n", id);
     code += std::format("    dcs_memset(_rd_addr_{0}, 0, sizeof(_rd_addr_{0}));\n", id);
     if (_wr_stages > 0) {
         code += std::format("    dcs_memset(_wr_addr_{0}, 0, sizeof(_wr_addr_{0}));\n", id);
@@ -82,7 +80,6 @@ std::string Memory::genFuncDef_seq() const {
     int d_nid = inputs()[1]->netId();
     int d_nw = d_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
     int we_nid = inputs()[2]->netId();
-    int clk_nid = inputs()[3]->netId();
     int q_nid = outputs()[0]->netId();
     int busy_nid = outputs()[1]->netId();
     int d_bytes = byte_count(_data_width);
@@ -93,8 +90,6 @@ std::string Memory::genFuncDef_seq() const {
     std::string read_data = gen_read_wire(d_nid, _data_width, d_nw, "_din");
     std::string read_we =
             we_nid >= 0 ? std::format("bool _we = false; dcs_memcpy(&_we, _w[{}], 1);", we_nid) : "bool _we = false;";
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
 
     std::string cap_s = std::to_string(_depth); // 容量（字节数）
 
@@ -108,7 +103,6 @@ std::string Memory::genFuncDef_seq() const {
     code += "    " + read_addr + "\n";
     code += "    " + read_data + "\n";
     code += "    " + read_we + "\n";
-    code += "    " + read_clk + "\n";
     code += std::format("    _addr &= {};\n", addr_mask);
 
     // 读流水线：移位
@@ -142,7 +136,7 @@ std::string Memory::genFuncDef_seq() const {
         // 顺序是"采样 → 提交 → 移位"：提交处理的是上一拍移到末级的请求，
         // 此拍采样的还要走 _wr_stages-1 次移位，总延迟才是 write_latency
         code += std::format("    _wr_pend_{0}[0] = 0;\n", id);
-        code += std::format("    if (_clk && !_dcs_mem_clk_{0} && _we) {{\n", id);
+        code += "    if (" + genGetWireEdge(3, PinEdge::Rising) + " && _we) {\n";
         code += std::format("        _wr_addr_{0}[0] = _addr;\n", id);
         code += std::format("        _wr_data_{0}[0] = _din & 0x{1:X}ULL;\n", id,
                             (_data_width == 64) ? ~0ULL : (1ULL << _data_width) - 1);
@@ -165,7 +159,7 @@ std::string Memory::genFuncDef_seq() const {
     }
     else {
         code += "    // 零写延迟：直接写入\n";
-        code += std::format("    if (_clk && !_dcs_mem_clk_{0} && _we) {{\n", id);
+        code += "    if (" + genGetWireEdge(3, PinEdge::Rising) + " && _we) {\n";
         code += std::format("        uint64_t _masked = _din & 0x{0:X}ULL;\n",
                             (_data_width == 64) ? ~0ULL : (1ULL << _data_width) - 1);
         code += "        if ((uint64_t)_addr + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
@@ -173,8 +167,6 @@ std::string Memory::genFuncDef_seq() const {
         code += "        }\n";
         code += "    }\n";
     }
-
-    code += std::format("    _dcs_mem_clk_{0} = _clk;\n", id);
 
     // busy 输出
     if (busy_nid >= 0) {

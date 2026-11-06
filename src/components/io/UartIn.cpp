@@ -198,7 +198,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"uart_in", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端：按 ns_per_period/baud 算 8N1 位时间，把宿主字符发到 UART 的 rx（可按实例 setSource 接管输入）"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartIn>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                                 (std::uint64_t) dsc::paramInt(p, "baud", 115200));
+            return std::make_unique<dsc::UartIn>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                                 (std::uint64_t) dsc::paramPositiveInt(p, "baud", 115200));
         });
 } // namespace

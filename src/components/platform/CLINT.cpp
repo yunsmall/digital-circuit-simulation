@@ -26,7 +26,7 @@ CLINT::CLINT(const std::string &name) : SequentialComponent(name, "clint") {
     addInput("wb_sel_i", 4);
     addInput("wb_stb_i", 1);
     addInput("wb_cyc_i", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
 
     // Wishbone 从设备输出 + 中断信号
     addOutput("wb_dat_o", 32, false, true);
@@ -49,7 +49,7 @@ std::string CLINT::genStateDecl() const {
             "#define _CLINT_{0}_MTIME 0xBFF8u\n"
             "static uint64_t _clint_mtime_{0}, _clint_mtimecmp_{0};\n"
             "static uint32_t _clint_msip_{0};\n"
-            "static uint8_t _clint_prev_clk_{0}, _clint_prev_stb_{0};\n",
+            "static uint8_t _clint_prev_stb_{0};\n",
             _id);
 }
 
@@ -58,7 +58,7 @@ std::string CLINT::genInitCode() const {
     // 留 0 会让 mtime >= mtimecmp 从第一拍就恒真，内核开定时器中断即中断风暴
     return std::format(
             "    _clint_mtime_{0} = 0; _clint_mtimecmp_{0} = ~0ULL; _clint_msip_{0} = 0;\n"
-            "    _clint_prev_clk_{0} = 0; _clint_prev_stb_{0} = 0;\n",
+            "    _clint_prev_stb_{0} = 0;\n",
             _id);
 }
 
@@ -68,13 +68,11 @@ std::string CLINT::genFuncDef_seq() const {
     c += std::format("// CLINT {}\n", cgen::commentText(name()));
     c += std::format("static void {}() {{\n", funcName_seq());
     // 空闲快速路径：mtime 只在时钟上升沿推进，其余寄存器只受总线写影响。
-    // 两者都没有时本拍状态和输出都不会变，读 clk/stb/cyc 三根线即可返回
-    c += "    uint8_t _clk = _w[" + nid(I_CLK) + "][0] & 1;\n";
+    // stb/cyc 没有有效事务时本拍状态和输出都不会变，读两根线即可返回
     c += "    uint8_t _stb = _w[" + nid(I_STB) + "][0] & 1;\n";
     c += "    uint8_t _cyc = _w[" + nid(I_CYC) + "][0] & 1;\n";
+    c += "    const bool _rising = " + genGetWireEdge(I_CLK, PinEdge::Rising) + ";\n";
     c += std::format(
-            "    const uint8_t _rising = (!_clint_prev_clk_{0} && _clk) ? 1 : 0;\n"
-            "    _clint_prev_clk_{0} = _clk;\n"
             "    const bool _active = _stb && _cyc;\n"
             "    const bool _prev_act = _clint_prev_stb_{0} != 0;\n"
             "    _clint_prev_stb_{0} = _active ? 1 : 0;\n"

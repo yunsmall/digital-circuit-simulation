@@ -19,7 +19,7 @@ FIFO::FIFO(const std::string &name, int data_width, int depth, bool has_rst) :
     addInput("din", data_width);
     addInput("wr_en", 1);
     addInput("rd_en", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     if (has_rst)
         addInput("rst", 1);
     addOutput("dout", data_width, false, true);
@@ -42,16 +42,14 @@ std::string FIFO::genStateDecl() const {
     return std::format("static uint8_t* _fifo_p_{0} = (uint8_t*)0x{1:X}ULL;\n"
                        "static int _fifo_wr_ptr_{0} = 0;\n"
                        "static int _fifo_rd_ptr_{0} = 0;\n"
-                       "static int _fifo_count_{0} = 0;\n"
-                       "static uint8_t _fifo_clk_{0};\n",
+                       "static int _fifo_count_{0} = 0;\n",
                        _id, reinterpret_cast<uintptr_t>(_mem.data()));
 }
 
 std::string FIFO::genInitCode() const {
     return std::format("    _fifo_wr_ptr_{0} = 0;\n"
                        "    _fifo_rd_ptr_{0} = 0;\n"
-                       "    _fifo_count_{0} = 0;\n"
-                       "    _fifo_clk_{0} = 0;",
+                       "    _fifo_count_{0} = 0;",
                        _id);
 }
 
@@ -61,7 +59,6 @@ std::string FIFO::genFuncDef_seq() const {
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int we_nid = inputs()[1]->netId();
     int re_nid = inputs()[2]->netId();
-    int clk_nid = inputs()[3]->netId();
     int rst_nid = _has_rst ? inputs()[4]->netId() : -1;
     int q_nid = outputs()[0]->netId();
     int f_nid = outputs()[1]->netId();
@@ -86,7 +83,6 @@ std::string FIFO::genFuncDef_seq() const {
     };
     code += read_bit("_we", we_nid);
     code += read_bit("_re", re_nid);
-    code += read_bit("_clk", clk_nid);
     // 引脚存在但悬空时读常量 0，不能退回 _w[0]（那是别的线网）
     if (_has_rst && rst_nid >= 0)
         code += std::format("    bool _rst = false; dcs_memcpy(&_rst, _w[{}], 1);\n", rst_nid);
@@ -101,7 +97,7 @@ std::string FIFO::genFuncDef_seq() const {
     code += "    }\n";
 
     // 时钟上升沿操作
-    code += "    if (_clk && !_fifo_clk_" + fid + " && !_rst) {\n";
+    code += "    if (" + genGetWireEdge(3, PinEdge::Rising) + " && !_rst) {\n";
     // 读操作
     code += "        if (_re && _fifo_count_" + fid + " > 0) {\n";
     code += "            _fifo_rd_ptr_" + fid + " = (_fifo_rd_ptr_" + fid + " + 1) & " + fm + ";\n";
@@ -115,7 +111,6 @@ std::string FIFO::genFuncDef_seq() const {
     code += "            _fifo_count_" + fid + "++;\n";
     code += "        }\n";
     code += "    }\n";
-    code += "    _fifo_clk_" + fid + " = _clk;\n";
     // dout 走 FWFT（first-word fall-through）语义：它任何时刻都等于"下一个可读数据"。
     // 所以输出必须放在 rd_ptr 前进之后再算——读操作那一拍 dout 变成新的 head 是对的，
     // 被读走的数据在 rd_en 之前就已经出现在 dout 上，主设备不会漏读。

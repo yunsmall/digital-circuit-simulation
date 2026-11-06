@@ -14,14 +14,13 @@ Debounce::Debounce(const std::string &name, int bit_width, int stable_ticks) :
         throw std::invalid_argument("stable_ticks 必须在1-65535之间");
     setParam("bit_width", std::to_string(bit_width));
     setParam("stable_ticks", std::to_string(stable_ticks));
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("in", bit_width);
     addOutput("out", bit_width, false, true);
 }
 
 std::string Debounce::genStructDef() const {
-    return std::format("typedef struct {{\n    uint64_t stable;\n    uint32_t cnt;\n    uint8_t prev_clk;\n}} {};",
-                       stateTypeName());
+    return std::format("typedef struct {{\n    uint64_t stable;\n    uint32_t cnt;\n}} {};", stateTypeName());
 }
 
 std::string Debounce::genStateDecl() const {
@@ -30,27 +29,23 @@ std::string Debounce::genStateDecl() const {
 
 std::string Debounce::genInitCode() const {
     auto st = stateVarName();
-    return std::format("    {}.stable = 0; {}.cnt = 0; {}.prev_clk = 0;", st, st, st);
+    return std::format("    {}.stable = 0; {}.cnt = 0;", st, st);
 }
 
 std::string Debounce::genFuncDef_seq() const {
-    int clk_nid = inputs()[0]->netId();
     int in_nid = inputs()[1]->netId();
     int in_nw = in_nid >= 0 ? inputs()[1]->net()->bit_width() : 0;
     auto st = stateVarName();
 
     std::string c;
     c += std::format("static void {}() {{\n", funcName_seq());
-    c += clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);\n", clk_nid)
-                      : std::string("    bool _clk = false;\n");
     c += "    " + gen_read_wire(in_nid, _bit_width, in_nw, "_in") + "\n";
     c += "    const uint64_t _v = (uint64_t) _in & " + gen_mask(_bit_width) + ";\n";
-    c += std::format("    if (_clk && !{}.prev_clk) {{\n", st);
+    c += "    if (" + genGetWireEdge(0, PinEdge::Rising) + ") {\n";
     // 回到稳定值就清零：抖动期间任何一次回弹都会让计数从头开始
     c += std::format("        if (_v == {}.stable) {}.cnt = 0;\n", st, st);
     c += std::format("        else if (++{0}.cnt >= {1}u) {{ {0}.stable = _v; {0}.cnt = 0; }}\n", st, _stable_ticks);
     c += "    }\n";
-    c += std::format("    {}.prev_clk = _clk;\n", st);
     c += std::format("    uint64_t _out = {}.stable;\n", st);
     c += "    " + genOutputWrite(0, "_out", _bit_width) + "\n";
     c += "}\n";

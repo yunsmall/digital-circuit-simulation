@@ -28,7 +28,7 @@ DFlipFlop::DFlipFlop(const std::string &name, int bit_width, bool has_en, bool h
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("d", bit_width);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     if (_has_en)
         addInput("en", 1);
     if (_has_rst)
@@ -41,7 +41,6 @@ DFlipFlop::DFlipFlop(const std::string &name, int bit_width, bool has_en, bool h
 std::string DFlipFlop::genStructDef() const {
     return std::format(R"(typedef struct {{
     uint8_t q[16];
-    uint8_t prev_clk;
 }} {};)",
                        stateTypeName());
 }
@@ -55,7 +54,6 @@ std::string DFlipFlop::genInitCode() const {
 std::string DFlipFlop::genFuncDef_seq() const {
     int d_nid = inputs()[0]->netId();
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
-    int clk_nid = inputs()[1]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
@@ -65,8 +63,6 @@ std::string DFlipFlop::genFuncDef_seq() const {
     int pre_nid = _has_preset ? inputs()[2 + _has_en + _has_rst]->netId() : -1;
 
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
 
     std::string read_opt;
     if (_has_en && en_nid >= 0)
@@ -83,7 +79,7 @@ std::string DFlipFlop::genFuncDef_seq() const {
         read_opt += pre_nid >= 0 ? std::format("\n    bool _pre = false; dcs_memcpy(&_pre, _w[{}], 1);", pre_nid)
                               : std::string("\n    bool _pre = false;");
 
-    std::string edge = std::format("bool _rising = (_clk && !{}.prev_clk);", st);
+    std::string edge = std::format("bool _rising = {};", genGetWireEdge(1, PinEdge::Rising));
 
     // 预置位整字节写 0xFF 后，最后一字节要按有效位掩掉高位（位宽是 8 的倍数
     // 时整字节有效，不用掩）
@@ -125,7 +121,6 @@ std::string DFlipFlop::genFuncDef_seq() const {
                              st, bytes);
     }
 
-    std::string save_clk = std::format("{}.prev_clk = _clk;", st);
     std::string write_q;
     if (q_nid >= 0)
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
@@ -133,14 +128,12 @@ std::string DFlipFlop::genFuncDef_seq() const {
         write_q = "    // 输出悬空";
 
     return std::format(R"(static void {0}(void) {{
-    {1}
-    {2}{3}
+    {1}{2}
+    {3}
     {4}
     {5}
-    {6}
-    {7}
 }})",
-                       funcName_seq(), read_d, read_clk, read_opt, edge, update, save_clk, write_q);
+                       funcName_seq(), read_d, read_opt, edge, update, write_q);
 }
 
 // ============================================================
@@ -151,11 +144,11 @@ TFlipFlop::TFlipFlop(const std::string &name, int bit_width) : SequentialCompone
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("t", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("q", bit_width, false, true);
 }
 std::string TFlipFlop::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t q[16]; uint8_t prev_clk; }} {};)", stateTypeName());
+    return std::format(R"(typedef struct {{ uint8_t q[16]; }} {};)", stateTypeName());
 }
 std::string TFlipFlop::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
@@ -165,14 +158,11 @@ std::string TFlipFlop::genInitCode() const {
 }
 std::string TFlipFlop::genFuncDef_seq() const {
     int t_nid = inputs()[0]->netId();
-    int clk_nid = inputs()[1]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
     std::string read_t =
             t_nid >= 0 ? std::format("bool _t = false; dcs_memcpy(&_t, _w[{}], 1);", t_nid) : "bool _t = false;";
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
     std::string write_q;
     if (q_nid >= 0)
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
@@ -180,16 +170,15 @@ std::string TFlipFlop::genFuncDef_seq() const {
         write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
     {1}
-    {2}
-    bool _rising = (_clk && !{3}.prev_clk);
+    bool _rising = {2};
     if (_rising && _t) {{
-        for (int _i = 0; _i < {4}; _i++) {3}.q[_i] = ~{3}.q[_i];
-        {3}.q[{4} - 1] &= 0x{5:X}u;
+        for (int _i = 0; _i < {3}; _i++) {4}.q[_i] = ~{4}.q[_i];
+        {4}.q[{3} - 1] &= 0x{5:X}u;
     }}
-    {3}.prev_clk = _clk;
 {6}
 }})",
-                       funcName_seq(), read_t, read_clk, st, bytes, tailByteMask(_bit_width), write_q);
+                       funcName_seq(), read_t, genGetWireEdge(1, PinEdge::Rising), bytes, st,
+                       tailByteMask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -202,11 +191,11 @@ JKFlipFlop::JKFlipFlop(const std::string &name, int bit_width) :
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("j", 1);
     addInput("k", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addOutput("q", bit_width, false, true);
 }
 std::string JKFlipFlop::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t q[16]; uint8_t prev_clk; }} {};)", stateTypeName());
+    return std::format(R"(typedef struct {{ uint8_t q[16]; }} {};)", stateTypeName());
 }
 std::string JKFlipFlop::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
@@ -215,7 +204,7 @@ std::string JKFlipFlop::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
 std::string JKFlipFlop::genFuncDef_seq() const {
-    int j_nid = inputs()[0]->netId(), k_nid = inputs()[1]->netId(), clk_nid = inputs()[2]->netId();
+    int j_nid = inputs()[0]->netId(), k_nid = inputs()[1]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
@@ -223,16 +212,14 @@ std::string JKFlipFlop::genFuncDef_seq() const {
             j_nid >= 0 ? std::format("bool _j = false; dcs_memcpy(&_j, _w[{}], 1);", j_nid) : "bool _j = false;";
     std::string read_k =
             k_nid >= 0 ? std::format("bool _k = false; dcs_memcpy(&_k, _w[{}], 1);", k_nid) : "bool _k = false;";
-    std::string read_c = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                      : "bool _clk = false;";
     std::string write_q;
     if (q_nid >= 0)
         write_q = std::format("    {}\n", genOutputWrite(0, std::format("{}.q", st), _bit_width));
     else
         write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
-    {1} {2} {3}
-    bool _rising = (_clk && !{4}.prev_clk);
+    {1} {2}
+    bool _rising = {3};
     if (_rising) {{
         if (_j && _k) {{
             for (int _i = 0; _i < {5}; _i++) {4}.q[_i] = ~{4}.q[_i];
@@ -240,10 +227,10 @@ std::string JKFlipFlop::genFuncDef_seq() const {
         }} else if (_j) {{ dcs_memset({4}.q, 0xFF, {5}); {4}.q[{5} - 1] &= 0x{6:X}u;
         }} else if (_k) {{ dcs_memset({4}.q, 0, {5}); }}
     }}
-    {4}.prev_clk = _clk;
 {7}
 }})",
-                       funcName_seq(), read_j, read_k, read_c, st, bytes, tailByteMask(_bit_width), write_q);
+                       funcName_seq(), read_j, read_k, genGetWireEdge(2, PinEdge::Rising), st, bytes,
+                       tailByteMask(_bit_width), write_q);
 }
 
 // ============================================================
@@ -257,7 +244,7 @@ Register::Register(const std::string &name, int bit_width, bool has_en, bool has
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
     addInput("d", bit_width);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     if (_has_en)
         addInput("en", 1);
     if (_has_rst)
@@ -265,7 +252,7 @@ Register::Register(const std::string &name, int bit_width, bool has_en, bool has
     addOutput("q", bit_width, false, true);
 }
 std::string Register::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t data[16]; uint8_t prev_clk; }} {};)", stateTypeName());
+    return std::format(R"(typedef struct {{ uint8_t data[16]; }} {};)", stateTypeName());
 }
 std::string Register::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
@@ -274,7 +261,7 @@ std::string Register::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
 std::string Register::genFuncDef_seq() const {
-    int d_nid = inputs()[0]->netId(), clk_nid = inputs()[1]->netId(), q_nid = outputs()[0]->netId();
+    int d_nid = inputs()[0]->netId(), q_nid = outputs()[0]->netId();
     int d_nw = d_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
@@ -282,8 +269,6 @@ std::string Register::genFuncDef_seq() const {
     int rst_nid = _has_rst ? inputs()[_has_en ? 3 : 2]->netId() : -1;
 
     std::string read_d = gen_read_wire(d_nid, _bit_width, d_nw, "_dval");
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
     std::string read_opt;
     if (_has_en && en_nid >= 0)
         read_opt += std::format("\n    bool _en = false; dcs_memcpy(&_en, _w[{}], 1);", en_nid);
@@ -310,13 +295,12 @@ std::string Register::genFuncDef_seq() const {
     else
         write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
-    {1} {2}{3}
-    bool _rising = (_clk && !{4}.prev_clk);
+    {1}{2}
+    bool _rising = {3};
+{4}
 {5}
-    {4}.prev_clk = _clk;
-{6}
 }})",
-                       funcName_seq(), read_d, read_clk, read_opt, st, update, write_q);
+                       funcName_seq(), read_d, read_opt, genGetWireEdge(1, PinEdge::Rising), update, write_q);
 }
 
 // ============================================================
@@ -373,7 +357,7 @@ Counter::Counter(const std::string &name, int bit_width, bool has_load, bool has
     setParam("has_clr", _has_clr ? "1" : "0");
     if (bit_width < 1 || bit_width > 64)
         throw std::invalid_argument("位宽必须在1-64之间");
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     if (_has_load) {
         addInput("load", 1);
         addInput("din", bit_width);
@@ -387,7 +371,7 @@ Counter::Counter(const std::string &name, int bit_width, bool has_load, bool has
     addOutput("q", bit_width, false, true);
 }
 std::string Counter::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t count[16]; uint8_t prev_clk; }} {};)", stateTypeName());
+    return std::format(R"(typedef struct {{ uint8_t count[16]; }} {};)", stateTypeName());
 }
 std::string Counter::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
@@ -396,7 +380,6 @@ std::string Counter::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
 std::string Counter::genFuncDef_seq() const {
-    int clk_nid = inputs()[0]->netId();
     int q_nid = outputs()[0]->netId();
     int bytes = byte_count(_bit_width);
     auto st = stateVarName();
@@ -407,8 +390,6 @@ std::string Counter::genFuncDef_seq() const {
     int updown_nid = _has_updown ? inputs()[pi++]->netId() : -1;
     int clr_nid = _has_clr ? inputs()[pi++]->netId() : -1;
 
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
     std::string read_opt, load_decl;
     if (_has_load) {
         load_decl = load_nid >= 0 ? std::format("bool _load = false; dcs_memcpy(&_load, _w[{}], 1);", load_nid)
@@ -484,14 +465,13 @@ std::string Counter::genFuncDef_seq() const {
     else
         write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
-    {1}{2}
-    bool _rising = (_clk && !{3}.prev_clk);
-    {4}
+    {1}
+    bool _rising = {2};
+    {3}
+{4}
 {5}
-    {3}.prev_clk = _clk;
-{6}
 }})",
-                       funcName_seq(), read_clk, read_opt, st, load_decl, update, write_q);
+                       funcName_seq(), read_opt, genGetWireEdge(0, PinEdge::Rising), load_decl, update, write_q);
 }
 
 // ============================================================
@@ -505,7 +485,7 @@ ShiftRegister::ShiftRegister(const std::string &name, int length, bool has_dir, 
     if (length < 1 || length > 64)
         throw std::invalid_argument("移位寄存器长度必须在1-64之间");
     addInput("sin", 1);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     if (_has_dir)
         addInput("dir", 1);
     if (_has_clr)
@@ -513,7 +493,7 @@ ShiftRegister::ShiftRegister(const std::string &name, int length, bool has_dir, 
     addOutput("q", length, false, true);
 }
 std::string ShiftRegister::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t stages[16]; uint8_t prev_clk; }} {};)", stateTypeName());
+    return std::format(R"(typedef struct {{ uint8_t stages[16]; }} {};)", stateTypeName());
 }
 std::string ShiftRegister::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
@@ -522,7 +502,7 @@ std::string ShiftRegister::genInitCode() const {
     return std::format("    dcs_memset(&{}, 0, sizeof({}));", stateVarName(), stateTypeName());
 }
 std::string ShiftRegister::genFuncDef_seq() const {
-    int sin_nid = inputs()[0]->netId(), clk_nid = inputs()[1]->netId(), q_nid = outputs()[0]->netId();
+    int sin_nid = inputs()[0]->netId(), q_nid = outputs()[0]->netId();
     int bytes = byte_count(_length);
     auto st = stateVarName();
     int dir_nid = _has_dir ? inputs()[2]->netId() : -1;
@@ -531,8 +511,6 @@ std::string ShiftRegister::genFuncDef_seq() const {
 
     std::string read_sin = sin_nid >= 0 ? std::format("bool _sin = false; dcs_memcpy(&_sin, _w[{}], 1);", sin_nid)
                                         : "bool _sin = false;";
-    std::string read_clk = clk_nid >= 0 ? std::format("bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "bool _clk = false;";
     std::string read_opt;
     if (_has_dir)
         read_opt += dir_nid >= 0 ? std::format("\n    bool _dir = false; dcs_memcpy(&_dir, _w[{}], 1);", dir_nid)
@@ -584,13 +562,12 @@ std::string ShiftRegister::genFuncDef_seq() const {
     else
         write_q = "    // 输出悬空\n";
     return std::format(R"(static void {0}(void) {{
-    {1} {2}{3}
-    bool _rising = (_clk && !{4}.prev_clk);
+    {1}
+    bool _rising = {2};{3}
+{4}
 {5}
-    {4}.prev_clk = _clk;
-{6}
 }})",
-                       funcName_seq(), read_sin, read_clk, read_opt, st, update, write_q);
+                       funcName_seq(), read_sin, genGetWireEdge(1, PinEdge::Rising), read_opt, update, write_q);
 }
 
 
@@ -702,14 +679,13 @@ EdgeDetect::EdgeDetect(const std::string &name, EdgeType edge) :
     SequentialComponent(name, edge == EdgeType::Rising ? "edgedet_rise" : edge == EdgeType::Falling ? "edgedet_fall"
                                                                                                    : "edgedet_both"),
     _edge(edge) {
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
     addInput("in", 1);
     addOutput("out", 1, false, true);
 }
 
 std::string EdgeDetect::genStructDef() const {
     return std::format(R"(typedef struct {{
-    uint8_t prev_clk;
     uint8_t prev_in;
     uint8_t out_val;
 }} {};)", stateTypeName());
@@ -722,13 +698,9 @@ std::string EdgeDetect::genInitCode() const {
 }
 
 std::string EdgeDetect::genFuncDef_seq() const {
-    int clk_nid = inputs()[0]->netId();
     int in_nid = inputs()[1]->netId();
     auto st = stateVarName();
 
-    std::string read_clk = clk_nid >= 0
-                               ? std::format("uint8_t _clk = 0; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                               : "uint8_t _clk = 0;";
     std::string read_in = in_nid >= 0
                               ? std::format("uint8_t _in = 0; dcs_memcpy(&_in, _w[{}], 1);", in_nid)
                               : "uint8_t _in = 0;";
@@ -743,16 +715,14 @@ std::string EdgeDetect::genFuncDef_seq() const {
 
     return std::format(R"(static void {}() {{
     {}
-    {}
-    bool _rising = (_clk && !{}.prev_clk);
+    bool _rising = {};
     if (_rising) {{
         {}.out_val = {} ? 1 : 0;
         {}.prev_in = _in;
     }}
-    {}.prev_clk = _clk;
     {}
 }})",
-                       funcName_seq(), read_clk, read_in, st, st, cond, st, st,
+                       funcName_seq(), read_in, genGetWireEdge(0, PinEdge::Rising), st, cond, st,
                        genOutputWrite(0, std::format("{}.out_val", st), 1));
 }
 
@@ -768,6 +738,8 @@ ClockDivider::ClockDivider(const std::string &name, int divisor) :
     setParam("divisor", std::to_string(divisor));
     if (divisor < 2)
         throw std::invalid_argument("分频比必须 >= 2");
+    // 不声明 PinEdge：分频器也是时钟源，在边沿检测之前执行，自己按电平检测
+    // 输入 clk 的上升沿（和 CPU 同一种方式）
     addInput("clk", 1);
     addOutput("out", 1, false, true);
 }
@@ -786,25 +758,20 @@ std::string ClockDivider::genInitCode() const {
 }
 
 std::string ClockDivider::genFuncDef_seq() const {
-    int clk_nid = inputs()[0]->netId();
     auto st = stateVarName();
     int d2 = _divisor / 2;
+    int clk_nid = inputs()[0]->netId();
 
-    std::string read_clk = clk_nid >= 0
-                               ? std::format("uint8_t _clk = 0; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                               : "uint8_t _clk = 0;";
-
-    // out_val 从 counter 实时计算，不入状态，避免初始化问题
     return std::format(R"(static void {}() {{
     {}
     bool _rising = (_clk && !{}.prev_clk);
+    {}.prev_clk = _clk;
     if (_rising)
         {}.counter = ({}.counter + 1) % {};
-    {}.prev_clk = _clk;
     uint8_t _out = ({}.counter < {}) ? 1 : 0;
     {}
 }})",
-                       funcName_seq(), read_clk, st, st, st, _divisor, st, st, d2,
+                       funcName_seq(), gen_read_wire(clk_nid, 1, 1, "_clk"), st, st, st, st, _divisor, st, d2,
                        genOutputWrite(0, "_out", 1));
 }
 

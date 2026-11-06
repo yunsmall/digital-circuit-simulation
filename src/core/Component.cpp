@@ -158,7 +158,15 @@ std::string Component::genGetWireEdge(int in_idx, PinEdge edge) const {
     const int nid = pin->netId();
     if (nid < 0)
         return "(false)";
-    const int mask = edge == PinEdge::Rising ? 1 : (edge == PinEdge::Falling ? 2 : 4);
+    if (edge == PinEdge::Change) {
+        // Change 按 (线网, 引脚位宽) 分组，槽位由 CodeGen 在生成期分配
+        const int slot = pin->changeSlot();
+        if (slot < 0)
+            throw std::logic_error(
+                    std::format("元件 {} 的引脚 {} 的 Change 槽位未分配（没有参与代码生成？）", name(), pin->name()));
+        return std::format("((_dcs_change_flags[{}] & 1) != 0)", slot);
+    }
+    const int mask = edge == PinEdge::Rising ? 1 : 2;
     return std::format("((_dcs_edge_flags[{}] & {}) != 0)", nid, mask);
 }
 

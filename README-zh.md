@@ -262,6 +262,28 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `adc` | 模数转换：float 电压量化到 N 位数字量，越界饱和 | `bit_width`（1~32）, `vref` |
 | `dac` | 数模转换：N 位数字量线性映射到 `[0, vref]`，输出是 float 位模式 | `bit_width`（1~32）, `vref` |
 
+#### 仿真时序语义
+
+`tick` 是仿真的最小时间步长（离散的半个时钟周期），不是设计里的时间单位。`clkgen` 用
+1/1 时一个时钟周期 = 2 tick。`circuit_tick` 内的执行顺序：
+
+1. **时钟源（`clkgen`）先执行**，把本 tick 的时钟电平写进线网
+2. 组合逻辑（按拓扑序，输出同 tick 可见；组合锥用本拍时钟重算）
+3. 总线决议 + 时序输出传播
+4. 阶段 2b：反复重跑输入接了总线的组合元件，直到总线稳定
+5. **统一边沿检测**：每个声明了 `PinEdge` 的输入线网，拿本 tick 电平和上一 tick 采样值比较
+6. 其它时序元件执行
+
+所以 `tick N` 读到的不是两个沿之间的中间电平，而是**本 tick 时钟源更新后的电平**；
+`tick N` 检测到的沿就是该采样点对应的那个沿（1/1 时 tick 1 是上升沿、tick 2 是下降沿）。
+元件在 `addInput(..., PinEdge::Rising)` 声明依赖，生成代码用 `genGetWireEdge` 读标志；
+没有声明边沿的元件（如 `riscv_cpu`，它每拍都要按当前电平摆总线）仍直接读 `_w` 的电平，
+因此时钟源必须先于它们执行，否则会和声明了边沿的元件错开一拍。
+
+非三态时序输出由 `genOutputWrite` 直写 `_w`，同一阶段内后执行的元件能读到先执行元件
+本拍写入的值。这是 dcs 让组合请求在一个 tick 内穿过 CPU → 互连 → 从设备的方式；代价是
+阶段内存在顺序依赖，时钟源这种"所有元件都依赖"的信号必须排在最前。
+
 ### 时序逻辑
 
 | 类型 | 说明 | 参数 |
@@ -302,7 +324,7 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `wishbone_ic` | Wishbone 地址解码/路由 | `segments`（如 `0:65536,0x80000000:65536`）, `num_masters` |
 | `clint` | CLINT：mtime/mtimecmp/msip | — |
 | `plic` | PLIC 中断控制器 | `num_sources` |
-| `uart` | 16550A 兼容 UART | `baud_div` |
+| `uart` | 16550A 兼容 UART | `ns_per_period`, `baud` |
 | `spi` / `i2c` | SPI / I2C 主设备 | `clkdiv` |
 | `dma` | 存储到存储的 DMA | — |
 | `axi_lite_bridge` | AXI-Lite ↔ Wishbone 桥 | — |
@@ -311,7 +333,7 @@ auto circuit = dsc::Circuit::fromJson(json, error, dir, &ctx);
 | `reg_bridge` | Wishbone 从设备 → 通用寄存器接口（addr/wdata/we/en） | — |
 | `gpio` | 32 位 GPIO，DIR/OUT/IN 三个寄存器 | — |
 | `pwm` | 单通道 PWM（PERIOD/DUTY/CTRL） | — |
-| `rtc` | goldfish 风格实时时钟（纳秒），带闹钟中断 | `ns_per_tick` |
+| `rtc` | goldfish 风格实时时钟（纳秒），带闹钟中断 | `ns_per_period` |
 | `watchdog` | 看门狗定时器（CTRL/TIMEOUT/FEED/STATUS） | — |
 | `virtio_blk` | virtio-blk，镜像来自宿主文件或电路里的 ROM | `path` |
 | `virtio_blk_mem` | virtio-blk，介质是设备自带存储 | `size_kb` |
@@ -333,7 +355,7 @@ CPU 支持 M/S/U 特权级、Sv32/Sv39 分页、Zicsr/Zifencei、A/F/D/Zfh/Zba/Z
 | `assert` | 仿真断言：时钟沿上 `cond=0` 时报一次 | `message`, `max_reports` |
 | `display` | 显示件（LED/数码管/文本），把值交给宿主 GUI | `bit_width`, `kind`（led/seg/text）, `digits` |
 | `bcd2seg` | BCD/十六进制到七段码译码（bit7 是小数点） | `hex_mode`（0/1）, `active_low`（0/1） |
-| `wallclock` | 日历时钟，虚拟累加或直接同步宿主时间 | `ns_per_tick`, `base_epoch`, `sync_host`（0/1） |
+| `wallclock` | 日历时钟，虚拟累加或直接同步宿主时间 | `ns_per_period`, `base_epoch`, `sync_host`（0/1） |
 | `uart_in` | 串口输入：宿主 stdin 按 8N1 发到 UART.rx | `baud_div` |
 | `uart_feed` | 串口输入：宿主程序 push 字节（不碰 stdin） | `baud_div` |
 | `uart_term` | 串口终端接收端：8N1 电平解成字节 | `baud_div` |

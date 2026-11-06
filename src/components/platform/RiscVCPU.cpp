@@ -53,6 +53,9 @@ template<int XLEN> requires SupportedXlen<XLEN>
 RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu") {
     // xlen 必须导出：工厂按这个参数选模板实例，缺了往返会静默降级成 RV32
     setParam("xlen", XLEN == 64 ? "64" : "32");
+    // clk 不声明 PinEdge：CPU 每拍都要执行（上升沿推进状态机，下降沿按推进后的
+    // 相位重新摆总线信号），需要真实电平区分两个半周期，不能只靠"沿才执行"的
+    // 边沿标志；因此也不能接伪时钟线（伪时钟电平恒 0），接上会在 compile 报错
     addInput("clk", 1); addInput("rst", 1);
     addInput("wb_dat_i", 32);
     addInput("wb_ack_i", 1);

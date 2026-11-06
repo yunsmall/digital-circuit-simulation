@@ -128,7 +128,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"uart_feed", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk"}, {"rx"}, dsc::ComponentCategory::Misc, "串口输入端（外部喂数据）：按 ns_per_period/baud 算 8N1 位时间"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UartFeed>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                                    (std::uint64_t) dsc::paramInt(p, "baud", 115200));
+            return std::make_unique<dsc::UartFeed>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                                    (std::uint64_t) dsc::paramPositiveInt(p, "baud", 115200));
         });
 } // namespace

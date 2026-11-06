@@ -17,7 +17,7 @@ DelayLine::DelayLine(const std::string &name, int bit_width, int depth, bool use
     setParam("use_clock", use_clock ? "1" : "0");
     addInput("in", bit_width);
     if (use_clock)
-        addInput("clk", 1);
+        addInput("clk", 1, PinEdge::Rising);
     addOutput("out", bit_width, false, true);
 }
 
@@ -25,7 +25,6 @@ std::string DelayLine::genStructDef() const {
     return std::format(R"(typedef struct {{
     uint8_t _val[{}][16];
     int _pos;
-    uint8_t prev_clk;
 }} {};)",
                        _depth, stateTypeName());
 }
@@ -49,30 +48,23 @@ std::string DelayLine::genFuncDef_seq() const {
     std::string write_out = genOutputWrite(0, std::format("{0}._val[{0}._pos]", st), _bit_width);
 
     if (_use_clock) {
-        int clk_nid = inputs()[1]->netId();
-        std::string clk_read = clk_nid >= 0
-                                       ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                       : "    bool _clk = false;";
-
         return std::format(R"(static void {0}() {{
     {1}
-    {2}
-    bool _rising = (_clk && !{3}.prev_clk);
+    bool _rising = {2};
     if (_rising) {{
         // 先输出当前槽的旧值（即 depth 个 tick 前的输入），再写入新值
-        {6}
+        {5}
         dcs_memcpy({3}._val[{3}._pos], &_in_val, {4});
-        if (++{3}._pos >= {5}) {3}._pos = 0;
+        if (++{3}._pos >= {6}) {3}._pos = 0;
     }}
-    {3}.prev_clk = _clk;
 }})",
                            funcName_seq(), // {0}
                            read_in, // {1}
-                           clk_read, // {2}
+                           genGetWireEdge(1, PinEdge::Rising), // {2}
                            st, // {3}
                            bytes, // {4}
-                           _depth, // {5}
-                           write_out // {6}
+                           write_out, // {5}
+                           _depth // {6}
         );
     }
     else {

@@ -455,7 +455,7 @@
       ]
     },
     {
-      "description": "时钟发生器，可设高/低电平持续tick数",
+      "description": "时钟发生器，可设高/低电平持续tick数；tick_edge 非 none 时输出改为每 tick 都是该沿的伪时钟线（无电平语义）",
       "properties": {
         "name": {
           "type": "string"
@@ -474,6 +474,20 @@
             },
             "low_ticks": {
               "default": "1",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "tick_edge": {
+              "default": "none",
+              "enum": [
+                "none",
+                "rising",
+                "falling"
+              ],
               "type": [
                 "string",
                 "integer",
@@ -1827,7 +1841,7 @@
       ]
     },
     {
-      "description": "I2C 主机，一次起始-地址-数据-停止的写事务",
+      "description": "I2C 主机，一次起始-地址-数据-停止的写事务；按 ns_per_period/scl_period_ns 分频",
       "properties": {
         "name": {
           "type": "string"
@@ -1835,8 +1849,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "clkdiv": {
-              "default": "8",
+            "ns_per_period": {
+              "default": "20",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "scl_period_ns": {
+              "default": "160",
               "type": [
                 "string",
                 "integer",
@@ -3163,7 +3186,16 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "ns_per_tick": {
+            "base_ns": {
+              "default": "0",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "ns_per_period": {
               "default": "100",
               "type": [
                 "string",
@@ -3272,7 +3304,7 @@
       ]
     },
     {
-      "description": "SPI 主机（模式 0），按 clkdiv 分频收发 8 位",
+      "description": "SPI 主机（模式 0），按 ns_per_period/sclk_period_ns 分频收发 8 位",
       "properties": {
         "name": {
           "type": "string"
@@ -3280,8 +3312,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "clkdiv": {
-              "default": "4",
+            "ns_per_period": {
+              "default": "20",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "sclk_period_ns": {
+              "default": "80",
               "type": [
                 "string",
                 "integer",
@@ -3482,7 +3523,7 @@
       ]
     },
     {
-      "description": "16550A 兼容 8N1 串口（reg-shift=2），按 baud_div 个 tick 一位",
+      "description": "16550A 兼容 8N1 串口（reg-shift=2），按 ns_per_period/baud 算每比特时钟周期",
       "properties": {
         "name": {
           "type": "string"
@@ -3490,8 +3531,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "baud_div": {
-              "default": "8",
+            "baud": {
+              "default": "115200",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "ns_per_period": {
+              "default": "20",
               "type": [
                 "string",
                 "integer",
@@ -3512,7 +3562,7 @@
       ]
     },
     {
-      "description": "串口输入端（外部喂数据）：元件本身不做系统调用，宿主程序 push 字节进来，按 8N1 发给 UART.rx（baud_div 默认与 uart 一致）",
+      "description": "串口输入端（外部喂数据）：按 ns_per_period/baud 算 8N1 位时间",
       "properties": {
         "name": {
           "type": "string"
@@ -3520,8 +3570,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "baud_div": {
-              "default": "8",
+            "baud": {
+              "default": "115200",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "ns_per_period": {
+              "default": "20",
               "type": [
                 "string",
                 "integer",
@@ -3542,7 +3601,7 @@
       ]
     },
     {
-      "description": "串口输入端：把宿主输入的字符按 8N1 发到 UART 的 rx 引脚（baud_div 默认与 uart 一致；可按实例 setSource 接管输入）",
+      "description": "串口输入端：按 ns_per_period/baud 算 8N1 位时间，把宿主字符发到 UART 的 rx（可按实例 setSource 接管输入）",
       "properties": {
         "name": {
           "type": "string"
@@ -3550,8 +3609,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "baud_div": {
-              "default": "8",
+            "baud": {
+              "default": "115200",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "ns_per_period": {
+              "default": "20",
               "type": [
                 "string",
                 "integer",
@@ -3572,7 +3640,7 @@
       ]
     },
     {
-      "description": "串口终端接收端：把 8N1 电平解成字节，data/valid 接给 print（ascii=1）；baud_div 默认与 uart 一致",
+      "description": "串口终端接收端：按 ns_per_period/baud 把 8N1 电平解成字节，data/valid 接给 print（ascii=1）",
       "properties": {
         "name": {
           "type": "string"
@@ -3580,8 +3648,17 @@
         "params": {
           "additionalProperties": false,
           "properties": {
-            "baud_div": {
-              "default": "8",
+            "baud": {
+              "default": "115200",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "ns_per_period": {
+              "default": "20",
               "type": [
                 "string",
                 "integer",
@@ -3750,7 +3827,7 @@
       ]
     },
     {
-      "description": "日历时钟：虚拟模式按 ns_per_tick 累加；sync_host=1 时每个上升沿直接取宿主当前时间",
+      "description": "日历时钟：虚拟模式按 ns_per_period 累加；sync_host=1 时每个上升沿直接取宿主当前时间",
       "properties": {
         "name": {
           "type": "string"
@@ -3766,7 +3843,7 @@
                 "boolean"
               ]
             },
-            "ns_per_tick": {
+            "ns_per_period": {
               "default": "100",
               "type": [
                 "string",

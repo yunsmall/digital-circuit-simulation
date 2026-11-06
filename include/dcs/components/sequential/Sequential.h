@@ -18,7 +18,7 @@ namespace dsc {
 //       若 rst=1 则 q ← 0（异步，不等待时钟）
 //       若 pre=1 则 q ← 全 1（异步，rst 优先于 pre）
 //
-// 状态结构体:  q[16] + prev_clk（用于边沿检测）
+// 状态结构体:  q[16]（边沿由 JIT 统一标志判断）
 // ============================================================
 class DFlipFlop : public SequentialComponent {
 public:
@@ -28,7 +28,7 @@ public:
     DFlipFlop(const std::string &name, int bit_width, bool has_en = false, bool has_rst = false,
               bool has_preset = false);
 
-    std::string genStructDef() const override; // typedef struct { q[16], prev_clk } _S_dff_xxx
+    std::string genStructDef() const override; // typedef struct { q[16] } _S_dff_xxx
     std::string genStateDecl() const override; // static _S_dff_xxx _s_dff_xxx;
     std::string genInitCode() const override; // memset(&_s_xxx, 0, sizeof(...))
     std::string genFuncDef_seq() const override;
@@ -47,7 +47,7 @@ private:
 //   clk  [in]  时钟 (1位)，上升沿触发
 //   q    [out] 当前输出 (bit_width)，所有位一起翻转
 //
-// 状态结构体: q[16] + prev_clk
+// 状态结构体: q[16]
 // ============================================================
 class TFlipFlop : public SequentialComponent {
 public:
@@ -73,7 +73,7 @@ private:
 //   J=1 K=0: 置一    (q ← 全1)
 //   J=1 K=1: 翻转    (q ← ~q)
 //
-// 状态结构体: q[16] + prev_clk
+// 状态结构体: q[16]
 // ============================================================
 class JKFlipFlop : public SequentialComponent {
 public:
@@ -100,7 +100,7 @@ private:
 //
 // 行为: clk 上升沿时，若 en=1 则 data ← d；若 rst=1 则 data ← 0
 //
-// 状态结构体: data[16] + prev_clk
+// 状态结构体: data[16]
 // ============================================================
 class Register : public SequentialComponent {
 public:
@@ -161,7 +161,7 @@ private:
 //     否则:        count ← count + 1
 //   若 clr=1: count ← 0（异步，不等待时钟）
 //
-// 状态结构体: count[16] + prev_clk
+// 状态结构体: count[16]
 // ============================================================
 class Counter : public SequentialComponent {
 public:
@@ -193,7 +193,7 @@ private:
 //   右移: 所有位右移一位，MSB 填入 sin，LSB 移出丢弃
 //   若 clr=1: 所有位清零（异步）
 //
-// 状态结构体: stages[16] + prev_clk
+// 状态结构体: stages[16]
 // ============================================================
 class ShiftRegister : public SequentialComponent {
 public:
@@ -231,6 +231,9 @@ public:
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
     std::string genFuncDef_seq() const override;
+    bool isClockSource() const override {
+        return true;
+    }
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:
@@ -275,6 +278,10 @@ public:
     std::string genStateDecl() const override;
     std::string genInitCode() const override;
     std::string genFuncDef_seq() const override;
+    // 分频输出也是时钟源：必须在阶段 1/边沿检测之前写线网，否则下游晚一拍
+    bool isClockSource() const override {
+        return true;
+    }
     std::unique_ptr<Component> clone(const std::string &n) const override;
 
 private:

@@ -228,7 +228,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"i2c", {{"ns_per_period", "20"}, {"scl_period_ns", "160"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "sda_in"}, {"wb_dat_o", "wb_ack_o", "scl", "sda_out", "sda_oe"}, dsc::ComponentCategory::Misc, "I2C 主机，一次起始-地址-数据-停止的写事务；按 ns_per_period/scl_period_ns 分频"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::I2C>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                              dsc::paramInt(p, "scl_period_ns", 160));
+            return std::make_unique<dsc::I2C>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                              dsc::paramPositiveInt(p, "scl_period_ns", 160));
         });
 } // namespace

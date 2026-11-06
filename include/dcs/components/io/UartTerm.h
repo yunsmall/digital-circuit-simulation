@@ -5,7 +5,7 @@
 // 这样串口解码和打印格式两件事各自独立。
 //
 // 解码时序和 UART 的接收端完全一致（起始沿 -> 半位确认 -> 每位中点采样 ->
-// 停止位校验），因此 baud_div 必须和对面 UART 的构造参数相同。
+// 停止位校验），因此每比特的 clk 周期数必须和对面 UART 的构造参数一致。
 #pragma once
 #include <cstdint>
 #include <string>

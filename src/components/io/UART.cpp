@@ -249,7 +249,7 @@ namespace {
 DCS_REGISTER_COMPONENT(
     {"uart", {{"ns_per_period", "20"}, {"baud", "115200"}}, {"clk", "wb_adr_i", "wb_dat_i", "wb_we_i", "wb_sel_i", "wb_stb_i", "wb_cyc_i", "rx"}, {"wb_dat_o", "wb_ack_o", "tx", "irq"}, dsc::ComponentCategory::Misc, "16550A 兼容 8N1 串口（reg-shift=2），按 ns_per_period/baud 算每比特时钟周期"},
     [](const std::string &n, const std::unordered_map<std::string, std::string> &p) -> std::unique_ptr<dsc::Component> {
-            return std::make_unique<dsc::UART>(n, dsc::paramInt(p, "ns_per_period", 20),
-                                               (std::uint64_t) dsc::paramInt(p, "baud", 115200));
+            return std::make_unique<dsc::UART>(n, dsc::paramPositiveInt(p, "ns_per_period", 20),
+                                               (std::uint64_t) dsc::paramPositiveInt(p, "baud", 115200));
         });
 } // namespace

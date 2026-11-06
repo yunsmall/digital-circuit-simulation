@@ -29,7 +29,7 @@ MultiPortRAM::MultiPortRAM(const std::string &name, int addr_width, int data_wid
     setParam("read_latency", std::to_string(read_latency));
 
     // 时钟
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
 
     // 写端口引脚
     for (int i = 0; i < _num_write; i++) {
@@ -63,7 +63,6 @@ std::string MultiPortRAM::genStateDecl() const {
     std::string code;
     code += std::format("static uint8_t* _mpram_mem_{0} = (uint8_t*)0x{1:X}ULL;\n", id,
                         reinterpret_cast<uintptr_t>(_mem.data()));
-    code += std::format("static uint8_t  _mpram_clk_{0};\n", id);
 
     if (_rd_stages > 0) {
         code += std::format("static uint64_t _mpram_rd_addr_{0}[{1}][{2}];\n", id, _rd_stages, _num_read);
@@ -75,7 +74,6 @@ std::string MultiPortRAM::genStateDecl() const {
 std::string MultiPortRAM::genInitCode() const {
     int id = _id;
     std::string code;
-    code += std::format("    _mpram_clk_{0} = 0;\n", id);
     if (_rd_stages > 0) {
         code += std::format("    dcs_memset(_mpram_rd_addr_{0}, 0, sizeof(_mpram_rd_addr_{0}));\n", id);
         code += std::format("    _mpram_tick_{0} = 0;\n", id);
@@ -85,7 +83,6 @@ std::string MultiPortRAM::genInitCode() const {
 
 std::string MultiPortRAM::genFuncDef_seq() const {
     int id = _id;
-    int clk_nid = inputs()[0]->netId();
     int d_bytes = byte_count(_data_width);
     std::string addr_mask = gen_mask(_addr_width);
     auto sid = std::to_string(id);
@@ -122,7 +119,6 @@ std::string MultiPortRAM::genFuncDef_seq() const {
     code += "    const int d_bytes = " + std::to_string(d_bytes) + ";\n";
 
     // ---- 第1步：读取所有输入 ----
-    code += "    " + gen_read_wire(clk_nid, 1, 1, "_clk") + "\n";
     for (int i = 0; i < _num_write; i++) {
         int wa_nw = wa_nid[i] >= 0 ? inputs()[1 + i * 3]->net()->bit_width() : 0;
         int wd_nw = wd_nid[i] >= 0 ? inputs()[1 + i * 3 + 1]->net()->bit_width() : 0;
@@ -168,7 +164,7 @@ std::string MultiPortRAM::genFuncDef_seq() const {
 
     // ---- 第3步：写端口（时钟上升沿，we=1 时写入，字节寻址 + 边界检查）----
     if (_num_write > 0) {
-        code += std::format("    if (_clk && !_mpram_clk_{}) {{\n", sid);
+        code += "    if (" + genGetWireEdge(0, PinEdge::Rising) + ") {\n";
         for (int i = 0; i < _num_write; i++) {
             code += std::format("        if (_we{}) {{\n", i);
             code += "            if ((uint64_t)_wa" + std::to_string(i) + " + " + std::to_string(d_bytes) + " <= " + cap_s + "ULL) {\n";
@@ -194,7 +190,6 @@ std::string MultiPortRAM::genFuncDef_seq() const {
         code += std::format("    if (_mpram_tick_{0} < {1}) _mpram_tick_{0}++;\n", sid, _read_latency);
     }
 
-    code += std::format("    _mpram_clk_{} = _clk;\n", sid);
     code += "}\n";
     return code;
 }

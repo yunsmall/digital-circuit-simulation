@@ -1,7 +1,7 @@
 // UartIn — 宿主字节流 → 8N1 串行比特流
 //
 // 与 UART 元件的接收端配对：宿主给的字符经过它变成一串电平，
-// 送到 UART 的 rx 引脚，内核的 8250 驱动就能收到。baud_div 必须和
+// 送到 UART 的 rx 引脚，内核的 8250 驱动就能收到。每比特的 clk 周期数必须和
 // UART 元件一致，否则位宽对不上，收到的全是乱码。
 //
 // 字节来源支持三种，互不干扰、都是实例级的：
@@ -49,7 +49,6 @@ public:
 
 private:
     struct InState {
-        uint32_t baud_div;
         uint8_t fifo[64];
         // 生产者（pushByte）和消费者（JIT 回调 fetch）可能在不同线程。
         // 字段故意保持普通 uint32_t：JIT 用 dcs_load_acq 读同一块存储，宿主侧用

@@ -20,48 +20,41 @@ FloatPrint::FloatPrint(const std::string &name, int precision) :
         throw std::invalid_argument("精度必须是 32 或 64");
     setParam("precision", std::to_string(precision));
     addInput("in", precision);
-    addInput("clk", 1);
+    addInput("clk", 1, PinEdge::Rising);
 }
 
 std::string FloatPrint::genStructDef() const {
-    return std::format(R"(typedef struct {{ uint8_t prev_clk; }} {};)", stateTypeName());
+    // 没有跨拍状态；保留一个占位字段，C 不允许空结构体
+    return std::format(R"(typedef struct {{ uint8_t _unused; }} {};)", stateTypeName());
 }
 
 std::string FloatPrint::genStateDecl() const {
     return std::format("static {} {};", stateTypeName(), stateVarName());
 }
 
-// circuit_init/circuit_reset 都先把全部线网清零，再执行元件的初始化代码，
-// 所以 clk 的上一拍电平就是 0，prev_clk 从 0 起不会漏掉/伪造上升沿
 std::string FloatPrint::genInitCode() const {
-    return std::format("    {}.prev_clk = 0;", stateVarName());
+    return "";
 }
 
 std::string FloatPrint::genFuncDef_seq() const {
     int in_nid = inputs()[0]->netId();
     int in_nw = in_nid >= 0 ? inputs()[0]->net()->bit_width() : 0;
-    int clk_nid = inputs()[1]->netId();
-    auto st = stateVarName();
     int bytes = _precision / 8;
-
-    std::string clk_read = clk_nid >= 0 ? std::format("    bool _clk = false; dcs_memcpy(&_clk, _w[{}], 1);", clk_nid)
-                                        : "    bool _clk = false;";
 
     const auto owner = (unsigned long long) reinterpret_cast<uintptr_t>(this);
 
     return std::format(R"(extern void dcs_fprint(void*, const uint8_t*);
 static void {0}() {{
     {1}
-    {2}
-    bool _rising = (_clk && !{3}.prev_clk);
+    bool _rising = {2};
     if (_rising) {{
-        uint8_t _buf[{4}];
-        dcs_memcpy(_buf, &_val, {4});
-        dcs_fprint((void *)0x{5:X}ULL, _buf);
+        uint8_t _buf[{3}];
+        dcs_memcpy(_buf, &_val, {3});
+        dcs_fprint((void *)0x{4:X}ULL, _buf);
     }}
-    {3}.prev_clk = _clk;
 }})",
-                       funcName_seq(), gen_read_wire(in_nid, _precision, in_nw, "_val"), clk_read, st, bytes, owner);
+                       funcName_seq(), gen_read_wire(in_nid, _precision, in_nw, "_val"),
+                       genGetWireEdge(1, PinEdge::Rising), bytes, owner);
 }
 
 void FloatPrint::setSink(const TextSink &sink, void *ctx) {
