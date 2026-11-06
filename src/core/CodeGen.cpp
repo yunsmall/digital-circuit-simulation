@@ -159,7 +159,10 @@ void emitCombStage(std::ostream &oss, const std::vector<Component *> &sorted,
             continue;
         if (c->isClockSource() && c->hasSequential()) {
             oss << "    " << c->funcName_seq() << "();\n";
-            continue;
+            // 时钟源通常只有时序部分；将来若某个源同时带组合逻辑，
+            // 仍要按原语义把组合部分也执行掉
+            if (!c->hasCombinational())
+                continue;
         }
         if (!c->hasCombinational())
             continue;
