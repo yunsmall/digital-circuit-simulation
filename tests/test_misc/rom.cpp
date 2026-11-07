@@ -1,10 +1,26 @@
 // ROM 测试：内存模式 / 文件 mmap / 文件 read / 字节寻址非对齐访问
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <dcs/Circuit.h>
 #include <dcs/components/memory/ROM.h>
+#include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <string>
+
+namespace {
+// std::tmpnam 生成的名字在多进程下可能重复，glibc 会在链接时直接警告。
+// 用系统临时目录 + 时间戳 + 进程内序号拼一个本测试专用的唯一文件名
+std::filesystem::path uniqueTempPath() {
+    static std::atomic<unsigned> seq{0};
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    return std::filesystem::temp_directory_path() /
+           ("dcs_rom_test_" + std::to_string((unsigned long long) stamp) + "_" +
+            std::to_string(seq.fetch_add(1)) + ".bin");
+}
+} // namespace
 
 // 辅助：给 ROM 的内存模式写入二进制数据
 static void writeROM(dsc::ROM *rom, const uint8_t *data, size_t len) {
@@ -64,31 +80,32 @@ TEST(RomTest, MemoryMode) {
 // ============================================================
 TEST(RomTest, FileMmap) {
     // 紧凑原始字节文件，depth=4（addr_width=2），文件只有 2 字节
-    std::string tmp = std::tmpnam(nullptr);
-    tmp += ".bin";
+    const auto tmp = uniqueTempPath();
     {
         std::ofstream f(tmp, std::ios::binary);
         uint8_t data[] = {0xAA, 0xBB};
         f.write((const char *) data, sizeof(data));
     }
 
-    dsc::Circuit c;
-    auto *addr = c.createNet("addr"), *clk = c.createNet("clk"), *dout = c.createNet("dout");
-    auto *rom = c.addComponent(std::make_unique<dsc::ROM>("rom", 2, 8, std::filesystem::path(tmp), 0));
-    c.connect(rom, "addr", addr);
-    c.connect(rom, "clk", clk);
-    c.connect(rom, "data_out", dout);
-    c.compile();
-    c.init();
+    auto c = std::make_unique<dsc::Circuit>();
+    auto *addr = c->createNet("addr"), *clk = c->createNet("clk"), *dout = c->createNet("dout");
+    auto *rom = c->addComponent(std::make_unique<dsc::ROM>("rom", 2, 8, tmp, 0));
+    c->connect(rom, "addr", addr);
+    c->connect(rom, "clk", clk);
+    c->connect(rom, "data_out", dout);
+    c->compile();
+    c->init();
 
     // 文件范围内：地址 0=0xAA, 地址 1=0xBB
-    checkROM(c, addr->id(), clk->id(), dout->id(), 0, 0xAA);
-    checkROM(c, addr->id(), clk->id(), dout->id(), 1, 0xBB);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 0, 0xAA);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 1, 0xBB);
     // 超出文件范围：地址 2 和 3 应返回 0
-    checkROM(c, addr->id(), clk->id(), dout->id(), 2, 0);
-    checkROM(c, addr->id(), clk->id(), dout->id(), 3, 0);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 2, 0);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 3, 0);
 
-    std::remove(tmp.c_str());
+    // ROM 在 mmap 模式下持有文件映射，先销毁电路再删文件
+    c.reset();
+    std::filesystem::remove(tmp);
 }
 
 // ============================================================
@@ -96,55 +113,57 @@ TEST(RomTest, FileMmap) {
 // ============================================================
 // 文件加载，文件刚好等于 depth
 TEST(RomTest, FileRead) {
-    std::string tmp = std::tmpnam(nullptr);
-    tmp += ".bin";
+    const auto tmp = uniqueTempPath();
     {
         std::ofstream f(tmp, std::ios::binary);
         uint8_t data[] = {0xFE, 0xED};
         f.write((const char *) data, sizeof(data));
     }
 
-    dsc::Circuit c;
-    auto *addr = c.createNet("addr"), *clk = c.createNet("clk"), *dout = c.createNet("dout");
-    auto *rom = c.addComponent(std::make_unique<dsc::ROM>("rom", 1, 8, std::filesystem::path(tmp), 0));
-    c.connect(rom, "addr", addr);
-    c.connect(rom, "clk", clk);
-    c.connect(rom, "data_out", dout);
-    c.compile();
-    c.init();
+    auto c = std::make_unique<dsc::Circuit>();
+    auto *addr = c->createNet("addr"), *clk = c->createNet("clk"), *dout = c->createNet("dout");
+    auto *rom = c->addComponent(std::make_unique<dsc::ROM>("rom", 1, 8, tmp, 0));
+    c->connect(rom, "addr", addr);
+    c->connect(rom, "clk", clk);
+    c->connect(rom, "data_out", dout);
+    c->compile();
+    c->init();
 
-    checkROM(c, addr->id(), clk->id(), dout->id(), 0, 0xFE);
-    checkROM(c, addr->id(), clk->id(), dout->id(), 1, 0xED);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 0, 0xFE);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 1, 0xED);
 
-    std::remove(tmp.c_str());
+    // ROM 在 mmap 模式下持有文件映射，先销毁电路再删文件
+    c.reset();
+    std::filesystem::remove(tmp);
 }
 
 // 文件小于 ROM 深度，超出部分返回 0（read 模式）
 TEST(RomTest, FileReadSmall) {
-    std::string tmp = std::tmpnam(nullptr);
-    tmp += ".bin";
+    const auto tmp = uniqueTempPath();
     {
         std::ofstream f(tmp, std::ios::binary);
         uint8_t data[] = {0x11};
         f.write((const char *) data, sizeof(data));
     }
 
-    dsc::Circuit c;
-    auto *addr = c.createNet("addr"), *clk = c.createNet("clk"), *dout = c.createNet("dout");
+    auto c = std::make_unique<dsc::Circuit>();
+    auto *addr = c->createNet("addr"), *clk = c->createNet("clk"), *dout = c->createNet("dout");
     // depth=4（addr_width=2），文件只有 1 字节
-    auto *rom = c.addComponent(std::make_unique<dsc::ROM>("rom", 2, 8, std::filesystem::path(tmp), 0));
-    c.connect(rom, "addr", addr);
-    c.connect(rom, "clk", clk);
-    c.connect(rom, "data_out", dout);
-    c.compile();
-    c.init();
+    auto *rom = c->addComponent(std::make_unique<dsc::ROM>("rom", 2, 8, tmp, 0));
+    c->connect(rom, "addr", addr);
+    c->connect(rom, "clk", clk);
+    c->connect(rom, "data_out", dout);
+    c->compile();
+    c->init();
 
-    checkROM(c, addr->id(), clk->id(), dout->id(), 0, 0x11); // 文件范围内
-    checkROM(c, addr->id(), clk->id(), dout->id(), 1, 0);    // 超出文件，返回 0
-    checkROM(c, addr->id(), clk->id(), dout->id(), 2, 0);
-    checkROM(c, addr->id(), clk->id(), dout->id(), 3, 0);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 0, 0x11); // 文件范围内
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 1, 0);    // 超出文件，返回 0
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 2, 0);
+    checkROM(*c, addr->id(), clk->id(), dout->id(), 3, 0);
 
-    std::remove(tmp.c_str());
+    // ROM 在 mmap 模式下持有文件映射，先销毁电路再删文件
+    c.reset();
+    std::filesystem::remove(tmp);
 }
 
 // ============================================================

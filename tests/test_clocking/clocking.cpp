@@ -300,7 +300,7 @@ TEST(Clocking, ChangeSameWidthSharesSnapshot) {
     c.init();
 
     auto step = [&](uint8_t v) {
-        c.setWire(sig->id(), {v});
+        c.setWire(sig->id(), v);
         c.tick();
         c.tick();
     };
@@ -333,7 +333,7 @@ TEST(Clocking, ChangeAndRisingShareNet) {
     c.init();
 
     auto level = [&](uint8_t v) {
-        c.setWire(sig->id(), {v});
+        c.setWire(sig->id(), v);
         c.tick();
         c.tick();
     };
@@ -562,7 +562,7 @@ TEST(Clocking, ChangeTwoOneBitPinsShareSlot) {
     c.init();
 
     auto step = [&](uint8_t v) {
-        c.setWire(sig->id(), {v});
+        c.setWire(sig->id(), v);
         c.tick();
         c.tick();
     };
@@ -662,19 +662,19 @@ TEST(Clocking, AsyncResetWorksBetweenEdges) {
     ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
     c.init();
 
-    c.setWire(rst->id(), {0});
-    c.setWire(d->id(), {5});
+    c.setWire(rst->id(), 0);
+    c.setWire(d->id(), 5);
     // 制造一个上升沿写入 q=5
-    c.setWire(clk->id(), {0});
+    c.setWire(clk->id(), 0);
     c.tick();
-    c.setWire(clk->id(), {1});
+    c.setWire(clk->id(), 1);
     c.tick();
-    c.setWire(clk->id(), {0});
+    c.setWire(clk->id(), 0);
     c.tick();
     ASSERT_EQ(c.getWire(q->id())[0], 5u);
 
     // clk 保持低，不产生上升沿；rst 拉高必须立刻清零
-    c.setWire(rst->id(), {1});
+    c.setWire(rst->id(), 1);
     c.tick();
     EXPECT_EQ(c.getWire(q->id())[0], 0u) << "异步复位在非上升沿拍也应生效";
 }

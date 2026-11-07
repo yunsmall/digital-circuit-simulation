@@ -127,24 +127,24 @@ TEST(UartChain, UartTxToPrint) {
     ASSERT_EQ(e.code, ErrorCode::OK) << e.message;
     c.init();
 
-    c.setWire(sel->id(), {0x0F});
-    c.setWire(cyc->id(), {1});
+    c.setWire(sel->id(), 0x0F);
+    c.setWire(cyc->id(), 1);
     auto bus_write = [&](uint32_t a, uint32_t v) {
         c.setWire(adr->id(), {(uint8_t) a, 0, 0, 0});
         c.setWire(wdat->id(), {(uint8_t) v, 0, 0, 0});
-        c.setWire(we->id(), {1});
-        c.setWire(stb->id(), {1});
+        c.setWire(we->id(), 1);
+        c.setWire(stb->id(), 1);
         c.tick();
         c.tick();
-        c.setWire(stb->id(), {0});
+        c.setWire(stb->id(), 0);
         c.tick();
         c.tick();
     };
 
     bus_write(0x0C, 0x03); // LCR: 8N1
     bus_write(0x00, 'A'); // THR
-    c.setWire(we->id(), {0});
-    c.setWire(cyc->id(), {0});
+    c.setWire(we->id(), 0);
+    c.setWire(cyc->id(), 0);
 
     for (int i = 0; i < 300; i++)
         c.tick();
