@@ -15,9 +15,13 @@
 
 namespace dsc::test {
 
-struct IcFixture {
-    static constexpr int kMasters = 2;
+// Masters 参数化：单主口的互连走 extra_bits=0 的分支，和双主口行为不同
+template <int Masters>
+struct IcFixtureT {
+    static constexpr int kMasters = Masters;
     static constexpr int kSlaves = 2;
+    // 从口看到的 ID 宽度 = 主口 ID 宽度 + 附加的主口编号位数
+    static constexpr int kExtraBits = (Masters <= 1) ? 0 : (Masters <= 2) ? 1 : (Masters <= 4) ? 2 : 3;
 
     std::unique_ptr<Circuit> c = std::make_unique<Circuit>();
     Axi4Interconnect *ic = nullptr;
@@ -33,12 +37,12 @@ struct IcFixture {
         Net *arready, *rid, *rdata, *rresp, *rlast, *rvalid;
     } mn[kMasters];
 
-    IcFixture() {
+    IcFixtureT() {
         auto ip = std::make_unique<Axi4Interconnect>("ic", "0:4096,8192:4096", kMasters, 4);
         ic = ip.get();
         c->addComponent(std::move(ip));
         for (int s = 0; s < kSlaves; s++) {
-            auto bp = std::make_unique<Axi4Bridge>("br" + std::to_string(s), 32, 32, 5);
+            auto bp = std::make_unique<Axi4Bridge>("br" + std::to_string(s), 32, 32, 4 + kExtraBits);
             br[s] = bp.get();
             c->addComponent(std::move(bp));
             auto mp = std::make_unique<WishboneMemory>("mem" + std::to_string(s), 12, 32);
@@ -256,5 +260,7 @@ struct IcFixture {
         return v;
     }
 };
+
+using IcFixture = IcFixtureT<2>;
 
 } // namespace dsc::test

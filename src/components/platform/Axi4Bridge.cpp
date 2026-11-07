@@ -294,9 +294,10 @@ std::string Axi4Bridge::genFuncDef_seq() const {
     c += "    " + genOutputWrite(O_WB_ADR, "_ax4_cur_" + std::to_string(id), _addr_width) + "\n";
     c += "    " + genOutputWrite(O_WB_DAT, "_ax4_wb_dat_" + std::to_string(id), _data_width) + "\n";
     c += "    " + genOutputWrite(O_WB_WE, "_ax4_wb_we_" + std::to_string(id), 1) + "\n";
-    // SEL：写事务用 WSTRB；读事务用全 1，让从设备返回整字再由 AXI 数据通道选字节
-    c += "    { uint8_t _sel = _ax4_wb_we_" + std::to_string(id) + " ? _ax4_wstrb_" + std::to_string(id) +
-         " : (uint8_t) " + std::format("0x{:X}", (1u << bytes) - 1u) + ";\n";
+    // SEL：写事务用 WSTRB；读事务用全 1，让从设备返回整字再由 AXI 数据通道选字节。
+    // 选通位数等于数据字节数（128 位端口是 16 位），不能按 uint8_t 暂存
+    c += "    { uint16_t _sel = _ax4_wb_we_" + std::to_string(id) + " ? _ax4_wstrb_" + std::to_string(id) +
+         " : (uint16_t) " + std::format("0x{:X}", (1u << bytes) - 1u) + ";\n";
     c += "      " + genOutputWrite(O_WB_SEL, "_sel", bytes) + " }\n";
     c += "    " + genOutputWrite(O_WB_STB, "_ax4_wb_stb_" + std::to_string(id), 1) + "\n";
     c += "    " + genOutputWrite(O_WB_CYC, "_ax4_wb_cyc_" + std::to_string(id), 1) + "\n";
