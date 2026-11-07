@@ -1,5 +1,7 @@
 {
-  "nets": ["clk", "rst", "irq", "mti", "msi", "seip", "wb_adr", "wb_dat_o",
+  "nets": ["clk", "rst", "irq", "mti", "msi", "seip",
+           "mem_adr", "mem_wdat", "mem_we", "mem_sel", "mem_req", "mem_lock", "mem_ack", "mem_rdat",
+           "wb_adr", "wb_dat_o",
            "wb_dat_i", "wb_we", "wb_sel", "wb_stb", "wb_cyc", "wb_ack", "halted"],
   "components": [
     {
@@ -14,11 +16,24 @@
       "params": {"xlen": "64"},
       "connections": {
         "clk": "clk", "rst": "rst",
-        "wb_dat_i": "wb_dat_i", "wb_ack_i": "wb_ack",
+        "mem_rdat": "mem_rdat", "mem_ack": "mem_ack",
         "irq": "irq", "mti": "mti", "msi": "msi", "seip": "seip",
+        "mem_adr": "mem_adr", "mem_wdat": "mem_wdat", "mem_we": "mem_we",
+        "mem_sel": "mem_sel", "mem_req": "mem_req", "mem_lock": "mem_lock",
+        "halted": "halted"
+      }
+    },
+    {
+      "type": "wb_master_adapter",
+      "name": "cpu_wb",
+      "params": {},
+      "connections": {
+        "mem_adr": "mem_adr", "mem_wdat": "mem_wdat", "mem_we": "mem_we",
+        "mem_sel": "mem_sel", "mem_req": "mem_req", "mem_lock": "mem_lock",
+        "mem_ack": "mem_ack", "mem_rdat": "mem_rdat",
         "wb_adr_o": "wb_adr", "wb_dat_o": "wb_dat_o", "wb_we_o": "wb_we",
         "wb_sel_o": "wb_sel", "wb_stb_o": "wb_stb", "wb_cyc_o": "wb_cyc",
-        "halted": "halted"
+        "wb_ack_i": "wb_ack", "wb_dat_i": "wb_dat_i"
       }
     },
     {

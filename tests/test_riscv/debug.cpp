@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <dcs/Circuit.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include "common/wb_cpu_link.h"
 #include <dcs/components/memory/WishboneMemory.h>
 #include <cstring>
 #include <iostream>
@@ -13,6 +14,7 @@ TEST(RiscVCPUDebug, SingleAddiInstruction) {
 
     // 创建 CPU 和内存
     auto *cpu = static_cast<RiscVCPU<32>*>(c.addComponent(std::make_unique<RiscVCPU<32>>("cpu0")));
+    auto link = test::linkCpuToWb(c, cpu);
     auto *mem = static_cast<WishboneMemory*>(c.addComponent(std::make_unique<WishboneMemory>("mem0", 12, 32)));
 
     // 加载单条指令: addi x1, x0, 42
@@ -27,29 +29,20 @@ TEST(RiscVCPUDebug, SingleAddiInstruction) {
     auto *clk = c.createNet("clk");
     auto *rst = c.createNet("rst");
     auto *irq_net = c.createNet("irq");
-    auto *wb_adr = c.createNet("wb_adr");
-    auto *wb_do = c.createNet("wb_do");
-    auto *wb_di = c.createNet("wb_di");
-    auto *wb_we = c.createNet("wb_we");
-    auto *wb_sel = c.createNet("wb_sel");
-    auto *wb_stb = c.createNet("wb_stb");
-    auto *wb_cyc = c.createNet("wb_cyc");
-    auto *wb_ack = c.createNet("wb_ack");
+    auto *wb_adr = link.adr;
+    auto *wb_do = link.dat_o;
+    auto *wb_di = link.dat_i;
+    auto *wb_we = link.we;
+    auto *wb_sel = link.sel;
+    auto *wb_stb = link.stb;
+    auto *wb_cyc = link.cyc;
+    auto *wb_ack = link.ack;
     auto *halt = c.createNet("halt");
 
     // CPU 输入
     c.connect(cpu, "clk", clk);
     c.connect(cpu, "rst", rst);
     c.connect(cpu, "irq", irq_net);
-    c.connect(cpu, "wb_dat_i", wb_di);
-    c.connect(cpu, "wb_ack_i", wb_ack);
-    // CPU 输出
-    c.connect(cpu, "wb_adr_o", wb_adr);
-    c.connect(cpu, "wb_dat_o", wb_do);
-    c.connect(cpu, "wb_we_o", wb_we);
-    c.connect(cpu, "wb_sel_o", wb_sel);
-    c.connect(cpu, "wb_stb_o", wb_stb);
-    c.connect(cpu, "wb_cyc_o", wb_cyc);
     c.connect(cpu, "halted", halt);
 
     // 内存输入

@@ -5,6 +5,7 @@
 #include <dcs/Circuit.h>
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include "common/wb_cpu_link.h"
 #include <dcs/components/platform/WishboneDcache.h>
 
 using namespace dsc;
@@ -25,6 +26,7 @@ struct CpuCacheFixture {
         auto cp = std::make_unique<RiscVCPU<32>>("cpu0");
         cpu = cp.get();
         circuit->addComponent(std::move(cp));
+        auto link = test::linkCpuToWb(*circuit, cpu);
         auto cc = std::make_unique<WishboneDcache>("dcache0", 16, 0, 0x10000);
         cache = cc.get();
         circuit->addComponent(std::move(cc));
@@ -34,9 +36,9 @@ struct CpuCacheFixture {
 
         auto mk = [&](const char *n) { return circuit->createNet(n); };
         clk = mk("clk"); rst = mk("rst"); irq = mk("irq"); mti = mk("mti"); msi = mk("msi"); halted = mk("halted");
-        wb_adr = mk("wb_adr"); wb_dat_o = mk("wb_dat_o"); wb_dat_i = mk("wb_dat_i");
-        wb_we = mk("wb_we"); wb_sel = mk("wb_sel"); wb_stb = mk("wb_stb"); wb_cyc = mk("wb_cyc");
-        wb_ack = mk("wb_ack");
+        wb_adr = link.adr; wb_dat_o = link.dat_o; wb_dat_i = link.dat_i;
+        wb_we = link.we; wb_sel = link.sel; wb_stb = link.stb; wb_cyc = link.cyc;
+        wb_ack = link.ack;
         m_adr = mk("m_adr"); m_dat_o = mk("m_dat_o"); m_dat_i = mk("m_dat_i");
         m_we = mk("m_we"); m_sel = mk("m_sel"); m_stb = mk("m_stb"); m_cyc = mk("m_cyc"); m_ack = mk("m_ack");
 
@@ -45,14 +47,14 @@ struct CpuCacheFixture {
         circuit->connect(cpu, "irq", irq);
         circuit->connect(cpu, "mti", mti);
         circuit->connect(cpu, "msi", msi);
-        circuit->connect(cpu, "wb_dat_i", wb_dat_i);
-        circuit->connect(cpu, "wb_ack_i", wb_ack);
-        circuit->connect(cpu, "wb_adr_o", wb_adr);
-        circuit->connect(cpu, "wb_dat_o", wb_dat_o);
-        circuit->connect(cpu, "wb_we_o", wb_we);
-        circuit->connect(cpu, "wb_sel_o", wb_sel);
-        circuit->connect(cpu, "wb_stb_o", wb_stb);
-        circuit->connect(cpu, "wb_cyc_o", wb_cyc);
+
+
+
+
+
+
+
+
         circuit->connect(cpu, "halted", halted);
 
         circuit->connect(cache, "clk", clk);

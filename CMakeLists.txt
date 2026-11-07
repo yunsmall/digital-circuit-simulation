@@ -350,6 +350,8 @@ endif()
 if(DCS_BUILD_BENCHMARK)
     add_executable(dcs_bench benchmarks/benchmark.cpp)
     target_link_libraries(dcs_bench PRIVATE ${DCS_LIB_LINK})
+    # 基准也要像测试一样用 wb_master_adapter 接 CPU（共享测试里的接线辅助）
+    target_include_directories(dcs_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     set_target_properties(dcs_bench PROPERTIES CXX_STANDARD 23)
 endif()
 

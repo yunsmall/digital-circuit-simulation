@@ -448,8 +448,8 @@ private:
             DCS_NO_STACK_PROTECTOR;
     static void cpuReset(void *state_ptr);
     static DCS_FORCE_INLINE void execute(CpuState &s, uint32_t inst,
-                        XLen &wb_adr, uint32_t &wb_dat, bool &wb_we,
-                        uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc,
+                        XLen &mem_adr, uint32_t &mem_wdat, bool &mem_we,
+                        uint8_t &mem_sel, bool &mem_req, bool &mem_lock,
                         bool &need_mem);
     static XLen csrRead(const CpuState &s, uint32_t addr);
     static void csrWrite(CpuState &s, uint32_t addr, XLen val);

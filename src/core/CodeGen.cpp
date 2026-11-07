@@ -33,7 +33,11 @@ TopoResult topoOrder(const std::vector<Component *> &nodes) {
     std::unordered_map<int, Component *> net_writer;
     for (auto *c: nodes)
         for (auto &p: c->outputs())
-            if (p->net())
+            // 时序输出要到阶段 2 才从 _c_out_ 进 _w，本拍阶段 1 读到的是上一拍的值，
+            // 不构成当拍的数据依赖。把它算进来会让"请求走时序、应答走组合"的适配器
+            // 和它两侧的元件互相成环，排序退化成原序，应答方向反而晚一拍。
+            // 时钟源例外：它的输出就是本拍的时钟电平，直接写进 _w，下游组合锥必须排在它后面
+            if (p->net() && (!p->isSequential() || c->isClockSource()))
                 net_writer[p->net()->id()] = c;
 
     for (int bi = 0; bi < C; bi++) {

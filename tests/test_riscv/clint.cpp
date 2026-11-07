@@ -3,6 +3,7 @@
 #include <dcs/Circuit.h>
 #include <dcs/ComponentFactory.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include "common/wb_cpu_link.h"
 #include <dcs/components/memory/WishboneMemory.h>
 #include <dcs/components/platform/WishboneInterconnect.h>
 #include <dcs/components/platform/CLINT.h>
@@ -18,6 +19,7 @@ TEST(ClintTest, SFENCE_VMA) {
     auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
+    auto link = test::linkCpuToWb(*circuit, cpu);
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);
     auto *mem = mem_ptr.get();
     circuit->addComponent(std::move(mem_ptr));
@@ -25,19 +27,19 @@ TEST(ClintTest, SFENCE_VMA) {
     auto clk = circuit->createNet("clk"); auto rst = circuit->createNet("rst");
     auto irq = circuit->createNet("irq"); auto mti = circuit->createNet("mti");
     auto msi = circuit->createNet("msi");
-    auto adr = circuit->createNet("adr"); auto do_ = circuit->createNet("do");
-    auto di = circuit->createNet("di"); auto we = circuit->createNet("we");
-    auto sel = circuit->createNet("sel"); auto stb = circuit->createNet("stb");
-    auto cyc = circuit->createNet("cyc"); auto ack = circuit->createNet("ack");
+    auto adr = link.adr; auto do_ = link.dat_o;
+    auto di = link.dat_i; auto we = link.we;
+    auto sel = link.sel; auto stb = link.stb;
+    auto cyc = link.cyc; auto ack = link.ack;
     auto halt = circuit->createNet("halt");
 
     circuit->connect(cpu, "clk", clk); circuit->connect(cpu, "rst", rst);
     circuit->connect(cpu, "irq", irq); circuit->connect(cpu, "mti", mti);
     circuit->connect(cpu, "msi", msi);
-    circuit->connect(cpu, "wb_dat_i", di); circuit->connect(cpu, "wb_ack_i", ack);
-    circuit->connect(cpu, "wb_adr_o", adr); circuit->connect(cpu, "wb_dat_o", do_);
-    circuit->connect(cpu, "wb_we_o", we); circuit->connect(cpu, "wb_sel_o", sel);
-    circuit->connect(cpu, "wb_stb_o", stb); circuit->connect(cpu, "wb_cyc_o", cyc);
+
+
+
+
     circuit->connect(cpu, "halted", halt);
     circuit->connect(mem, "clk", clk); circuit->connect(mem, "wb_adr_i", adr);
     circuit->connect(mem, "wb_dat_i", do_); circuit->connect(mem, "wb_we_i", we);
@@ -79,6 +81,7 @@ TEST(ClintTest, FENCE_I) {
     auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
+    auto link = test::linkCpuToWb(*circuit, cpu);
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 16, 32);
     auto *mem = mem_ptr.get();
     circuit->addComponent(std::move(mem_ptr));
@@ -86,19 +89,19 @@ TEST(ClintTest, FENCE_I) {
     auto clk = circuit->createNet("clk"); auto rst = circuit->createNet("rst");
     auto irq = circuit->createNet("irq"); auto mti = circuit->createNet("mti");
     auto msi = circuit->createNet("msi");
-    auto adr = circuit->createNet("adr"); auto do_ = circuit->createNet("do");
-    auto di = circuit->createNet("di"); auto we = circuit->createNet("we");
-    auto sel = circuit->createNet("sel"); auto stb = circuit->createNet("stb");
-    auto cyc = circuit->createNet("cyc"); auto ack = circuit->createNet("ack");
+    auto adr = link.adr; auto do_ = link.dat_o;
+    auto di = link.dat_i; auto we = link.we;
+    auto sel = link.sel; auto stb = link.stb;
+    auto cyc = link.cyc; auto ack = link.ack;
     auto halt = circuit->createNet("halt");
 
     circuit->connect(cpu, "clk", clk); circuit->connect(cpu, "rst", rst);
     circuit->connect(cpu, "irq", irq); circuit->connect(cpu, "mti", mti);
     circuit->connect(cpu, "msi", msi);
-    circuit->connect(cpu, "wb_dat_i", di); circuit->connect(cpu, "wb_ack_i", ack);
-    circuit->connect(cpu, "wb_adr_o", adr); circuit->connect(cpu, "wb_dat_o", do_);
-    circuit->connect(cpu, "wb_we_o", we); circuit->connect(cpu, "wb_sel_o", sel);
-    circuit->connect(cpu, "wb_stb_o", stb); circuit->connect(cpu, "wb_cyc_o", cyc);
+
+
+
+
     circuit->connect(cpu, "halted", halt);
     circuit->connect(mem, "clk", clk); circuit->connect(mem, "wb_adr_i", adr);
     circuit->connect(mem, "wb_dat_i", do_); circuit->connect(mem, "wb_we_i", we);
@@ -142,6 +145,7 @@ TEST(ClintTest, TimerInterrupt) {
     auto cpu_ptr = std::make_unique<RiscVCPU<32>>("cpu0");
     auto *cpu = cpu_ptr.get();
     circuit->addComponent(std::move(cpu_ptr));
+    auto link = test::linkCpuToWb(*circuit, cpu);
     auto mem_ptr = std::make_unique<WishboneMemory>("mem0", 14, 32); // 16KB, addr 0-3FFF
     auto *mem = mem_ptr.get();
     circuit->addComponent(std::move(mem_ptr));
@@ -159,10 +163,10 @@ TEST(ClintTest, TimerInterrupt) {
     auto clk = circuit->createNet("clk"); auto rst = circuit->createNet("rst");
     auto irq = circuit->createNet("irq"); auto mti = circuit->createNet("mti");
     auto msi = circuit->createNet("msi");
-    auto m_adr = circuit->createNet("m_adr"); auto m_do = circuit->createNet("m_do");
-    auto m_di = circuit->createNet("m_di"); auto m_we = circuit->createNet("m_we");
-    auto m_sel = circuit->createNet("m_sel"); auto m_stb = circuit->createNet("m_stb");
-    auto m_cyc = circuit->createNet("m_cyc"); auto m_ack = circuit->createNet("m_ack");
+    auto m_adr = link.adr; auto m_do = link.dat_o;
+    auto m_di = link.dat_i; auto m_we = link.we;
+    auto m_sel = link.sel; auto m_stb = link.stb;
+    auto m_cyc = link.cyc; auto m_ack = link.ack;
     auto halt = circuit->createNet("halt");
     auto s0_do = circuit->createNet("s0_do"); auto s0_ack = circuit->createNet("s0_ack");
     auto s0_adr = circuit->createNet("s0_adr"); auto s0_wdat = circuit->createNet("s0_wdat");
@@ -177,10 +181,10 @@ TEST(ClintTest, TimerInterrupt) {
     circuit->connect(cpu, "clk", clk); circuit->connect(cpu, "rst", rst);
     circuit->connect(cpu, "irq", irq); circuit->connect(cpu, "mti", mti);
     circuit->connect(cpu, "msi", msi);
-    circuit->connect(cpu, "wb_dat_i", m_di); circuit->connect(cpu, "wb_ack_i", m_ack);
-    circuit->connect(cpu, "wb_adr_o", m_adr); circuit->connect(cpu, "wb_dat_o", m_do);
-    circuit->connect(cpu, "wb_we_o", m_we); circuit->connect(cpu, "wb_sel_o", m_sel);
-    circuit->connect(cpu, "wb_stb_o", m_stb); circuit->connect(cpu, "wb_cyc_o", m_cyc);
+
+
+
+
     circuit->connect(cpu, "halted", halt);
 
     // 互连主口 ↔ CPU (回传)

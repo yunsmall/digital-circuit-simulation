@@ -3,6 +3,7 @@
 
 #include <dcs/Circuit.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include "common/wb_cpu_link.h"
 #include <dcs/components/memory/WishboneMemory.h>
 
 using namespace dsc;
@@ -20,6 +21,7 @@ struct Fixture {
         auto c = std::make_unique<RiscVCPU<32>>("cpu0");
         cpu = c.get();
         circuit->addComponent(std::move(c));
+        auto link = test::linkCpuToWb(*circuit, cpu);
         auto m = std::make_unique<WishboneMemory>("mem0", 16, 32);
         mem = m.get();
         circuit->addComponent(std::move(m));
@@ -28,28 +30,28 @@ struct Fixture {
         irq = circuit->createNet("irq");
         mti = circuit->createNet("mti");
         msi = circuit->createNet("msi");
-        wb_adr = circuit->createNet("wb_adr");
-        wb_dat_o = circuit->createNet("wb_dat_o");
-        wb_dat_i = circuit->createNet("wb_dat_i");
-        wb_we = circuit->createNet("wb_we");
-        wb_sel = circuit->createNet("wb_sel");
-        wb_stb = circuit->createNet("wb_stb");
-        wb_cyc = circuit->createNet("wb_cyc");
-        wb_ack = circuit->createNet("wb_ack");
+        wb_adr = link.adr;
+        wb_dat_o = link.dat_o;
+        wb_dat_i = link.dat_i;
+        wb_we = link.we;
+        wb_sel = link.sel;
+        wb_stb = link.stb;
+        wb_cyc = link.cyc;
+        wb_ack = link.ack;
         halted = circuit->createNet("halted");
         circuit->connect(cpu, "clk", clk);
         circuit->connect(cpu, "rst", rst);
         circuit->connect(cpu, "irq", irq);
         circuit->connect(cpu, "mti", mti);
         circuit->connect(cpu, "msi", msi);
-        circuit->connect(cpu, "wb_dat_i", wb_dat_i);
-        circuit->connect(cpu, "wb_ack_i", wb_ack);
-        circuit->connect(cpu, "wb_adr_o", wb_adr);
-        circuit->connect(cpu, "wb_dat_o", wb_dat_o);
-        circuit->connect(cpu, "wb_we_o", wb_we);
-        circuit->connect(cpu, "wb_sel_o", wb_sel);
-        circuit->connect(cpu, "wb_stb_o", wb_stb);
-        circuit->connect(cpu, "wb_cyc_o", wb_cyc);
+
+
+
+
+
+
+
+
         circuit->connect(cpu, "halted", halted);
         circuit->connect(mem, "clk", clk);
         circuit->connect(mem, "wb_adr_i", wb_adr);

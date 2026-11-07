@@ -3,6 +3,7 @@
 
 #include <dcs/Circuit.h>
 #include <dcs/components/platform/RiscVCPU.h>
+#include "common/wb_cpu_link.h"
 #include <dcs/components/memory/WishboneMemory.h>
 
 using namespace dsc;
@@ -19,21 +20,22 @@ struct Fx {
         auto p = std::make_unique<RiscVCPU<32>>("cpu");
         cpu = p.get();
         c->addComponent(std::move(p));
+        auto link = test::linkCpuToWb(*c, cpu);
         auto m = std::make_unique<WishboneMemory>("mem", 16, 32);
         mem = m.get();
         c->addComponent(std::move(m));
         clk = c->createNet("clk"); rst = c->createNet("rst"); irq = c->createNet("irq");
         mti = c->createNet("mti"); msi = c->createNet("msi"); seip = c->createNet("seip");
-        wb_adr = c->createNet("wa"); wb_dat_o = c->createNet("wdo"); wb_dat_i = c->createNet("wdi");
-        wb_we = c->createNet("wwe"); wb_sel = c->createNet("wsel"); wb_stb = c->createNet("wstb");
-        wb_cyc = c->createNet("wcyc"); wb_ack = c->createNet("wak"); halted = c->createNet("halt");
+        wb_adr = link.adr; wb_dat_o = link.dat_o; wb_dat_i = link.dat_i;
+        wb_we = link.we; wb_sel = link.sel; wb_stb = link.stb;
+        wb_cyc = link.cyc; wb_ack = link.ack; halted = c->createNet("halt");
         c->connect(cpu, "clk", clk); c->connect(cpu, "rst", rst);
         c->connect(cpu, "irq", irq); c->connect(cpu, "mti", mti);
         c->connect(cpu, "msi", msi); c->connect(cpu, "seip", seip);
-        c->connect(cpu, "wb_dat_i", wb_dat_i); c->connect(cpu, "wb_ack_i", wb_ack);
-        c->connect(cpu, "wb_adr_o", wb_adr); c->connect(cpu, "wb_dat_o", wb_dat_o);
-        c->connect(cpu, "wb_we_o", wb_we); c->connect(cpu, "wb_sel_o", wb_sel);
-        c->connect(cpu, "wb_stb_o", wb_stb); c->connect(cpu, "wb_cyc_o", wb_cyc);
+
+
+
+
         c->connect(cpu, "halted", halted);
         c->connect(mem, "clk", clk); c->connect(mem, "wb_adr_i", wb_adr);
         c->connect(mem, "wb_dat_i", wb_dat_o); c->connect(mem, "wb_we_i", wb_we);

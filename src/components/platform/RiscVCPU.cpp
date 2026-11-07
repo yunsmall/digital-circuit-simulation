@@ -57,17 +57,20 @@ RiscVCPU<XLEN>::RiscVCPU(const std::string &name) : Component(name, "riscv_cpu")
     // 相位重新摆总线信号），需要真实电平区分两个半周期，不能只靠"沿才执行"的
     // 边沿标志；因此也不能接伪时钟线（伪时钟电平恒 0），接上会在 compile 报错
     addInput("clk", 1); addInput("rst", 1);
-    addInput("wb_dat_i", 32);
-    addInput("wb_ack_i", 1);
+    addInput("mem_rdat", 32);
+    addInput("mem_ack", 1);
     addInput("irq", 1);
     addInput("mti", 1); addInput("msi", 1);
     addInput("seip", 1); // S 级外部中断，通常接 PLIC 的 S-mode context
-    addOutput("wb_adr_o", 32, false, true);
-    addOutput("wb_dat_o", 32, false, true);
-    addOutput("wb_we_o", 1, false, true);
-    addOutput("wb_sel_o", 4, false, true);
-    addOutput("wb_stb_o", 1, false, true);
-    addOutput("wb_cyc_o", 1, false, true);
+    // 总线中立接口：只表达"一次存储器事务"，由适配器转成 Wishbone/AXI4。
+    // mem_req 对应事务请求（Wishbone STB），mem_lock 表示事务仍占用总线
+    // （Wishbone CYC，AMO 的空拍期间保持高）
+    addOutput("mem_adr", 32, false, true);
+    addOutput("mem_wdat", 32, false, true);
+    addOutput("mem_we", 1, false, true);
+    addOutput("mem_sel", 4, false, true);
+    addOutput("mem_req", 1, false, true);
+    addOutput("mem_lock", 1, false, true);
     addOutput("halted", 1, false, true);
     std::memset(&_state, 0, sizeof(_state));
     _state.phase = Phase::FETCH;
@@ -273,13 +276,13 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         s.phase = Phase::FETCH; // 唤醒后从暂停的 PC 继续取指
     }
 
-    XLen wb_adr=0; uint32_t wb_dat=0; bool wb_we=false,wb_stb=false,wb_cyc=false; uint8_t wb_sel=0;
+    XLen mem_adr=0; uint32_t mem_wdat=0; bool mem_we=false,mem_req=false,mem_lock=false; uint8_t mem_sel=0;
 
     // 取指命中缓存时本拍就能执行，不必再等一个 EXECUTE 相位：取指和译码结果
     // 都已经有了，多等一拍纯粹是让流水各走一步，白耗一个时钟周期。
     //
     // 必须保持强制内联（DCS_LAMBDA_INLINE），别改成普通 lambda 或拆成独立函数：
-    // 这条路径每个执行拍都走一次，而它引用的全是 cpuTick 的局部状态（s、wb_*、
+    // 这条路径每个执行拍都走一次，而它引用的全是 cpuTick 的局部状态（s、mem_*、
     // in、各种中间量）。单独成函数时参数传不进去，只能靠栈帧/寄存器保存恢复，
     // 实测把 lambda 内联进 cpuTick 的那一版更快——它引用局部变量的方式就是为
     // 内联设计的。编译器自己未必会内联（函数体足够大），所以要显式挂属性
@@ -288,27 +291,27 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         // 中断在指令边界采样
         if (takeInterrupt(s, trap_cause)) [[unlikely]] {
             takeTrap(s, trap_cause, 0);
-            s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+            s.phase = Phase::FETCH; mem_sel = 0x0F; mem_req = mem_lock = false;
             return;
         }
         bool need_mem = false;
-        execute(s, s.inst, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, need_mem);
+        execute(s, s.inst, mem_adr, mem_wdat, mem_we, mem_sel, mem_req, mem_lock, need_mem);
         if (s.phase == Phase::HALTED) {
             // WFI 停机这一拍不能再拉高 stb：那会向从设备发一次虚假取指，
             // 有状态的从设备（如缓存填充）可能就此卡在半完成
-            wb_adr = 0; wb_dat = 0; wb_we = false; wb_sel = 0;
-            wb_stb = wb_cyc = false;
+            mem_adr = 0; mem_wdat = 0; mem_we = false; mem_sel = 0;
+            mem_req = mem_lock = false;
         }
         else if (s.phase == Phase::MMU_WALK_LO) {
             // mmuTranslate 起了页表遍历，输出第一次 PTE 读请求并立即转为等待状态
-            wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+            mem_adr = (XLen)s.mmu_pte_addr; mem_sel = 0x0F; mem_we = false; mem_req = mem_lock = true;
             s.phase = Phase::WAIT_MMU_LO;
         }
         else if (need_mem) [[unlikely]] {
-            s.bus_adr = wb_adr; s.bus_wdat = wb_dat; s.bus_we = wb_we; s.bus_sel = wb_sel;
+            s.bus_adr = mem_adr; s.bus_wdat = mem_wdat; s.bus_we = mem_we; s.bus_sel = mem_sel;
             s.phase = Phase::WAIT_MEM;
         }
-        else { s.phase = Phase::FETCH; wb_sel = 0x0F; wb_stb = wb_cyc = false; }
+        else { s.phase = Phase::FETCH; mem_sel = 0x0F; mem_req = mem_lock = false; }
     };
 
     switch (s.phase) {
@@ -321,7 +324,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
             if constexpr (XLEN == 64) {
                 if (((uint64_t) s.pc >> 32) != 0) [[unlikely]] {
                     takeTrap(s, RV::EXC_IAF, s.pc);
-                    s.phase = Phase::FETCH; wb_stb = wb_cyc = false;
+                    s.phase = Phase::FETCH; mem_req = mem_lock = false;
                     break;
                 }
             }
@@ -331,7 +334,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         if (!mmuTranslate(s, s.pc, fpa, false, true)) [[unlikely]] {
             if (s.phase == Phase::MMU_WALK_LO) {
                 // mmuTranslate 起了页表遍历：本拍发起第一笔 PTE 读，立即转入等待
-                wb_adr=(XLen)s.mmu_pte_addr; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
+                mem_adr=(XLen)s.mmu_pte_addr; mem_sel=0x0F; mem_we=false; mem_req=mem_lock=true;
                 s.phase = Phase::WAIT_MMU_LO;
                 break;
             }
@@ -342,16 +345,16 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                 s.fetch_pa = s.pc;
             } else if (!mmuTranslate(s, s.pc, fpa2, false, true)) {
                 if (s.phase == Phase::MMU_WALK_LO) {
-                    wb_adr=(XLen)s.mmu_pte_addr; wb_sel=0x0F; wb_we=false; wb_stb=wb_cyc=true;
+                    mem_adr=(XLen)s.mmu_pte_addr; mem_sel=0x0F; mem_we=false; mem_req=mem_lock=true;
                     s.phase = Phase::WAIT_MMU_LO;
                     break;
                 }
-                s.phase = Phase::FETCH; wb_stb = wb_cyc = false; // stvec 未映射：继续 trap，由软件负责
+                s.phase = Phase::FETCH; mem_req = mem_lock = false; // stvec 未映射：继续 trap，由软件负责
                 break;
             } else {
                 s.fetch_pa = fpa2;
             }
-            wb_adr=s.fetch_pa; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
+            mem_adr=s.fetch_pa; mem_sel=0x0F; mem_req=mem_lock=true; s.phase=Phase::WAIT_FETCH;
             break;
         }
     fetch_translated:
@@ -359,7 +362,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         // 取指断点：命中就不执行这条指令，直接进 breakpoint 陷阱（mepc = 当前 pc）
         if (triggerMatch(s, s.pc, RV::TRIG_EXECUTE)) [[unlikely]] {
             takeTrap(s, RV::EXC_BP, s.pc);
-            s.phase = Phase::FETCH; wb_stb = wb_cyc = false;
+            s.phase = Phase::FETCH; mem_req = mem_lock = false;
             break;
         }
         {
@@ -382,7 +385,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                         do_execute();
                         break;
                     }
-                    wb_adr = fpa & ~(XLen)3; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+                    mem_adr = fpa & ~(XLen)3; mem_sel = 0x0F; mem_req = mem_lock = true;
                     s.phase = Phase::WAIT_FETCH;
                     break;
                 }
@@ -398,7 +401,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         }
         // 总线只接受字对齐地址：压缩指令的 pc 可能是 4n+2，地址要抹掉低两位，
         // 具体取哪个半字由 fetch_pa 的 bit1 在 WAIT_FETCH 里决定
-        wb_adr=fpa & ~(XLen)3; wb_sel=0x0F; wb_stb=wb_cyc=true; s.phase=Phase::WAIT_FETCH;
+        mem_adr=fpa & ~(XLen)3; mem_sel=0x0F; mem_req=mem_lock=true; s.phase=Phase::WAIT_FETCH;
         break;
     }
 
@@ -432,7 +435,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     // 先把 stb 拉低结束这一笔事务，下一拍才发起读下一个字。
                     // 直接跳 WAIT_FETCH_HI 的话 stb 一直保持高，从设备看不到事务边界，
                     // 不会给第二个 ack
-                    wb_stb = false; wb_cyc = true;
+                    mem_req = false; mem_lock = true;
                     s.phase = Phase::FETCH_HI_GAP;
                     break;
                 }
@@ -445,7 +448,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     // 未实现或非法的压缩编码要按非法指令处理，不能拿 0 继续执行
                     s.inst = 0;
                     takeTrap(s, RV::EXC_II, 0);
-                    wb_stb = wb_cyc = false; s.phase = Phase::FETCH;
+                    mem_req = mem_lock = false; s.phase = Phase::FETCH;
                     break;
                 }
             }
@@ -459,9 +462,9 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
             line.inst[1] = ((hi16 & 3u) == 3u) ? 0u : rvc::expand<XLEN>((uint16_t)hi16);
             line.len[1]  = ((hi16 & 3u) == 3u) ? 0u : 2;   // len=0 表示"这一半要跨字，别用缓存"
             line.valid = true;
-            wb_stb=wb_cyc=false; s.phase=Phase::EXECUTE;
+            mem_req=mem_lock=false; s.phase=Phase::EXECUTE;
         }
-        else { wb_adr=s.fetch_pa & ~(XLen)3; wb_sel=0x0F; wb_stb=wb_cyc=true; }
+        else { mem_adr=s.fetch_pa & ~(XLen)3; mem_sel=0x0F; mem_req=mem_lock=true; }
         break;
 
     case Phase::FETCH_HI_GAP:
@@ -470,15 +473,15 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         // stb 上升沿会被从设备当成上一笔的延续，不会重新锁存地址
         if (!in.ack) {
             if (s.fetch_gap_cnt >= 1) {
-                wb_adr = s.fetch_hi_addr; wb_sel = 0x0F;
-                wb_stb = wb_cyc = true;
+                mem_adr = s.fetch_hi_addr; mem_sel = 0x0F;
+                mem_req = mem_lock = true;
                 s.phase = Phase::WAIT_FETCH_HI;
             } else {
                 s.fetch_gap_cnt++;
-                wb_stb = false; wb_cyc = true;
+                mem_req = false; mem_lock = true;
             }
         } else {
-            wb_stb = false; wb_cyc = true;
+            mem_req = false; mem_lock = true;
         }
         break;
 
@@ -497,10 +500,10 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     s.icache[ic_idx].len[1] = 4;
                 }
             }
-            wb_stb = wb_cyc = false;
+            mem_req = mem_lock = false;
             s.phase = Phase::EXECUTE;
         } else {
-            wb_adr = (s.fetch_pa & ~(XLen)3) + 4; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+            mem_adr = (s.fetch_pa & ~(XLen)3) + 4; mem_sel = 0x0F; mem_req = mem_lock = true;
         }
         break;
 
@@ -527,8 +530,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     dat = (uint32_t)(s.acc_raw >> (8 * (8 - p)));
                     sel = (uint8_t)((1u << rest) - 1u);
                 }
-                wb_adr = a3; wb_dat = dat; wb_we = s.bus_we; wb_sel = sel;
-                wb_stb = false; wb_cyc = true;
+                mem_adr = a3; mem_wdat = dat; mem_we = s.bus_we; mem_sel = sel;
+                mem_req = false; mem_lock = true;
                 s.bus_adr = a3; s.bus_wdat = dat; s.bus_sel = sel;
                 if (s.acc_stage == 8 && !in.ack) s.acc_stage = 9;   // 旧 ack 撤了才发起
                 else if (s.acc_stage == 7) s.acc_stage = 8;
@@ -536,8 +539,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
             }
             // 发起第三段：地址已经就位，这里只拉高 stb
             if (s.acc_stage == 9) {
-                wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = s.bus_we; wb_sel = s.bus_sel;
-                wb_stb = wb_cyc = true;
+                mem_adr = s.bus_adr; mem_wdat = s.bus_wdat; mem_we = s.bus_we; mem_sel = s.bus_sel;
+                mem_req = mem_lock = true;
                 s.acc_stage = 10;
                 break;
             }
@@ -545,8 +548,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
         }
         if (s.acc_stage >= 2 && s.acc_stage <= 5) [[unlikely]] {
             if (s.acc_stage <= 3) { // 拉低 stb，等从设备看到事务结束
-                wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = s.bus_we; wb_sel = s.bus_sel;
-                wb_stb = wb_cyc = false;
+                mem_adr = s.bus_adr; mem_wdat = s.bus_wdat; mem_we = s.bus_we; mem_sel = s.bus_sel;
+                mem_req = mem_lock = false;
                 s.acc_stage++;
                 break;
             }
@@ -565,18 +568,18 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     dat = (uint32_t)(s.acc_raw >> (8 * first));
                     sel = (uint8_t)((1u << rest) - 1u);
                 }
-                wb_adr = a2; wb_dat = dat; wb_we = s.bus_we; wb_sel = sel; wb_stb = wb_cyc = true;
+                mem_adr = a2; mem_wdat = dat; mem_we = s.bus_we; mem_sel = sel; mem_req = mem_lock = true;
                 s.bus_adr = a2; s.bus_wdat = dat; s.bus_sel = sel;
                 s.acc_stage = 5;
                 break;
             }
             // stage 5：保持 stb，但这一拍看到的 ack 还是上一次事务的残留，跳过
-            wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = s.bus_we; wb_sel = s.bus_sel;
-            wb_stb = wb_cyc = true;
+            mem_adr = s.bus_adr; mem_wdat = s.bus_wdat; mem_we = s.bus_we; mem_sel = s.bus_sel;
+            mem_req = mem_lock = true;
             s.acc_stage = 6;
             break;
         }
-        wb_adr=s.bus_adr; wb_dat=s.bus_wdat; wb_we=s.bus_we; wb_sel=s.bus_sel; wb_stb=wb_cyc=true;
+        mem_adr=s.bus_adr; mem_wdat=s.bus_wdat; mem_we=s.bus_we; mem_sel=s.bus_sel; mem_req=mem_lock=true;
         if (in.ack) {
             if (!s.bus_we) {
                 // 读响应
@@ -589,8 +592,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                         XLen hi_adr = (s.bus_adr & ~(XLen)7) + 4;
                         // 必须先把 stb 拉低：一直保持高电平，从设备看不到事务边界，
                         // 不会给新的 ack
-                        wb_adr = hi_adr; wb_dat = 0; wb_we = false; wb_sel = 0x0F;
-                        wb_stb = wb_cyc = false;
+                        mem_adr = hi_adr; mem_wdat = 0; mem_we = false; mem_sel = 0x0F;
+                        mem_req = mem_lock = false;
                         s.bus_adr = hi_adr;
                         s.phase = Phase::AMO_READ_HI;
                         break;
@@ -668,7 +671,7 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                         s.phase = Phase::AMO_GAP;
                     } else {
                         s.bus_amo = false;
-                        wb_dat = 0; wb_we = false; wb_sel = 0x0F; wb_stb = wb_cyc = false;
+                        mem_wdat = 0; mem_we = false; mem_sel = 0x0F; mem_req = mem_lock = false;
                         s.phase = Phase::FETCH;
                     }
                     break;
@@ -679,8 +682,8 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                         s.acc_wide.set(raw);   // 第一段落在最低 32 位
                         s.acc_seg = 1;
                         s.acc_stage = 2;      // 进入两次事务之间的拉低阶段
-                        wb_adr = s.bus_adr; wb_dat=0; wb_we=false; wb_sel=0x0F;
-                        wb_stb = wb_cyc = false;
+                        mem_adr = s.bus_adr; mem_wdat=0; mem_we=false; mem_sel=0x0F;
+                        mem_req = mem_lock = false;
                         break;
                     }
                     // 第二段刚到，如果 8 字节访问还差最后一段，先把这一段存下再去发第三段
@@ -739,13 +742,13 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                             s.fregs[s.bus_rd] = 0xFFFFFFFF00000000ULL | (uint64_t)(uint32_t) value;
                         }
                     } else s.regs[s.bus_rd]=result;
-                    wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
+                    mem_wdat=0; mem_we=false; mem_sel=0x0F; mem_req=mem_lock=false; s.phase=Phase::FETCH;
             } else {
                 // 写响应；跨字非对齐写在这里补写高出字的那几个字节
                 if (!s.bus_amo && s.acc_stage == 1) { // AMO 的写确认不能被当成跨字写的第一段
                     s.acc_stage = 2;
-                    wb_adr = s.bus_adr; wb_dat=0; wb_we=false; wb_sel=0x0F;
-                    wb_stb = wb_cyc = false;
+                    mem_adr = s.bus_adr; mem_wdat=0; mem_we=false; mem_sel=0x0F;
+                    mem_req = mem_lock = false;
                     break;
                 }
                 if (s.bus_amo) {
@@ -758,19 +761,19 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                     if (pp + nn > 8) { s.acc_stage = 7; break; }
                 }
                 s.acc_stage = 0;
-                wb_dat=0; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=false; s.phase=Phase::FETCH;
+                mem_wdat=0; mem_we=false; mem_sel=0x0F; mem_req=mem_lock=false; s.phase=Phase::FETCH;
             }
         }
         break;
 
     case Phase::MMU_WALK_LO:
         // 发起当前级 PTE 低半读请求
-        wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        mem_adr = (XLen)s.mmu_pte_addr; mem_sel = 0x0F; mem_we = false; mem_req = mem_lock = true;
         s.phase = Phase::WAIT_MMU_LO;
         break;
 
     case Phase::WAIT_MMU_LO:
-        wb_adr = (XLen)s.mmu_pte_addr; wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        mem_adr = (XLen)s.mmu_pte_addr; mem_sel = 0x0F; mem_we = false; mem_req = mem_lock = true;
         if (in.ack) {
             if constexpr (XLEN == 64) {
                 // Sv39 的 PTE 是 8 字节：先存下低半，拉低 stb 结束这笔事务，
@@ -780,30 +783,30 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
             } else {
                 handlePte(s, in.dat);
             }
-            wb_stb = wb_cyc = false;
+            mem_req = mem_lock = false;
         }
         break;
 
     case Phase::MMU_WALK_HI:
-        wb_adr = (XLen)(s.mmu_pte_addr + 4); wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        mem_adr = (XLen)(s.mmu_pte_addr + 4); mem_sel = 0x0F; mem_we = false; mem_req = mem_lock = true;
         s.phase = Phase::WAIT_MMU_HI;
         break;
 
     case Phase::WAIT_MMU_HI:
-        wb_adr = (XLen)(s.mmu_pte_addr + 4); wb_sel = 0x0F; wb_we = false; wb_stb = wb_cyc = true;
+        mem_adr = (XLen)(s.mmu_pte_addr + 4); mem_sel = 0x0F; mem_we = false; mem_req = mem_lock = true;
         if (in.ack) {
             handlePte(s, s.mmu_pte_lo | ((uint64_t)in.dat << 32));
-            wb_stb = wb_cyc = false;
+            mem_req = mem_lock = false;
         }
         break;
 
     case Phase::AMO_GAP:
         // 这一拍同样要保持 cyc 高：它是 RMW 周期的中间拍，总线不能被别的设备拿走
-        wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_sel = 0x0F; wb_stb = false; wb_cyc = true;
+        mem_adr = s.bus_adr; mem_wdat = s.bus_wdat; mem_sel = 0x0F; mem_req = false; mem_lock = true;
         s.phase = Phase::AMO_WRITE;
         break;
     case Phase::AMO_WRITE:
-        wb_adr = s.bus_adr; wb_dat = s.bus_wdat; wb_we = true; wb_sel = 0x0F; wb_stb = wb_cyc = true;
+        mem_adr = s.bus_adr; mem_wdat = s.bus_wdat; mem_we = true; mem_sel = 0x0F; mem_req = mem_lock = true;
         if (in.ack) {
             // .D 的低半写完了，还要写高半。复用 AMO_GAP → AMO_WRITE 这条已验证的
             // 路径，只把地址和数据换成高半，比自己再造一套相位可靠
@@ -811,28 +814,28 @@ void RiscVCPU<XLEN>::cpuTick(void *state_ptr, const uint8_t *const *inputs) {
                 s.amo_hi_write = true;
                 s.bus_adr = (s.bus_adr & ~(XLen)7) + 4;
                 s.bus_wdat = s.amo_hi;
-                wb_stb = false;
+                mem_req = false;
                 s.phase = Phase::AMO_GAP;
                 break;
             }
             // 与普通写完成后的收尾保持一致：清 AMO 标志、复位访问阶段、结束事务
             s.bus_amo = false;
             s.acc_stage = 0;
-            wb_stb = wb_cyc = false;
+            mem_req = mem_lock = false;
             s.phase = Phase::FETCH;
         }
         break;
     // .D 的读高半：这一拍保持 stb 低，下一拍交给 WAIT_MEM 重新断言发起读
     case Phase::AMO_READ_HI:
-        wb_adr = s.bus_adr; wb_dat = 0; wb_we = false; wb_sel = 0x0F;
-        wb_stb = false; wb_cyc = true;
+        mem_adr = s.bus_adr; mem_wdat = 0; mem_we = false; mem_sel = 0x0F;
+        mem_req = false; mem_lock = true;
         s.phase = Phase::WAIT_MEM;
         break;
 
     case Phase::HALTED: break;
     }
     s.regs[0]=0;
-    packOut(s.out_adr, s.out_wdat, s.out_flags, wb_adr, wb_dat, wb_we, wb_sel, wb_stb, wb_cyc, s.wfi_halted);
+    packOut(s.out_adr, s.out_wdat, s.out_flags, mem_adr, mem_wdat, mem_we, mem_sel, mem_req, mem_lock, s.wfi_halted);
 }
 
 template<int XLEN> requires SupportedXlen<XLEN>
@@ -1012,8 +1015,8 @@ inline uint16_t doubleToHalf(double v, uint32_t rm, uint32_t &fflags) {
 
 template<int XLEN> requires SupportedXlen<XLEN>
 void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
-                       XLenOf<XLEN> &wb_adr, uint32_t &wb_dat, bool &wb_we,
-                       uint8_t &wb_sel, bool &wb_stb, bool &wb_cyc, bool &need_mem) {
+                       XLenOf<XLEN> &mem_adr, uint32_t &mem_wdat, bool &mem_we,
+                       uint8_t &mem_sel, bool &mem_req, bool &mem_lock, bool &need_mem) {
     s.regs[0]=0; need_mem=false;
     // 上一条指令若因 trap 提前返回（没走到行尾），标记会留在这里；
     // 本条指令正常计数，不能继承那条指令的"不计数"
@@ -1568,8 +1571,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             takeTrap(s, RV::EXC_LAM, va);
             return;
         }
-        wb_adr=pa&~(XLen)3; wb_we=false; wb_sel=0x0F;
-        wb_stb=wb_cyc=true; need_mem=true;
+        mem_adr=pa&~(XLen)3; mem_we=false; mem_sel=0x0F;
+        mem_req=mem_lock=true; need_mem=true;
         s.bus_adr=pa&~(XLen)3; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_sel=0x0F; s.bus_fp=0;
         s.acc_va=pa; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((p+n>4)?1:0);
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
@@ -1611,8 +1614,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             takeTrap(s, RV::EXC_SAM, va); // 跨页非对齐写同上，只能报错
             return;
         }
-        wb_adr=pa&~(XLen)3; wb_we=true;
-        wb_sel=(uint8_t)(((1u<<first)-1u)<<p); wb_dat=v2<<(8*p);
+        mem_adr=pa&~(XLen)3; mem_we=true;
+        mem_sel=(uint8_t)(((1u<<first)-1u)<<p); mem_wdat=v2<<(8*p);
         s.acc_va=pa; s.acc_raw=v2; s.acc_f3=(uint8_t)f3; s.acc_stage=(uint8_t)((n>first)?1:0);
         if (s.lr_valid) { // 同 hart 存储覆盖保留地址所在的字即失效（本核的实现选择）
             // 规范 5.2 只强制"其他 hart/设备的写"让保留失效；同 hart 写是否失效由实现决定，
@@ -1623,7 +1626,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             for (uint32_t k = 0; k < words; k++)
                 if (s.lr_addr == w0 + (XLen)4 * k) { s.lr_valid = false; break; }
         }
-        wb_stb=wb_cyc=true; need_mem=true; s.bus_adr=pa&~(XLen)3; s.bus_wdat=wb_dat; s.bus_we=true; s.bus_sel=wb_sel; s.bus_funct3=0; s.bus_rd=0;
+        mem_req=mem_lock=true; need_mem=true; s.bus_adr=pa&~(XLen)3; s.bus_wdat=mem_wdat; s.bus_we=true; s.bus_sel=mem_sel; s.bus_funct3=0; s.bus_rd=0;
         } break; // 不 return，让 PC 更新 + need_mem 走 WAIT_MEM
 
     // ---- AMO ----
@@ -1671,8 +1674,8 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
             if (s.lr_addr == w0 || (is_d && s.lr_addr == w0 + 4)) s.lr_valid = false;
         }
         // AMO: 先发起读请求，WAIT_MEM 中完成修改后自动回写
-        wb_adr=pa&~(XLen)3; wb_dat=v2; wb_we=false; wb_sel=0x0F;
-        wb_stb=wb_cyc=true; need_mem=true;
+        mem_adr=pa&~(XLen)3; mem_wdat=v2; mem_we=false; mem_sel=0x0F;
+        mem_req=mem_lock=true; need_mem=true;
         s.bus_adr=pa; s.bus_funct3=f3; s.bus_rd=rd;
         s.bus_sel=0x0F; s.bus_we=false; s.bus_amo=true;
         s.bus_amo_f5=(uint8_t)((inst>>27)&0x1F); // funct5
@@ -1711,7 +1714,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         }
         // 总线只接受字对齐地址：FLH 允许 2 字节对齐（可能落在 4n+2），
         // 地址要抹掉低两位，具体取哪半由 acc_va 在读回时移位决定
-        wb_adr=pa & ~(XLen)3; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; need_mem=true;
+        mem_adr=pa & ~(XLen)3; mem_we=false; mem_sel=0x0F; mem_req=mem_lock=true; need_mem=true;
         s.bus_adr=pa; s.bus_funct3=(uint8_t)f3; s.bus_rd=(uint8_t)rd; s.bus_fp=1;
         // 读响应按 acc_va 的低两位移位，不记就会用上一条访存的残留偏移
         s.acc_va=pa; s.acc_stage = 0;
@@ -1752,7 +1755,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
         uint32_t wdat = (f3 == 1) ? ((uint32_t)(uint16_t) s.fregs[rs2] << (8 * p))
                                   : ((uint32_t) s.fregs[rs2] << (8 * p));
         uint8_t sel = (f3 == 1) ? (uint8_t)(0x3u << p) : (uint8_t)(0xFu << p);
-        wb_adr=pa & ~(XLen)3; wb_we=true; wb_sel=sel; wb_dat=wdat; wb_stb=wb_cyc=true; need_mem=true;
+        mem_adr=pa & ~(XLen)3; mem_we=true; mem_sel=sel; mem_wdat=wdat; mem_req=mem_lock=true; need_mem=true;
         s.bus_adr=pa & ~(XLen)3; s.bus_wdat=wdat; s.bus_we=true; s.bus_sel=sel; s.bus_fp=0; s.acc_stage=0;
         // FSD 要写 8 字节，复用拆段机制：acc_raw 存待写数据，acc_f3=3 表示 8 字节
         if (f3 == 3) { s.acc_va = pa; s.acc_raw = s.fregs[rs2]; s.acc_f3 = 3; s.acc_stage = 1; }
@@ -3091,7 +3094,7 @@ void RiscVCPU<XLEN>::execute(CpuState &s, uint32_t inst,
     // 规范：以同步异常结束的指令不算 retire，写 minstret 的指令也不递增
     // （让紧接着那条读取拿到写入值），这两种情况都由 instret_skip 表示
     if (s.instret_skip) s.instret_skip = false; else s.instret++;
-    if (!need_mem) { wb_adr=s.pc; wb_we=false; wb_sel=0x0F; wb_stb=wb_cyc=true; }
+    if (!need_mem) { mem_adr=s.pc; mem_we=false; mem_sel=0x0F; mem_req=mem_lock=true; }
 }
 
 // ============================================================
@@ -3621,8 +3624,8 @@ template class RiscVCPU<64>;
 namespace {
 DCS_REGISTER_COMPONENT(
     {"riscv_cpu", {{"xlen", "32", {"32", "64"}}},
-                        {"clk", "rst", "wb_dat_i", "wb_ack_i", "irq", "mti", "msi", "seip"},
-                        {"wb_adr_o", "wb_dat_o", "wb_we_o", "wb_sel_o", "wb_stb_o", "wb_cyc_o", "halted"},
+                        {"clk", "rst", "mem_rdat", "mem_ack", "irq", "mti", "msi", "seip"},
+                        {"mem_adr", "mem_wdat", "mem_we", "mem_sel", "mem_req", "mem_lock", "halted"},
                         dsc::ComponentCategory::CPU,
                         "RISC-V 软核处理器，Wishbone 总线主设备，支持外部/定时器/软件中断；"
                         "xlen 选 32（RV32IMA）或 64（RV64IMA）"},
