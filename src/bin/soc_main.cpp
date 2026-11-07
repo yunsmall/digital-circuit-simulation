@@ -432,6 +432,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
     dsc::ElfImage img;
     dsc::RiscVCPU<32> *cpu32 = nullptr;
     dsc::RiscVCPU<64> *cpu64 = nullptr;
+    // 电路里有没有内置核，决定 ELF 入口要不要（能不能）自动写进去
+    bool has_builtin_cpu = false;
     if (!elf_path.empty()) {
         img = dsc::loadElf(elf_path);
         if (!img.ok) {
@@ -446,16 +448,19 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
             return 1;
         }
         // 链接在高地址的镜像必须从自己的入口开始执行，否则 PC 相对寻址全按 0 基址算。
-        // 位宽必须对上：拿 32 位核跑 RV64 代码只会得到一串非法指令，早点报出来
+        // 镜像放置和 tohost 判定与 CPU 类型无关，只有"把入口写进核"依赖内置核；
+        // 位宽不匹配只在内置核存在时才算错误，自定义 CPU 的入口由 --set 负责
         bool cpu_matched = false;
         for (auto &c: circuit->components()) {
             if (auto *c32 = dynamic_cast<dsc::RiscVCPU<32> *>(c.get())) {
+                has_builtin_cpu = true;
                 cpu32 = c32;
                 if (!img.is64) {
                     c32->setPc((uint32_t) img.entry);
                     cpu_matched = true;
                 }
             } else if (auto *c64 = dynamic_cast<dsc::RiscVCPU<64> *>(c.get())) {
+                has_builtin_cpu = true;
                 cpu64 = c64;
                 if (img.is64) {
                     c64->setPc(img.entry);
@@ -463,12 +468,16 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
                 }
             }
         }
-        if (!cpu_matched) {
+        if (has_builtin_cpu && !cpu_matched) {
             std::cerr << std::format(
-                    "错误: ELF 是 {}-bit，但电路里没有对应位宽的 riscv_cpu（JSON 里用 \"xlen\": \"{}\"）\n",
-                    img.is64 ? 64 : 32, img.is64 ? 64 : 32);
+                    "错误: ELF 是 {}-bit，但电路里的 riscv_cpu 是 {} 位（JSON 里用 \"xlen\": \"{}\"）\n",
+                    img.is64 ? 64 : 32, img.is64 ? 32 : 64, img.is64 ? 64 : 32);
             return 1;
         }
+        if (!has_builtin_cpu)
+            std::cerr << std::format(
+                    "提示: 电路里没有内置 riscv_cpu，ELF 入口 0x{:X} 不自动设置；"
+                    "自定义 CPU 请用 --set 写入口线网\n", img.entry);
         std::cout << std::format("ELF: {} 字节 @ 0x{:X}，入口 0x{:X}，tohost 0x{:X}\n", img.data.size(), img.base,
                                  img.entry, img.tohost);
     } else {
@@ -479,8 +488,8 @@ int runSoc(const std::string &path, const std::string &elf_path, const std::stri
         trace_cpu = false;
     }
     // --set 在第一拍之前写线网：自定义 CPU 的 start_pc/reset 这类输入就靠它
-    if (!elf_path.empty() && !set_specs.empty())
-        std::cerr << "提示: --elf 的入口由 ELF 决定；--set 只写线网，内置 RiscVCPU 不读 start_pc\n";
+    if (!elf_path.empty() && !set_specs.empty() && has_builtin_cpu)
+        std::cerr << "提示: --elf 的入口由 ELF 决定；内置 RiscVCPU 不读 --set 写进去的入口线网\n";
     for (auto &spec: set_specs) {
         std::string net_name, serr;
         std::vector<uint8_t> bytes;
