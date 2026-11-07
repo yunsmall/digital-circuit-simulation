@@ -15,12 +15,13 @@
 //   * STALL_I —— 3.1.3.2 pipelined 模式，classic 不需要；
 //   * CTI/BTE burst —— Chapter 4 Registered Feedback 扩展。
 //
-// 硬件数据引脚与内部暂存都是 32 位，data_width 只支持 8/16/32。
+// 数据引脚宽度跟随 data_width：8/16/32/64（B4 §1.1 的上限是 64 位），
+// SEL 每字节一位，端口字边界按 data_width/8 对齐。
 //
-// Wishbone 从设备引脚:
-//   输入: clk(1), wb_adr_i(32), wb_dat_i(32), wb_we_i(1),
-//          wb_sel_i(4), wb_stb_i(1), wb_cyc_i(1)
-//   输出: wb_dat_o(32), wb_ack_o(1)
+// Wishbone 从设备引脚（以 64 位端口为例）:
+//   输入: clk(1), wb_adr_i(32), wb_dat_i(64), wb_we_i(1),
+//          wb_sel_i(8), wb_stb_i(1), wb_cyc_i(1)
+//   输出: wb_dat_o(64), wb_ack_o(1)
 //
 // IStorage: 外部可直接读写内存（加载程序、检查结果）
 #pragma once

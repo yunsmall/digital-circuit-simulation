@@ -82,6 +82,19 @@ public:
         _c.setWire(cyc->id(), (uint8_t)(cy ? 1 : 0));
     }
 
+    // 64 位端口版本：DAT/SEL 都要写满整根线，不能只填低字节
+    void drive64(uint32_t a, bool w, uint64_t d, uint8_t s, bool st, bool cy) {
+        _c.setWire(adr->id(), { (uint8_t)(a & 0xFF), (uint8_t)((a >> 8) & 0xFF),
+                                (uint8_t)((a >> 16) & 0xFF), (uint8_t)((a >> 24) & 0xFF) });
+        _c.setWire(we->id(), (uint8_t)(w ? 1 : 0));
+        std::vector<uint8_t> db(8);
+        for (int i = 0; i < 8; ++i) db[i] = (uint8_t)((d >> (8 * i)) & 0xFF);
+        _c.setWire(dat_o->id(), db);
+        _c.setWire(sel->id(), (uint8_t)s);
+        _c.setWire(stb->id(), (uint8_t)(st ? 1 : 0));
+        _c.setWire(cyc->id(), (uint8_t)(cy ? 1 : 0));
+    }
+
     // getWire 返回字节数组（小端），拼回 32 位
     uint32_t readData() const {
         auto v = _c.getWire(dat_i->id());
@@ -92,6 +105,12 @@ public:
     bool ackHigh() const {
         auto v = _c.getWire(ack->id());
         return !v.empty() && v[0] != 0;
+    }
+    uint64_t readData64() const {
+        auto v = _c.getWire(dat_i->id());
+        uint64_t r = 0;
+        for (size_t i = 0; i < v.size() && i < 8; ++i) r |= (uint64_t)v[i] << (8 * i);
+        return r;
     }
 
     // 一笔完整事务：拉高 stb、等 ack、采样、拉低 stb 并让从设备忘掉这笔。
@@ -107,6 +126,20 @@ public:
         if (got && out) *out = readData();
         drive(a, w, d, s, false, false);
         tick(3);   // 让从设备看到 stb 撤销并清掉 ack_pending，再开下一笔
+        return got;
+    }
+
+    bool transact64(uint32_t a, bool w, uint64_t d, uint8_t s,
+                    uint64_t *out = nullptr, int max_cycles = 64) {
+        drive64(a, w, d, s, true, true);
+        bool got = false;
+        for (int i = 0; i < max_cycles; ++i) {
+            tick();
+            if (ackHigh()) { got = true; break; }
+        }
+        if (got && out) *out = readData64();
+        drive64(a, w, d, s, false, false);
+        tick(3);
         return got;
     }
 

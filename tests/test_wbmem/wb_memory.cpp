@@ -111,6 +111,56 @@ TEST(WbMemory, NarrowPortAlignsByPortWidth) {
     EXPECT_EQ(w[0x109], 0xBE);
 }
 
+// 64 位端口：B4 §1.1 允许数据总线到 64 位，SEL 每字节一位（8 位）
+TEST(WbMemory, WideReadWrite64) {
+    MemFixture f(16, 64);
+    ASSERT_TRUE(f.bus->transact64(0x100, true, 0x1122334455667788ull, 0xFF)) << "64 位写没有 ack";
+    uint64_t v = 0;
+    ASSERT_TRUE(f.bus->transact64(0x100, false, 0, 0xFF, &v)) << "64 位读没有 ack";
+    EXPECT_EQ(v, 0x1122334455667788ull);
+    const uint8_t *m = f.bytes();
+    EXPECT_EQ(m[0x100], 0x88);
+    EXPECT_EQ(m[0x107], 0x11);
+}
+
+TEST(WbMemory, PartialWrite64RespectsAllEightSelBits) {
+    MemFixture f(16, 64);
+    uint8_t *m = f.bytes();
+    for (int i = 0; i < 8; ++i) m[0x200 + i] = 0xFF;
+    // 只写高 4 个字节
+    ASSERT_TRUE(f.bus->transact64(0x200, true, 0xAABBCCDD11223344ull, 0xF0));
+    EXPECT_EQ(m[0x200], 0xFF) << "低 4 字节不该被写";
+    EXPECT_EQ(m[0x203], 0xFF);
+    EXPECT_EQ(m[0x204], 0xDD);
+    EXPECT_EQ(m[0x205], 0xCC);
+    EXPECT_EQ(m[0x206], 0xBB);
+    EXPECT_EQ(m[0x207], 0xAA);
+}
+
+TEST(WbMemory, WidePortAlignsToEightBytes) {
+    MemFixture f(16, 64);
+    uint8_t *m = f.bytes();
+    for (int i = 0; i < 8; ++i) m[0x300 + i] = (uint8_t)(0x10 + i);
+    uint64_t v = 0;
+    // RULE 3.100：ADR 只到端口字边界，低 3 位不参与寻址
+    ASSERT_TRUE(f.bus->transact64(0x303, false, 0, 0xFF, &v));
+    EXPECT_EQ(v, 0x1716151413121110ull) << "64 位端口读 0x303 不能折到别的字";
+    ASSERT_TRUE(f.bus->transact64(0x305, true, 0x8877665544332211ull, 0xFF));
+    EXPECT_EQ(m[0x300], 0x11) << "写地址没有按 8 字节字对齐";
+    EXPECT_EQ(m[0x307], 0x88);
+}
+
+TEST(WbMemory, ConsecutiveWideReadsReturnOwnData) {
+    MemFixture f(16, 64);
+    uint8_t *m = f.bytes();
+    for (int i = 0; i < 16; ++i) m[0x400 + i] = (uint8_t) i;
+    uint64_t a = 0, b = 0;
+    ASSERT_TRUE(f.bus->transact64(0x400, false, 0, 0xFF, &a));
+    ASSERT_TRUE(f.bus->transact64(0x408, false, 0, 0xFF, &b));
+    EXPECT_EQ(a, 0x0706050403020100ull);
+    EXPECT_EQ(b, 0x0F0E0D0C0B0A0908ull) << "第二笔拿到了上一笔的数据";
+}
+
 TEST(WbMemory, WriteThenReadSameAddress) {    MemFixture f;
     ASSERT_TRUE(f.bus->transact(0x400, true, 0x12345678, 0x0F));
     uint32_t v = 0;
