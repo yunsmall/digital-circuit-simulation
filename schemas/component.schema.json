@@ -288,6 +288,137 @@
       ]
     },
     {
+      "description": "AXI4 从设备到 Wishbone 主设备，支持 INCR/WRAP/FIXED burst",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "addr_width": {
+              "default": "32",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "data_width": {
+              "default": "32",
+              "enum": [
+                "32",
+                "64",
+                "128"
+              ],
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "id_width": {
+              "default": "4",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "axi4_bridge"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "AXI4 多主多从互连，按地址段路由并扩展事务 ID",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "id_width": {
+              "default": "4",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "num_masters": {
+              "default": "1",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            },
+            "segments": {
+              "default": "0:4294967296",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "axi4_ic"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
+      "description": "总线中立的存储器事务接口到 AXI4 主设备（单拍）",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "id_width": {
+              "default": "4",
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "axi4_master_adapter"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
       "description": "AXI4-Lite 从设备到 Wishbone 主设备的桥",
       "properties": {
         "name": {
@@ -3989,6 +4120,21 @@
       ]
     },
     {
+      "description": "总线中立的存储器事务接口 → Wishbone 主设备；请求时序转发、应答组合透传",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "wb_master_adapter"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    },
+    {
       "description": "Wishbone 地址解码器/MMIO路由器，按地址段分发到多个从设备",
       "properties": {
         "name": {
@@ -4050,7 +4196,8 @@
               "enum": [
                 "8",
                 "16",
-                "32"
+                "32",
+                "64"
               ],
               "type": [
                 "string",
