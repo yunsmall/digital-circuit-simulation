@@ -3,7 +3,9 @@
 #include <dcs/components/platform/Dll.h>
 #include <gtest/gtest.h>
 
-static const char *kDllPath = "adder8_dll.dll";
+#include "common/dll_name.h"
+
+static const std::string kDllPath = dllFileName("adder8_dll");
 
 TEST(VerilatorAdder8, BasicAdd) {
     dsc::Circuit c;
@@ -14,6 +16,7 @@ TEST(VerilatorAdder8, BasicAdd) {
     auto *cout = c.createNet("cout");
 
     auto *dll = c.addComponent(std::make_unique<dsc::DllComponent>("adder", kDllPath));
+    ASSERT_NE(dll, nullptr) << "加载失败: " << kDllPath;
     c.connect(dll, "a", a);
     c.connect(dll, "b", b);
     c.connect(dll, "cin", cin);
@@ -53,6 +56,7 @@ TEST(VerilatorAdder8, WithCarryIn) {
     auto *cout = c.createNet("cout");
 
     auto *dll = c.addComponent(std::make_unique<dsc::DllComponent>("adder", kDllPath));
+    ASSERT_NE(dll, nullptr) << "加载失败: " << kDllPath;
     c.connect(dll, "a", a);
     c.connect(dll, "b", b);
     c.connect(dll, "cin", cin);

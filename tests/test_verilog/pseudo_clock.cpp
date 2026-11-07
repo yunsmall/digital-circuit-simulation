@@ -5,6 +5,8 @@
 #include <dcs/components/sequential/Sequential.h>
 #include <gtest/gtest.h>
 
+#include "common/dll_name.h"
+
 using namespace dsc;
 
 namespace {
@@ -30,7 +32,8 @@ TEST(VerilatorPseudoClock, DualPseudoClocksToggleTogether) {
 
     auto *ga = c.addComponent(std::make_unique<ClockGen>("ga", 1, 1, PinEdge::Rising));
     auto *gb = c.addComponent(std::make_unique<ClockGen>("gb", 1, 1, PinEdge::Falling));
-    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", "dual_clk_dll.dll"));
+    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", dllFileName("dual_clk_dll")));
+    ASSERT_NE(cnt, nullptr);
     auto *rst_c = c.addComponent(constant("rst_c", 0));
 
     c.connect(ga, "clk", clk_a);
@@ -64,7 +67,8 @@ TEST(VerilatorPseudoClock, MixedPseudoAndRealClock) {
 
     auto *ga = c.addComponent(std::make_unique<ClockGen>("ga", 1, 1, PinEdge::Rising));
     auto *gb = c.addComponent(std::make_unique<ClockGen>("gb", 1, 1, PinEdge::None));
-    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", "dual_clk_dll.dll"));
+    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", dllFileName("dual_clk_dll")));
+    ASSERT_NE(cnt, nullptr);
     auto *rst_c = c.addComponent(constant("rst_c", 0));
 
     c.connect(ga, "clk", clk_a);
@@ -94,7 +98,8 @@ TEST(VerilatorPseudoClock, CounterRunsOnEveryTick) {
     Net *count = c.createNet("count");
 
     auto *gen = c.addComponent(std::make_unique<ClockGen>("g", 1, 1, PinEdge::Rising));
-    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", "counter8_dll.dll"));
+    auto *cnt = c.addComponent(std::make_unique<DllComponent>("cnt", dllFileName("counter8_dll")));
+    ASSERT_NE(cnt, nullptr);
     auto *rst_c = c.addComponent(constant("rst_c", 0));
     auto *en_c = c.addComponent(constant("en_c", 1));
 
